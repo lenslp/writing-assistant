@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HotTopic {
+  id         String    @id @default(uuid()) @db.Uuid
+  externalId String    @map("external_id")
+  title      String
+  url        String?
+  source     String
+  sourceType String    @default("rss") @map("source_type")
+  heat       Int       @default(0)
+  trendScore Int       @default(0) @map("trend_score")
+  summary    String?
+  tags       String[]  @default([])
+  publishedAt DateTime? @map("published_at")
+  fetchedAt  DateTime  @default(now()) @map("fetched_at")
+  raw        Json?
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@unique([source, externalId])
+  @@index([fetchedAt(sort: Desc)])
+  @@index([heat(sort: Desc)])
+  @@map("hot_topics")
+}
+
+model FetchJob {
+  id            String   @id @default(uuid()) @db.Uuid
+  jobType       String   @default("hot-topics-refresh") @map("job_type")
+  status        String
+  source        String?
+  insertedCount Int      @default(0) @map("inserted_count")
+  message       String?
+  payload       Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+  finishedAt    DateTime? @map("finished_at")
+
+  @@map("fetch_jobs")
+}
+
+model Draft {
+  id              String   @id
+  domain          String   @default("科技")
+  title           String
+  titleCandidates String[] @default([]) @map("title_candidates")
+  selectedAngle   String   @map("selected_angle")
+  status          String
+  topic           String
+  topicId         String   @map("topic_id")
+  tags            String[] @default([])
+  words           Int      @default(0)
+  summary         String
+  outline         String[] @default([])
+  body            String
+  source          String
+  formatting      Json
+  publishedAt     DateTime? @map("published_at")
+  publishedChannel String?  @map("published_channel")
+  lastExportedAt  DateTime? @map("last_exported_at")
+  lastExportFormat String?  @map("last_export_format")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt(sort: Desc)])
+  @@index([domain, updatedAt(sort: Desc)])
+  @@index([topicId])
+  @@map("drafts")
+}
+
+model Topic {
+  id        String   @id
+  title     String
+  domain    String   @default("科技")
+  heat      String
+  fit       Int
+  reason    String
+  angles    String[] @default([])
+  source    String
+  type      String
+  tags      String[] @default([])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([type, updatedAt(sort: Desc)])
+  @@index([domain, updatedAt(sort: Desc)])
+  @@map("topics")
+}
+
+model AppConfig {
+  id              String   @id
+  settings        Json
+  selectedTopicId String?  @map("selected_topic_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+}

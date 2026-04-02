@@ -1,0 +1,42 @@
+# env
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+!.env.local.example
+
+# dependencies
+node_modules/
+
+# next / build
+.next/
+out/
+build/
+dist/
+coverage/
+.turbo/
+.vercel/
+
+# typescript
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# prisma generated client
+/generated/prisma/
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+
+# local design exports / temp assets
+.pencil-exports/
+pencil-exports/

@@ -1,0 +1,25 @@
+import type { Metadata } from "next";
+import "../styles/index.css";
+import { Layout } from "./components/Layout";
+import { AppStoreProvider } from "./providers/app-store";
+
+export const metadata: Metadata = {
+  title: "公众号写作助手",
+  description: "基于 Figma Make 设计还原的公众号写作助手后台。",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="zh-CN">
+      <body>
+        <AppStoreProvider>
+          <Layout>{children}</Layout>
+        </AppStoreProvider>
+      </body>
+    </html>
+  );
+}
