@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const limit = Number.parseInt(url.searchParams.get("limit") ?? "240", 10);
+  const limit = Number.parseInt(url.searchParams.get("limit") ?? "360", 10);
 
   try {
     const payload = await ensureHotTopicsCache(limit);

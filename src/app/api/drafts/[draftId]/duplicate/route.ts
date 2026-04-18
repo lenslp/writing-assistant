@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readDraftById, upsertDraft } from "../../../../lib/draft-db";
-import { hasDatabaseUrl } from "../../../../lib/prisma";
+import { hasPersistenceBackend } from "../../../../lib/persistence";
 
 type RouteContext = {
   params: Promise<{
@@ -11,8 +11,8 @@ type RouteContext = {
 export const dynamic = "force-dynamic";
 
 export async function POST(_: Request, context: RouteContext) {
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({ message: "DATABASE_URL is not configured" }, { status: 500 });
+  if (!hasPersistenceBackend()) {
+    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
   }
 
   const { draftId } = await context.params;

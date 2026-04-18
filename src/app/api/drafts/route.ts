@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { readDrafts, upsertDraft } from "../../lib/draft-db";
-import { hasDatabaseUrl } from "../../lib/prisma";
+import { hasPersistenceBackend } from "../../lib/persistence";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  if (!hasDatabaseUrl()) {
+  if (!hasPersistenceBackend()) {
     return NextResponse.json({ items: [], persisted: false });
   }
 
@@ -14,13 +14,13 @@ export async function GET() {
     return NextResponse.json({ items, persisted: true });
   } catch (error) {
     console.error("Failed to read drafts:", error);
-    return NextResponse.json({ items: [], persisted: false }, { status: 500 });
+    return NextResponse.json({ items: [], persisted: false });
   }
 }
 
 export async function POST(request: Request) {
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({ message: "DATABASE_URL is not configured" }, { status: 500 });
+  if (!hasPersistenceBackend()) {
+    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
   }
 
   try {

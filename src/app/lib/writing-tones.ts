@@ -10,6 +10,10 @@ export type WritingTonePreset = {
   closingStyle: string;
   transformFocus: string;
   aliases: string[];
+  examples?: {
+    titles: string[];
+    opening: string;
+  };
 };
 
 export const writingTonePresets: WritingTonePreset[] = [

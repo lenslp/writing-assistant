@@ -9,6 +9,15 @@ import {
   LoaderCircle, CheckCircle2, Send, Pause,
 } from "lucide-react";
 import { createBody, createFormattingForDomain, createOutline, createSummary, createTitleCandidates, type Draft } from "../lib/app-data";
+import {
+  buildAutoImageCaption,
+  buildAutoImagePrompt,
+  buildAutoImageSearchQuery,
+  countArticleImages,
+  getAutoImageInsertLimit,
+  insertAutoImageIntoBody,
+  insertAutoImagesIntoBody,
+} from "../lib/article-auto-image";
 import type {
   AITransformAction,
   AIWriteResponse,
@@ -160,6 +169,10 @@ export function WritingPage() {
   const fallbackSummary = useMemo(() => (topicForWriting ? createSummary(topicForWriting, settings) : ""), [settings, topicForWriting]);
   const fallbackBody = useMemo(() => (topicForWriting ? createBody(topicForWriting, settings) : ""), [settings, topicForWriting]);
   const toneOptions = useMemo(() => buildWritingToneOptions(settings.toneKeywords).slice(0, 6), [settings.toneKeywords]);
+  const defaultTone = useMemo(
+    () => toneOptions.find((tone) => resolveWritingTone(tone).id === "friendly") ?? toneOptions[0] ?? "朋友式表达",
+    [toneOptions],
+  );
 
   const [selectedTitle, setSelectedTitle] = useState(currentDraft?.title ?? fallbackTitleCandidates[0] ?? "");
   const [summary, setSummary] = useState(currentDraft?.summary ?? fallbackSummary);
@@ -168,7 +181,7 @@ export function WritingPage() {
   const [saveNotice, setSaveNotice] = useState("");
   const [articleType, setArticleType] = useState("观点文");
   const [targetReader, setTargetReader] = useState(settings.readerJobTraits);
-  const [selectedTone, setSelectedTone] = useState(toneOptions[0]);
+  const [selectedTone, setSelectedTone] = useState(defaultTone);
   const [generationError, setGenerationError] = useState("");
   const [pendingAction, setPendingAction] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -207,8 +220,8 @@ export function WritingPage() {
 
   useEffect(() => {
     setTargetReader(settings.readerJobTraits);
-    setSelectedTone(toneOptions[0]);
-  }, [settings.readerJobTraits, toneOptions]);
+    setSelectedTone(defaultTone);
+  }, [defaultTone, settings.readerJobTraits]);
 
   useEffect(() => {
     if (!articleTypeOptions.includes(articleType)) {
@@ -314,6 +327,162 @@ export function WritingPage() {
     });
   }
 
+  function buildGenerationSuccessNotice(
+    scope: AIWriteScope,
+    label: string,
+    bodyChangedByImageInsert: boolean,
+  ) {
+    if (scope === "full") {
+      return bodyChangedByImageInsert ? "AI 已生成全文并自动插入配图" : "AI 已生成公众号完整草稿";
+    }
+
+    return bodyChangedByImageInsert ? `${label}完成，已自动插入配图` : `${label}完成`;
+  }
+
+  async function maybeAutoInsertImage(targetDraft: Draft, result: AIWriteResult, scope: AIWriteScope) {
+    if ((scope !== "body" && scope !== "full") || !result.body.trim()) {
+      return result;
+    }
+
+    const imageLimit = getAutoImageInsertLimit(selectedDomain);
+    const existingImageCount = countArticleImages(result.body);
+    const remainingImageCount = Math.max(0, imageLimit - existingImageCount);
+    if (remainingImageCount <= 0) {
+      return result;
+    }
+
+    const query = buildAutoImageSearchQuery({
+      title: result.title,
+      summary: result.summary,
+      body: result.body,
+      domain: selectedDomain,
+    });
+    const prompt = buildAutoImagePrompt({
+      title: result.title,
+      summary: result.summary,
+      body: result.body,
+      domain: selectedDomain,
+    });
+    const caption = buildAutoImageCaption({
+      title: result.title,
+      summary: result.summary,
+      domain: selectedDomain,
+    });
+
+    if (!query.trim() && !prompt.trim()) {
+      return result;
+    }
+
+    setPendingAction("真实配图搜索中");
+
+    try {
+      const searchResponse = await fetch("/api/images/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: result.title,
+          summary: result.summary,
+          body: result.body,
+          domain: selectedDomain,
+          query,
+        }),
+      });
+      const searchPayload = await searchResponse.json().catch(() => null);
+      const searchResults = Array.isArray(searchPayload?.results)
+        ? (searchPayload.results as Array<{ url?: string }>)
+        : [];
+      const realImages = searchResults
+        .map((item) => item.url)
+        .filter((url): url is string => Boolean(url?.trim()))
+        .slice(0, remainingImageCount)
+        .map((url, index) => ({
+          url,
+          caption: index === 0 ? caption : `${caption}-${index + 1}`,
+        }));
+
+      if (searchResponse.ok && realImages.length) {
+        const nextBody = insertAutoImagesIntoBody(result.body, realImages, imageLimit);
+        if (nextBody === result.body) {
+          return result;
+        }
+
+        const nextResult = {
+          ...result,
+          body: nextBody,
+        };
+
+        setBody(nextBody);
+        updateDraft(targetDraft.id, {
+          domain: selectedDomain,
+          title: result.title,
+          titleCandidates: result.titleCandidates,
+          selectedAngle: result.selectedAngle,
+          summary: result.summary,
+          outline: result.outline,
+          body: nextBody,
+          status: targetDraft.status === "已发布" ? "已发布" : "待修改",
+        });
+
+        return nextResult;
+      }
+    } catch {
+      // If real image search is unavailable, fall back to AI image generation below.
+    }
+
+    setPendingAction("AI 配图生成中");
+
+    try {
+      const response = await fetch("/api/ai/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt,
+          title: result.title,
+          summary: result.summary,
+          domain: selectedDomain,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.url) {
+        return result;
+      }
+
+      const nextBody =
+        remainingImageCount > 1
+          ? insertAutoImagesIntoBody(result.body, [{ url: payload.url as string, caption }], imageLimit)
+          : insertAutoImageIntoBody(result.body, payload.url as string, caption);
+      if (nextBody === result.body) {
+        return result;
+      }
+
+      const nextResult = {
+        ...result,
+        body: nextBody,
+      };
+
+      setBody(nextBody);
+      updateDraft(targetDraft.id, {
+        domain: selectedDomain,
+        title: result.title,
+        titleCandidates: result.titleCandidates,
+        selectedAngle: result.selectedAngle,
+        summary: result.summary,
+        outline: result.outline,
+        body: nextBody,
+        status: targetDraft.status === "已发布" ? "已发布" : "待修改",
+      });
+
+      return nextResult;
+    } catch {
+      return result;
+    }
+  }
+
   function resetGenerationState() {
     requestAbortControllerRef.current = null;
     setIsGenerating(false);
@@ -384,18 +553,35 @@ export function WritingPage() {
       if (!response.ok || !payload.result) {
         throw new Error(payload.message || "AI 写作暂时不可用");
       }
+      const generatedResult = payload.result;
 
       setAiStatus(`${payload.provider} · ${payload.model}`);
-      syncAiResult(targetDraft, payload.result);
-      setSaveNotice(scope === "full" ? "AI 已生成公众号完整草稿" : `${label}完成`);
+      syncAiResult(targetDraft, generatedResult);
+      const baseNotice = buildGenerationSuccessNotice(scope, label, false);
+      setSaveNotice(baseNotice);
       window.setTimeout(() => setSaveNotice(""), 2400);
+      resetGenerationState();
+
+      void maybeAutoInsertImage(targetDraft, generatedResult, scope)
+        .then((finalResult) => {
+          if (finalResult.body === generatedResult.body) return;
+          setSaveNotice(buildGenerationSuccessNotice(scope, label, true));
+          window.setTimeout(() => setSaveNotice(""), 2400);
+        })
+        .catch(() => {
+          // Ignore background image insertion failures to keep generation responsive.
+        });
+
+      return;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
       setGenerationError(error instanceof Error ? error.message : "AI 写作失败，请稍后重试");
     } finally {
-      resetGenerationState();
+      if (requestAbortControllerRef.current) {
+        resetGenerationState();
+      }
     }
   }
 

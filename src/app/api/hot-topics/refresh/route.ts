@@ -24,7 +24,7 @@ export async function POST() {
           message: result.message,
           generatedTopicCount: result.generatedTopicCount,
           restrictedCount: result.restrictedCount,
-          items: result.items.slice(0, 240).map((item) => ({
+          items: result.items.slice(0, 360).map((item) => ({
             ...item,
             time: formatFetchedTime(item.fetchedAt),
           })),

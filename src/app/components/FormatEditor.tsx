@@ -1,12 +1,14 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import {
   Type, Heading2, AlignLeft, Quote, Minus, Image, Sparkles, Heart,
   Save, Copy, Download, FileCode, ChevronDown, Palette, Smartphone, Monitor, RotateCcw, ArrowUp, Send, RefreshCcw,
-  Upload, Link2, WandSparkles, X, LoaderCircle,
+  Upload, Link2, WandSparkles, X, LoaderCircle, MoreHorizontal, Search,
 } from "lucide-react";
 import {
   colorSchemes,
@@ -16,11 +18,14 @@ import {
   type Draft,
   type DraftFormatting,
 } from "../lib/app-data";
+import { buildAutoImageCaption, buildAutoImagePrompt, buildAutoImageSearchQuery, buildImageSnippet, shouldPreferRealImage } from "../lib/article-auto-image";
+import { normalizeStructuredBodyText } from "../lib/body-structure";
 import { domainConfigs, type ArticleDomain } from "../lib/content-domains";
 import { useAppStore } from "../providers/app-store";
 
 const publishChannels = ["公众号", "知乎", "微博", "头条", "小红书"] as const;
 const previewModes = ["mobile", "desktop"] as const;
+const WECHAT_TITLE_LIMIT = 64;
 
 const moduleTools = [
   { icon: Type, label: "标题" },
@@ -49,6 +54,24 @@ type InlineToken = {
   end: number;
   kind: "bold" | "quote" | "highlight";
   content: string;
+};
+
+type ImageInsertMode = "auto" | "cursor" | "end";
+type ImagePanelTab = "upload" | "link" | "search" | "ai";
+
+type WechatAccountView = {
+  id: string;
+  name: string;
+  appIdMasked: string;
+};
+
+type RealImageSearchItem = {
+  url: string;
+  source: string;
+  query: string;
+  title?: string;
+  pageUrl?: string;
+  thumbnailUrl?: string;
 };
 
 const AUTO_HIGHLIGHT_PATTERNS = [
@@ -166,12 +189,6 @@ function parseImageSection(section: string) {
   return null;
 }
 
-function buildImageSnippet(url: string, caption: string) {
-  const safeCaption = (caption || "配图").trim();
-  const safeUrl = url.trim();
-  return `![${safeCaption}](${safeUrl})`;
-}
-
 function renderInlineHtml(text: string, options?: { autoHighlight?: boolean; highlightStyle?: string }) {
   const tokens = collectInlineTokens(text, options?.autoHighlight);
 
@@ -239,7 +256,7 @@ function renderInlineNodes(text: string, options?: { autoHighlight?: boolean; hi
 }
 
 function extractContentBlocks(body: string): ContentBlock[] {
-  return body
+  return normalizeStructuredBodyText(body)
     .split(/\n{2,}/)
     .map((section) => section.trim())
     .filter(Boolean)
@@ -347,52 +364,52 @@ function buildHtml(
         }
 
         if (domainStyle.headingMode === "underline") {
-          return `<h2 style="font-size:18px;font-weight:700;line-height:1.75;margin:30px 0 15px;color:${domainStyle.headingTextColor};display:inline-block;padding-bottom:6px;border-bottom:2px solid ${primary};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
+          return `<h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:30px 0 15px;color:${domainStyle.headingTextColor};display:inline-block;padding-bottom:6px;border-bottom:2px solid ${primary};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
         }
 
         if (domainStyle.headingMode === "center") {
-          return `<div style="text-align:center;margin:34px 0 18px;"><h2 style="display:inline-block;font-size:18px;font-weight:600;line-height:1.8;margin:0;color:${domainStyle.headingTextColor};padding-bottom:6px;border-bottom:2px solid ${accent};font-family:Georgia,'Songti SC','STSong',serif;">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+          return `<div style="text-align:center;margin:34px 0 18px;"><h2 style="display:inline-block;font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.8;margin:0;color:${domainStyle.headingTextColor};padding-bottom:6px;border-bottom:2px solid ${accent};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
         }
 
         if (domainStyle.headingMode === "card") {
-          return `<div style="margin:30px 0 15px;padding:12px 16px;border-radius:16px;background:linear-gradient(135deg, color-mix(in srgb, ${accent} 22%, white), color-mix(in srgb, ${primary} 18%, white));border:1px solid color-mix(in srgb, ${primary} 18%, white);"><h2 style="font-size:18px;font-weight:800;line-height:1.7;margin:0;color:${domainStyle.headingTextColor};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+          return `<div style="margin:30px 0 15px;padding:12px 16px;border-radius:16px;background:linear-gradient(135deg, color-mix(in srgb, ${accent} 22%, white), color-mix(in srgb, ${primary} 18%, white));border:1px solid color-mix(in srgb, ${primary} 18%, white);"><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.7;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
         }
 
-        return `<div style="display:flex;align-items:flex-start;gap:12px;margin:30px 0 15px;"><span style="display:inline-block;width:6px;height:32px;border-radius:999px;background:linear-gradient(180deg, ${primary}, ${accent});opacity:0.9;flex-shrink:0;margin-top:2px;"></span><h2 style="font-size:18px;font-weight:600;line-height:1.75;margin:0;color:${domainStyle.headingTextColor};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+        return `<div style="display:flex;align-items:flex-start;gap:12px;margin:30px 0 15px;"><span style="display:inline-block;width:6px;height:32px;border-radius:999px;background:linear-gradient(180deg, ${primary}, ${accent});opacity:0.9;flex-shrink:0;margin-top:2px;"></span><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
       }
 
       if (block.type === "quote") {
         return isWechatChannel
-          ? `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-radius:12px;font-size:15px;line-height:1.8;color:rgba(0,0,0,0.55);">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
+          ? `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-radius:12px;font-size:15px;line-height:1.8;color:${domainStyle.quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
           : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${primary};background:#f8fbff;border-radius:${formatting.roundedQuote ? "0 12px 12px 0" : "0"};line-height:1.9;color:#475569;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`;
       }
 
       if (block.type === "divider") {
-        return `<hr style="margin:28px 0;border:none;border-top:1px solid #e5e7eb;" />`;
+        return `<hr style="margin:28px 0;border:none;border-top:1px solid ${domainStyle.dividerColor};" />`;
       }
 
       if (block.type === "image") {
         if (block.src) {
           const caption = block.caption || block.alt || "配图";
           return isWechatChannel
-            ? `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:10px;border:1px solid #f0f0f0;background:#fafafa;object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:#999;font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
+            ? `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
             : `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:20px;border:1px solid #cbd5e1;background:#fff;object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:#6b7280;font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
         }
 
         return isWechatChannel
-          ? `<div style="margin:24px 0;border-radius:10px;overflow:hidden;border:1px solid #f0f0f0;background:#f7f7f7;"><div style="height:180px;background:linear-gradient(180deg,#fafafa,#f1f5f9);"></div><div style="padding:10px 12px;text-align:center;color:#999;font-size:12px;">${escapeHtml(block.content)}</div></div>`
+          ? `<div style="margin:24px 0;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};overflow:hidden;border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};"><div style="height:180px;background:${String(domainStyle.imageFrameStyle.background)};display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid ${String(domainStyle.imagePlaceholderChipStyle.borderColor)};background:${String(domainStyle.imagePlaceholderChipStyle.background)};color:${String(domainStyle.imagePlaceholderChipStyle.color)};font-size:12px;">配图占位</span></div><div style="padding:10px 12px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;">${escapeHtml(block.content)}</div></div>`
           : `<div style="margin:24px 0;padding:28px 16px;border:1px dashed #cbd5e1;border-radius:16px;text-align:center;color:#94a3b8;">${escapeHtml(block.content)}</div>`;
       }
 
       if (block.type === "golden") {
         return isWechatChannel
-          ? `<div style="margin:24px 0;padding:16px 18px;border-radius:6px;background:#f6f7f9;border-left:3px solid ${primary};color:#1f2937;font-weight:600;line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
+          ? `<div style="margin:24px 0;padding:16px 18px;border-radius:10px;background:${domainStyle.goldenBackground};border-left:3px solid ${domainStyle.goldenBorderColor};color:${domainStyle.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
           : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:linear-gradient(135deg, ${primary}15, ${accent}22);color:#111827;font-weight:600;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
       }
 
       if (block.type === "highlight") {
         return isWechatChannel
-          ? `<div style="margin:22px 0;padding:14px 16px;border-radius:14px;background:${domainStyle.highlightBackground};color:#1f2937;line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
+          ? `<div style="margin:22px 0;padding:14px 16px;border-radius:14px;border:1px solid ${domainStyle.highlightBorderColor};background:${domainStyle.highlightBackground};color:#1f2937;line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
           : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${primary}20;background:${primary}08;color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
       }
 
@@ -405,13 +422,13 @@ function buildHtml(
       }
 
       return isWechatChannel
-        ? `<p style="font-size:16px;line-height:1.8;margin:0 0 18px;color:${domainStyle.paragraphColor};letter-spacing:0.02em;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
+        ? `<p style="font-size:${domainStyle.paragraphFontSize};line-height:${domainStyle.paragraphLineHeight};margin:0 0 18px;color:${domainStyle.paragraphColor};letter-spacing:${domainStyle.paragraphLetterSpacing};font-family:${domainStyle.paragraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
         : `<p style="font-size:${formatting.fontSize};line-height:${formatting.lineHeight};margin:0 0 ${formatting.paragraphSpacing};color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`;
     })
     .join("");
 
   if (isWechatChannel) {
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;"><div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:22px;line-height:1.4;margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:0.02em;text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domain === "情感" || domain === "社会" ? "center" : "flex-start"};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domain === "情感" || domain === "社会" ? "center" : "left"};${domain === "情感" ? "font-style:italic;" : ""}">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}${htmlSections}</article></body></html>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;"><div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}${htmlSections}</article></body></html>`;
   }
 
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>${draft.title}</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fb;padding:24px;"><article style="max-width:720px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><h1 style="font-size:32px;line-height:1.35;margin-bottom:16px;color:#111827;">${draft.title}</h1><p style="font-size:16px;line-height:1.9;margin-bottom:24px;color:#4b5563;">${draft.summary}</p>${htmlSections}</article></body></html>`;
@@ -491,7 +508,11 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
       fontWeight: 500,
       fontFamily: "inherit",
       textAlign: "left" as const,
+      fontSize: "24px",
+      lineHeight: 1.45,
+      letterSpacing: "0.01em",
     },
+    metaAlign: "flex-start" as const,
     summaryStyle: {
       background: "#f8fafc",
       border: `1px solid ${primary}18`,
@@ -499,20 +520,49 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
       borderRadius: "14px",
       padding: "16px 18px",
     } as CSSProperties,
+    summaryTextAlign: "left" as const,
+    summaryFontStyle: "normal" as const,
     headingMode: "bar" as "bar" | "underline" | "center" | "card",
     headingTextColor: "rgba(0,0,0,0.9)",
+    headingFontWeight: 700,
+    headingFontFamily: "inherit",
     paragraphColor: "#4a4a4a",
+    paragraphFontSize: "16px",
+    paragraphLineHeight: 1.88,
+    paragraphLetterSpacing: "0.018em",
+    paragraphFontFamily: "inherit",
     quoteBackground: "#efefef",
+    quoteTextColor: "rgba(0,0,0,0.58)",
     highlightBackground: "#f8f8f8",
+    highlightBorderColor: `${primary}22`,
+    goldenBackground: "#f6f7f9",
+    goldenBorderColor: primary,
+    goldenTextColor: "#1f2937",
+    goldenTextAlign: "left" as const,
+    dividerColor: "#efefef",
     imageFrameStyle: {
       borderColor: "#f0f0f0",
       background: "#fafafa",
+      borderRadius: "10px",
+      boxShadow: "none",
+    } as CSSProperties,
+    imageCaptionColor: "#999999",
+    imagePlaceholderChipStyle: {
+      borderColor: "#e5e7eb",
+      background: "#ffffff",
+      color: "#888888",
     } as CSSProperties,
   };
 
   if (domain === "教育") {
     return {
       ...base,
+      titleStyle: {
+        ...base.titleStyle,
+        fontWeight: 700,
+        color: "#2f3a2f",
+        letterSpacing: "0.015em",
+      },
       summaryStyle: {
         background: "linear-gradient(135deg, #fff5eb, #ffe8d9)",
         border: "none",
@@ -520,15 +570,37 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         borderRadius: "16px",
         padding: "16px 18px",
       } as CSSProperties,
+      headingMode: "bar" as const,
       headingTextColor: "#2c3e50",
+      headingFontWeight: 700,
       paragraphColor: "#555555",
+      paragraphLineHeight: 1.95,
+      quoteBackground: "#fffaf1",
+      quoteTextColor: "#6b5f55",
       highlightBackground: "#fff7ed",
+      highlightBorderColor: "#fdba74",
+      goldenBackground: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+      goldenBorderColor: "#fb923c",
+      goldenTextColor: "#7c4a03",
+      dividerColor: "#f3dfc8",
+      imageFrameStyle: {
+        borderColor: "#f6d7b8",
+        background: "#fffaf5",
+        borderRadius: "14px",
+        boxShadow: "0 8px 24px rgba(251,146,60,0.08)",
+      } as CSSProperties,
     };
   }
 
   if (domain === "旅游") {
     return {
       ...base,
+      titleStyle: {
+        ...base.titleStyle,
+        color: "#1f4d63",
+        fontWeight: 700,
+        letterSpacing: "0.02em",
+      },
       summaryStyle: {
         background: "linear-gradient(135deg, #e0f2fe, #dbeafe)",
         border: "none",
@@ -538,8 +610,25 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
       } as CSSProperties,
       headingMode: "underline" as const,
       headingTextColor: "#1e3a5f",
+      headingFontWeight: 700,
       paragraphColor: "#475569",
+      paragraphLineHeight: 1.95,
+      paragraphLetterSpacing: "0.022em",
+      quoteBackground: "#f0f9ff",
+      quoteTextColor: "#486274",
       highlightBackground: "#f0f9ff",
+      highlightBorderColor: "#7dd3fc",
+      goldenBackground: "linear-gradient(135deg, #eef9ff, #dff6ff)",
+      goldenBorderColor: "#38bdf8",
+      goldenTextColor: "#0f4c5f",
+      dividerColor: "#d7ecf7",
+      imageFrameStyle: {
+        borderColor: "#d6eef8",
+        background: "#f6fcff",
+        borderRadius: "18px",
+        boxShadow: "0 10px 30px rgba(14,165,233,0.10)",
+      } as CSSProperties,
+      imageCaptionColor: "#7b99aa",
     };
   }
 
@@ -551,7 +640,11 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         fontWeight: 600,
         fontFamily: "Georgia, 'Songti SC', 'STSong', serif",
         textAlign: "center" as const,
+        fontSize: "25px",
+        lineHeight: 1.58,
+        letterSpacing: "0.025em",
       },
+      metaAlign: "center" as const,
       summaryStyle: {
         background: "transparent",
         border: "none",
@@ -559,11 +652,32 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         borderRadius: "0px",
         padding: "12px 0 0",
       } as CSSProperties,
+      summaryTextAlign: "center" as const,
+      summaryFontStyle: "italic" as const,
       headingMode: "center" as const,
       headingTextColor: "#3d3d3d",
+      headingFontWeight: 600,
+      headingFontFamily: "Georgia, 'Songti SC', 'STSong', serif",
       paragraphColor: "#555555",
+      paragraphLineHeight: 2.02,
+      paragraphLetterSpacing: "0.028em",
+      paragraphFontFamily: "Georgia, 'Songti SC', 'STSong', serif",
       quoteBackground: "#fffafb",
+      quoteTextColor: "#7a6b70",
       highlightBackground: "#fff1f2",
+      highlightBorderColor: "#f9a8d4",
+      goldenBackground: "linear-gradient(135deg, #fff6f8, #fff1f2)",
+      goldenBorderColor: "#ec4899",
+      goldenTextColor: "#7a284d",
+      goldenTextAlign: "center" as const,
+      dividerColor: "#f4d7df",
+      imageFrameStyle: {
+        borderColor: "#f2d7df",
+        background: "#fffafb",
+        borderRadius: "18px",
+        boxShadow: "0 10px 28px rgba(244,114,182,0.08)",
+      } as CSSProperties,
+      imageCaptionColor: "#a17f89",
     };
   }
 
@@ -575,7 +689,11 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         fontWeight: 800,
         fontFamily: "inherit",
         textAlign: "center" as const,
+        fontSize: "25px",
+        lineHeight: 1.42,
+        letterSpacing: "0.012em",
       },
+      metaAlign: "center" as const,
       summaryStyle: {
         background: "linear-gradient(135deg, #fff9e6, #fff3e0)",
         border: "2px dashed #ffd93d",
@@ -583,16 +701,39 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         borderRadius: "18px",
         padding: "16px 18px",
       } as CSSProperties,
+      summaryTextAlign: "center" as const,
       headingMode: "card" as const,
       headingTextColor: "#1a1a1a",
+      headingFontWeight: 800,
       paragraphColor: "#333333",
+      paragraphLineHeight: 1.92,
+      paragraphLetterSpacing: "0.015em",
+      quoteBackground: "#f7f7f2",
+      quoteTextColor: "#5d6058",
       highlightBackground: "#fff9e6",
+      highlightBorderColor: "#facc15",
+      goldenBackground: "linear-gradient(135deg, #fffef0, #fff7cc)",
+      goldenBorderColor: "#eab308",
+      goldenTextColor: "#5f4600",
+      dividerColor: "#e6dcc2",
+      imageFrameStyle: {
+        borderColor: "#e8dfc6",
+        background: "#fffdf7",
+        borderRadius: "12px",
+        boxShadow: "0 10px 26px rgba(234,179,8,0.08)",
+      } as CSSProperties,
     };
   }
 
   if (domain === "汽车") {
     return {
       ...base,
+      titleStyle: {
+        ...base.titleStyle,
+        color: "#111827",
+        fontWeight: 800,
+        letterSpacing: "0.005em",
+      },
       summaryStyle: {
         background: "linear-gradient(135deg, #1e293b, #334155)",
         border: "none",
@@ -600,10 +741,66 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
         borderRadius: "18px",
         padding: "18px 18px",
       } as CSSProperties,
+      headingMode: "bar" as const,
       headingTextColor: "#1a1a1a",
+      headingFontWeight: 800,
       paragraphColor: "#333333",
-      quoteBackground: "#f8fafc",
+      paragraphLineHeight: 1.84,
+      paragraphLetterSpacing: "0.012em",
+      quoteBackground: "#f3f6fa",
+      quoteTextColor: "#4b5563",
       highlightBackground: "#eff6ff",
+      highlightBorderColor: "#93c5fd",
+      goldenBackground: "linear-gradient(135deg, #f8fbff, #e8f1ff)",
+      goldenBorderColor: "#3b82f6",
+      goldenTextColor: "#1e3a8a",
+      dividerColor: "#d9e3ef",
+      imageFrameStyle: {
+        borderColor: "#cbd5e1",
+        background: "#f8fafc",
+        borderRadius: "12px",
+        boxShadow: "0 12px 26px rgba(15,23,42,0.10)",
+      } as CSSProperties,
+      imageCaptionColor: "#7b8794",
+    };
+  }
+
+  if (domain === "科技") {
+    return {
+      ...base,
+      titleStyle: {
+        ...base.titleStyle,
+        color: "#0f172a",
+        fontWeight: 800,
+        letterSpacing: "-0.005em",
+      },
+      summaryStyle: {
+        background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
+        border: `1px solid ${primary}18`,
+        color: "#334155",
+        borderRadius: "16px",
+        padding: "16px 18px",
+      } as CSSProperties,
+      headingTextColor: "#0f172a",
+      headingFontWeight: 800,
+      paragraphColor: "#334155",
+      paragraphLineHeight: 1.86,
+      paragraphLetterSpacing: "0.012em",
+      quoteBackground: "#f4f8ff",
+      quoteTextColor: "#475569",
+      highlightBackground: "#eef4ff",
+      highlightBorderColor: "#93c5fd",
+      goldenBackground: "linear-gradient(135deg, #f8fbff, #edf4ff)",
+      goldenBorderColor: "#2563eb",
+      goldenTextColor: "#1e40af",
+      dividerColor: "#dbe6f5",
+      imageFrameStyle: {
+        borderColor: "#d8e5f7",
+        background: "#f8fbff",
+        borderRadius: "14px",
+        boxShadow: "0 10px 28px rgba(37,99,235,0.08)",
+      } as CSSProperties,
+      imageCaptionColor: "#7b8da5",
     };
   }
 
@@ -632,11 +829,34 @@ export function FormatEditor() {
   const [previewMode, setPreviewMode] = useState<(typeof previewModes)[number]>("mobile");
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const bodySelectionRef = useRef({ start: 0, end: 0 });
+  const toolbarMoreRef = useRef<HTMLDivElement>(null);
+  const toolbarMoreMenuRef = useRef<HTMLDivElement>(null);
+  const toolbarActionRef = useRef<HTMLDivElement>(null);
+  const toolbarActionMenuRef = useRef<HTMLDivElement>(null);
   const [isImagePanelOpen, setIsImagePanelOpen] = useState(false);
+  const [activeImageTab, setActiveImageTab] = useState<ImagePanelTab>("upload");
   const [imageUrl, setImageUrl] = useState("");
   const [imageCaption, setImageCaption] = useState("");
+  const [imageSearchQuery, setImageSearchQuery] = useState("");
+  const [imageSearchResults, setImageSearchResults] = useState<RealImageSearchItem[]>([]);
   const [imagePrompt, setImagePrompt] = useState("");
-  const [imageLoading, setImageLoading] = useState<"upload" | "generate" | null>(null);
+  const [imageInsertMode, setImageInsertMode] = useState<ImageInsertMode>("auto");
+  const [imageLoading, setImageLoading] = useState<"upload" | "search" | "generate" | null>(null);
+  const [wechatDraftLoading, setWechatDraftLoading] = useState(false);
+  const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
+  const [selectedWechatAccountId, setSelectedWechatAccountId] = useState<string | null>(null);
+  const [isToolbarMoreOpen, setIsToolbarMoreOpen] = useState(false);
+  const [toolbarMoreMenuPosition, setToolbarMoreMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [isToolbarActionOpen, setIsToolbarActionOpen] = useState(false);
+  const [toolbarActionMenuPosition, setToolbarActionMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const selectedWechatAccount = useMemo(
+    () => wechatAccounts.find((account) => account.id === selectedWechatAccountId) ?? wechatAccounts[0] ?? null,
+    [selectedWechatAccountId, wechatAccounts],
+  );
+  const previewAccountName = selectedWechatAccount?.name || settings.accountName;
+  const previewAccountInitials = previewAccountName.slice(0, 2);
 
   useEffect(() => {
     if (draftId || !currentDraft) return;
@@ -655,6 +875,116 @@ export function FormatEditor() {
     setPublishChannel(currentDraft.publishedChannel ?? "公众号");
   }, [currentDraft, settings.defaultTemplate]);
 
+  useEffect(() => {
+    let ignore = false;
+
+    const loadWechatAccounts = async () => {
+      try {
+        const response = await fetch("/api/wechat/accounts", { cache: "no-store" });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || ignore) return;
+
+        setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
+        setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
+      } catch {
+        if (!ignore) {
+          setWechatAccounts([]);
+          setSelectedWechatAccountId(null);
+        }
+      }
+    };
+
+    void loadWechatAccounts();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isToolbarMoreOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!toolbarMoreRef.current?.contains(target) && !toolbarMoreMenuRef.current?.contains(target)) {
+        setIsToolbarMoreOpen(false);
+      }
+    };
+
+    const updateToolbarMoreMenuPosition = () => {
+      const rect = toolbarMoreRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const menuWidth = 188;
+      const viewportPadding = 12;
+      const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+      setToolbarMoreMenuPosition({
+        top: rect.bottom + 8,
+        left: Math.min(rect.left, maxLeft),
+      });
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsToolbarMoreOpen(false);
+      }
+    };
+
+    updateToolbarMoreMenuPosition();
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", updateToolbarMoreMenuPosition);
+    window.addEventListener("scroll", updateToolbarMoreMenuPosition, true);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updateToolbarMoreMenuPosition);
+      window.removeEventListener("scroll", updateToolbarMoreMenuPosition, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isToolbarMoreOpen]);
+
+  useEffect(() => {
+    if (!isToolbarActionOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!toolbarActionRef.current?.contains(target) && !toolbarActionMenuRef.current?.contains(target)) {
+        setIsToolbarActionOpen(false);
+      }
+    };
+
+    const updateToolbarActionMenuPosition = () => {
+      const rect = toolbarActionRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const menuWidth = 196;
+      const viewportPadding = 12;
+      const maxLeft = Math.max(viewportPadding, window.innerWidth - menuWidth - viewportPadding);
+      setToolbarActionMenuPosition({
+        top: rect.bottom + 8,
+        left: Math.min(rect.left, maxLeft),
+      });
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsToolbarActionOpen(false);
+      }
+    };
+
+    updateToolbarActionMenuPosition();
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("resize", updateToolbarActionMenuPosition);
+    window.addEventListener("scroll", updateToolbarActionMenuPosition, true);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("resize", updateToolbarActionMenuPosition);
+      window.removeEventListener("scroll", updateToolbarActionMenuPosition, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isToolbarActionOpen]);
+
   const activeScheme = colorSchemes.find((item) => item.name === formatting.colorScheme) ?? colorSchemes[0];
   const deferredBody = useDeferredValue(body);
   const previewBlocks = useMemo(() => extractContentBlocks(deferredBody), [deferredBody]);
@@ -663,6 +993,9 @@ export function FormatEditor() {
   const articleDomain = currentDraft?.domain ?? "科技";
   const readingMinutes = Math.max(3, Math.ceil(body.replace(/\s+/g, "").length / 350));
   const bodyWords = body.replace(/\s+/g, "").length;
+  const normalizedTitle = title.trim();
+  const titleLength = normalizedTitle.length;
+  const isWechatTitleTooLong = titleLength > WECHAT_TITLE_LIMIT;
   const isDarkTemplate = formatting.template === "深色";
   const textPrimary = isWechatChannel ? "rgba(0,0,0,0.9)" : isDarkTemplate ? "#f9fafb" : "#111827";
   const textSecondary = isWechatChannel ? "#4a4a4a" : isDarkTemplate ? "#d1d5db" : "#4b5563";
@@ -703,16 +1036,99 @@ export function FormatEditor() {
 
   const openImagePanel = () => {
     setIsImagePanelOpen(true);
+    setActiveImageTab(shouldPreferRealImage(articleDomain) ? "search" : "ai");
     setImageCaption((current) => current || title || currentDraft?.title || "文章配图");
+    setImageSearchResults([]);
+    setImageSearchQuery((current) => current || buildAutoImageSearchQuery({
+      title: title || currentDraft?.title || "",
+      summary,
+      body,
+      domain: articleDomain,
+    }));
     setImagePrompt((current) => current || `${articleDomain}主题公众号文章配图，呼应标题《${title || currentDraft?.title || "未命名文章"}》，简洁高级，适合中文内容封面插图`);
   };
 
+  const syncBodySelection = () => {
+    const textarea = bodyTextareaRef.current;
+    if (!textarea) return;
+    bodySelectionRef.current = {
+      start: textarea.selectionStart ?? 0,
+      end: textarea.selectionEnd ?? 0,
+    };
+  };
+
   const insertImageToBody = (url: string, caption: string) => {
-    setBody((currentBody) => [currentBody, buildImageSnippet(url, caption)].filter(Boolean).join("\n\n"));
+    const snippet = buildImageSnippet(url, caption);
+
+    setBody((currentBody) => {
+      const placeholderPattern = /\[图片占位[^\]]*\]/;
+      const { start, end } = bodySelectionRef.current;
+      const safeStart = Math.max(0, Math.min(start, currentBody.length));
+      const safeEnd = Math.max(safeStart, Math.min(end, currentBody.length));
+
+      if (imageInsertMode === "auto" && placeholderPattern.test(currentBody)) {
+        return currentBody.replace(placeholderPattern, snippet);
+      }
+
+      if (imageInsertMode !== "end") {
+        const before = currentBody.slice(0, safeStart).replace(/\s*$/, "");
+        const after = currentBody.slice(safeEnd).replace(/^\s*/, "");
+
+        if (before || after) {
+          return [before, snippet, after].filter(Boolean).join("\n\n");
+        }
+      }
+
+      return [currentBody.replace(/\s+$/, ""), snippet].filter(Boolean).join("\n\n");
+    });
+
     setImageUrl("");
     setImageCaption(caption);
-    setNotice("图片已插入正文");
+    setNotice(
+      imageInsertMode === "auto"
+        ? "图片已插入正文"
+        : imageInsertMode === "cursor"
+          ? "图片已插入到当前光标位置"
+          : "图片已追加到正文末尾",
+    );
     window.setTimeout(() => setNotice(""), 2000);
+  };
+
+  const searchImages = async (query: string) => {
+    setImageLoading("search");
+
+    try {
+      const response = await fetch("/api/images/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query,
+          title: title || currentDraft?.title || "",
+          summary,
+          body,
+          domain: articleDomain,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.message ?? "联网搜图失败");
+      }
+
+      const results = Array.isArray(payload.results) ? payload.results as RealImageSearchItem[] : [];
+      setImageSearchResults(results);
+      return {
+        url: payload.url as string,
+        results,
+      };
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : "联网搜图失败");
+    } finally {
+      setImageLoading(null);
+    }
   };
 
   const handleInsertImageByUrl = () => {
@@ -780,6 +1196,30 @@ export function FormatEditor() {
       return;
     }
 
+    await generateImageAndInsert(imagePrompt, imageCaption || title || "AI 配图");
+  };
+
+  const handleSearchImage = async () => {
+    if (!imageSearchQuery.trim()) {
+      setNotice("请先补充搜图关键词");
+      window.setTimeout(() => setNotice(""), 2000);
+      return;
+    }
+
+    try {
+      const payload = await searchImages(imageSearchQuery);
+      if (!payload.results.length) {
+        throw new Error("暂时没有找到合适的真实图片");
+      }
+      setNotice("已找到候选图片，点选即可插入");
+      window.setTimeout(() => setNotice(""), 2200);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "联网搜图失败");
+      window.setTimeout(() => setNotice(""), 2600);
+    }
+  };
+
+  const generateImageAndInsert = async (prompt: string, caption: string) => {
     setImageLoading("generate");
 
     try {
@@ -789,7 +1229,7 @@ export function FormatEditor() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: imagePrompt,
+          prompt,
           title: title || currentDraft?.title || "",
           summary,
           domain: articleDomain,
@@ -802,7 +1242,7 @@ export function FormatEditor() {
         throw new Error(payload?.message ?? "AI 图片生成失败");
       }
 
-      insertImageToBody(payload.url as string, imageCaption || title || "AI 配图");
+      insertImageToBody(payload.url as string, caption);
       setIsImagePanelOpen(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "AI 图片生成失败");
@@ -810,6 +1250,48 @@ export function FormatEditor() {
     } finally {
       setImageLoading(null);
     }
+  };
+
+  const handleAutoGenerateImage = async () => {
+    const articleTitle = title || currentDraft?.title || "";
+    const query = buildAutoImageSearchQuery({
+      title: articleTitle,
+      summary,
+      body,
+      domain: articleDomain,
+    });
+    const prompt = buildAutoImagePrompt({
+      title: articleTitle,
+      summary,
+      body,
+      domain: articleDomain,
+    });
+    const caption = imageCaption || buildAutoImageCaption({
+      title: articleTitle,
+      summary,
+      domain: articleDomain,
+    });
+
+    setImageSearchQuery(query);
+    setImagePrompt(prompt);
+    setImageCaption(caption);
+
+    if (shouldPreferRealImage(articleDomain)) {
+      try {
+        const payload = await searchImages(query);
+        if (payload.url) {
+          insertImageToBody(payload.url, caption);
+          setIsImagePanelOpen(false);
+          return;
+        }
+        return;
+      } catch {
+        setNotice("未找到合适实拍图，已自动回退到 AI 配图");
+        window.setTimeout(() => setNotice(""), 2400);
+      }
+    }
+
+    await generateImageAndInsert(prompt, caption);
   };
 
   const appendBlock = (label: (typeof moduleTools)[number]["label"]) => {
@@ -852,6 +1334,7 @@ export function FormatEditor() {
 
   const handleRestoreDraft = () => {
     if (!currentDraft) return;
+    setIsToolbarMoreOpen(false);
     setTitle(currentDraft.title);
     setSummary(currentDraft.summary);
     setBody(currentDraft.body);
@@ -867,6 +1350,7 @@ export function FormatEditor() {
 
   const handleCopy = async () => {
     if (!currentDraft) return;
+    setIsToolbarMoreOpen(false);
     await navigator.clipboard.writeText(buildWechatText({ ...currentDraft, title, summary }, body, settings.ctaEngage));
     updateDraft(currentDraft.id, {
       title,
@@ -883,6 +1367,7 @@ export function FormatEditor() {
 
   const handleExport = (type: "html" | "md") => {
     if (!currentDraft) return;
+    setIsToolbarMoreOpen(false);
     const fileName = `${title || currentDraft.title}.${type === "html" ? "html" : "md"}`;
     const content =
       type === "html"
@@ -893,7 +1378,7 @@ export function FormatEditor() {
             activeScheme.primary,
             activeScheme.accent,
             publishChannel,
-            settings.accountName,
+            previewAccountName,
             articleDomain,
           )
         : buildMarkdown({ ...currentDraft, title, summary }, body);
@@ -920,6 +1405,7 @@ export function FormatEditor() {
 
   const handlePublish = () => {
     if (!currentDraft) return;
+    setIsToolbarActionOpen(false);
     publishDraft(currentDraft.id, {
       title,
       summary,
@@ -933,8 +1419,61 @@ export function FormatEditor() {
     router.push("/published");
   };
 
+  const handlePushToWechatDraft = async () => {
+    if (!currentDraft || wechatDraftLoading) return;
+
+    if (isWechatTitleTooLong) {
+      toast.error(`标题过长，当前 ${titleLength} / ${WECHAT_TITLE_LIMIT}，请先缩短后再推送`);
+      return;
+    }
+
+    setWechatDraftLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/draft", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title,
+          summary,
+          body,
+          author: selectedWechatAccount?.name || settings.accountName,
+          domain: articleDomain,
+          accountId: selectedWechatAccountId,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "推送公众号草稿箱失败");
+      }
+
+      updateDraft(currentDraft.id, {
+        title,
+        summary,
+        body,
+        formatting,
+        publishedChannel: "公众号",
+        lastExportFormat: "wechat",
+        lastExportedAt: new Date().toISOString(),
+      });
+
+      setPublishChannel("公众号");
+      toast.success(
+        `已推送到公众号草稿箱${payload?.accountName ? ` · ${payload.accountName}` : ""}${payload?.digestTruncated ? " · 摘要已自动截断" : ""}${payload?.mediaId ? ` · media_id: ${payload.mediaId}` : ""}`,
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "推送公众号草稿箱失败");
+    } finally {
+      setWechatDraftLoading(false);
+    }
+  };
+
   const handleSubmitReview = () => {
     if (!currentDraft) return;
+    setIsToolbarActionOpen(false);
     submitDraftReview(currentDraft.id, {
       title,
       summary,
@@ -949,6 +1488,7 @@ export function FormatEditor() {
 
   const handleReturnToEditing = () => {
     if (!currentDraft) return;
+    setIsToolbarActionOpen(false);
     returnDraftToEditing(currentDraft.id, {
       title,
       summary,
@@ -958,6 +1498,12 @@ export function FormatEditor() {
     });
     setNotice("已退回待修改");
     window.setTimeout(() => setNotice(""), 2000);
+  };
+
+  const handleBackToWriting = () => {
+    if (!currentDraft) return;
+    setIsToolbarActionOpen(false);
+    router.push(`/writing?draftId=${currentDraft.id}`);
   };
 
   if (!currentDraft) {
@@ -975,25 +1521,43 @@ export function FormatEditor() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-12 min-h-[48px] bg-white border-b border-gray-200 flex items-center px-4 gap-2">
-        <div className="flex items-center gap-2">
-          <button onClick={handleSave} disabled={!isDirty} className="flex items-center gap-1.5 border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:bg-gray-50 disabled:cursor-not-allowed" style={{ fontWeight: 500 }}>
+      <div className="border-b border-gray-200 bg-white overflow-x-auto overflow-y-hidden">
+        <div className="flex min-w-max items-center gap-2 px-4 py-2">
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={handleSave} disabled={!isDirty} className="flex shrink-0 items-center gap-1.5 whitespace-nowrap border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:bg-gray-50 disabled:cursor-not-allowed" style={{ fontWeight: 500 }}>
             <Save className="w-3.5 h-3.5" /> 保存排版
           </button>
-          <button onClick={handleRestoreDraft} className="flex items-center gap-1.5 border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50" style={{ fontWeight: 500 }}>
-            <RotateCcw className="w-3.5 h-3.5" /> 恢复原稿
-          </button>
-          <button onClick={handleCopy} className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-blue-700" style={{ fontWeight: 500 }}>
-            <Copy className="w-3.5 h-3.5" /> 复制公众号格式
+          {wechatAccounts.length ? (
+            <div className="relative shrink-0">
+              <select
+                value={selectedWechatAccountId ?? wechatAccounts[0]?.id ?? ""}
+                onChange={(event) => setSelectedWechatAccountId(event.target.value || null)}
+                className="w-[168px] appearance-none rounded-lg border border-emerald-200 bg-white px-3 py-1.5 pr-8 text-[12px] text-gray-700"
+              >
+                {wechatAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>{account.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            </div>
+          ) : null}
+          <button
+            onClick={() => void handlePushToWechatDraft()}
+            disabled={wechatDraftLoading}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
+            style={{ fontWeight: 500 }}
+          >
+            {wechatDraftLoading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            推送草稿箱
           </button>
         </div>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
-        <div className="flex items-center gap-1">
-          <div className="relative">
+        <div className="w-px h-6 bg-gray-200 mx-1 shrink-0" />
+        <div className="flex items-center gap-1 shrink-0">
+          <div className="relative shrink-0">
             <select
               value={publishChannel}
               onChange={(event) => setPublishChannel(event.target.value as (typeof publishChannels)[number])}
-              className="appearance-none rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-8 text-[12px] text-gray-600"
+              className="w-[110px] appearance-none rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-8 text-[12px] text-gray-600"
             >
               {publishChannels.map((channel) => (
                 <option key={channel} value={channel}>{channel}</option>
@@ -1001,163 +1565,138 @@ export function FormatEditor() {
             </select>
             <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           </div>
-          <button onClick={() => handleExport("html")} className="flex items-center gap-1 border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50" style={{ fontWeight: 500 }}>
-            <FileCode className="w-3.5 h-3.5" /> 导出 HTML
-          </button>
-          <button onClick={() => handleExport("md")} className="flex items-center gap-1 border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50" style={{ fontWeight: 500 }}>
-            <Download className="w-3.5 h-3.5" /> 导出 Markdown
-          </button>
-        </div>
-        <div className="flex-1" />
-        {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
-        {currentDraft.status !== "已发布" ? (
-          <button
-            onClick={handleSubmitReview}
-            className="flex items-center gap-1.5 bg-purple-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-purple-700"
-            style={{ fontWeight: 500 }}
-          >
-            <Send className="w-3.5 h-3.5" /> 提交审核
-          </button>
-        ) : null}
-        {currentDraft.status === "审核中" ? (
-          <button
-            onClick={handleReturnToEditing}
-            className="flex items-center gap-1.5 border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50"
-            style={{ fontWeight: 500 }}
-          >
-            <RefreshCcw className="w-3.5 h-3.5" /> 退回修改
-          </button>
-        ) : null}
-        <button
-          onClick={handlePublish}
-          className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-green-700"
-          style={{ fontWeight: 500 }}
-        >
-          <Save className="w-3.5 h-3.5" /> {currentDraft.status === "审核中" ? "审核通过并发布" : "直接发布"}
-        </button>
-        <button
-          onClick={() => router.push(`/writing?draftId=${currentDraft.id}`)}
-          className="flex items-center gap-1.5 border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50"
-          style={{ fontWeight: 500 }}
-        >
-          <Palette className="w-3.5 h-3.5" /> 返回编辑
-        </button>
-      </div>
-
-      {isImagePanelOpen ? (
-        <div className="border-b border-gray-200 bg-white/95 px-4 py-4 backdrop-blur">
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImage} />
-          <div className="mx-auto flex max-w-[1200px] items-start gap-4 rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-              <Image className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>插入图片</div>
-                  <div className="mt-1 text-[12px] text-gray-500">支持本地上传、图片链接插入，以及后续接通模型后的 AI 配图。</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsImagePanelOpen(false)}
-                  className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-600"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-3">
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                  <div className="mb-2 flex items-center gap-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-                    <Upload className="h-4 w-4 text-blue-600" /> 本地上传
-                  </div>
-                  <p className="mb-4 text-[12px] leading-6 text-gray-500">上传后会自动插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
-                  <button
-                    type="button"
-                    disabled={imageLoading === "upload"}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    style={{ fontWeight: 500 }}
-                  >
-                    {imageLoading === "upload" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    选择图片
-                  </button>
-                </div>
-
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                  <div className="mb-2 flex items-center gap-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-                    <Link2 className="h-4 w-4 text-emerald-600" /> 图片链接
-                  </div>
-                  <div className="space-y-3">
-                    <input
-                      value={imageUrl}
-                      onChange={(event) => setImageUrl(event.target.value)}
-                      placeholder="https://example.com/image.jpg"
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleInsertImageByUrl}
-                      className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50"
-                      style={{ fontWeight: 500 }}
-                    >
-                      <Link2 className="h-3.5 w-3.5" /> 插入链接图片
-                    </button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                  <div className="mb-2 flex items-center gap-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-                    <WandSparkles className="h-4 w-4 text-purple-600" /> AI 配图
-                  </div>
-                  <div className="space-y-3">
-                    <textarea
-                      value={imagePrompt}
-                      onChange={(event) => setImagePrompt(event.target.value)}
-                      rows={4}
-                      placeholder="描述你想要的配图风格、主体和氛围"
-                      className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-gray-400 focus:border-blue-300"
-                    />
-                    <button
-                      type="button"
-                      disabled={imageLoading === "generate"}
-                      onClick={handleGenerateImage}
-                      className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-[12px] text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
-                      style={{ fontWeight: 500 }}
-                    >
-                      {imageLoading === "generate" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <WandSparkles className="h-3.5 w-3.5" />}
-                      AI 生成并插入
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-[220px_1fr]">
-                <div className="text-[12px] text-gray-500">图注会作为正文图片说明展示，也会写入导出 HTML。</div>
-                <input
-                  value={imageCaption}
-                  onChange={(event) => setImageCaption(event.target.value)}
-                  placeholder="图片说明 / 图注"
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
-                />
-              </div>
-            </div>
+          <div ref={toolbarMoreRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsToolbarMoreOpen((current) => !current)}
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50"
+              style={{ fontWeight: 500 }}
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" /> 更多
+            </button>
+          </div>
+          <div ref={toolbarActionRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsToolbarActionOpen((current) => !current)}
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-[12px] text-white hover:bg-slate-800"
+              style={{ fontWeight: 500 }}
+            >
+              流程操作 <ChevronDown className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
+        {notice ? <span className="shrink-0 text-[12px] text-green-600 whitespace-nowrap px-1">{notice}</span> : null}
+        </div>
+      </div>
+      {isToolbarMoreOpen && toolbarMoreMenuPosition ? createPortal(
+        <div
+          ref={toolbarMoreMenuRef}
+          className="fixed z-50 min-w-[188px] rounded-xl border border-gray-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+          style={{
+            top: toolbarMoreMenuPosition.top,
+            left: toolbarMoreMenuPosition.left,
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleRestoreDraft}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> 恢复原稿
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleCopy()}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <Copy className="h-3.5 w-3.5" /> 复制公众号格式
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("html")}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <FileCode className="h-3.5 w-3.5" /> 导出 HTML
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("md")}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <Download className="h-3.5 w-3.5" /> 导出 Markdown
+          </button>
+        </div>,
+        document.body,
       ) : null}
+      {isToolbarActionOpen && toolbarActionMenuPosition ? createPortal(
+        <div
+          ref={toolbarActionMenuRef}
+          className="fixed z-50 min-w-[196px] rounded-xl border border-gray-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+          style={{
+            top: toolbarActionMenuPosition.top,
+            left: toolbarActionMenuPosition.left,
+          }}
+        >
+          {currentDraft.status !== "已发布" ? (
+            <button
+              type="button"
+              onClick={handleSubmitReview}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            >
+              <Send className="h-3.5 w-3.5" /> 提交审核
+            </button>
+          ) : null}
+          {currentDraft.status === "审核中" ? (
+            <button
+              type="button"
+              onClick={handleReturnToEditing}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            >
+              <RefreshCcw className="h-3.5 w-3.5" /> 退回修改
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={handlePublish}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <Save className="h-3.5 w-3.5" /> {currentDraft.status === "审核中" ? "审核通过并发布" : "直接发布"}
+          </button>
+          <button
+            type="button"
+            onClick={handleBackToWriting}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+          >
+            <Palette className="h-3.5 w-3.5" /> 返回编辑
+          </button>
+        </div>,
+        document.body,
+      ) : null}
+
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImage} />
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="w-[72px] min-w-[72px] bg-white border-r border-gray-100 py-3 flex flex-col items-center gap-1">
-          {moduleTools.map(({ icon: Icon, label }) => (
-            <button
-              key={label}
-              onClick={() => appendBlock(label)}
-              className="w-14 h-14 flex flex-col items-center justify-center rounded-lg hover:bg-gray-50 text-gray-500 hover:text-blue-600 transition-colors gap-1"
-            >
-              <Icon className="w-4.5 h-4.5" />
-              <span className="text-[10px]" style={{ fontWeight: 500 }}>{label}</span>
-            </button>
-          ))}
+          {moduleTools.map(({ icon: Icon, label }) => {
+            const isImageToolActive = label === "图片" && isImagePanelOpen;
+
+            return (
+              <button
+                key={label}
+                onClick={() => appendBlock(label)}
+                aria-pressed={isImageToolActive}
+                className={`w-14 h-14 flex flex-col items-center justify-center rounded-lg transition-colors gap-1 ${
+                  isImageToolActive
+                    ? "bg-blue-50 text-blue-600 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.12)]"
+                    : "text-gray-500 hover:bg-gray-50 hover:text-blue-600"
+                }`}
+              >
+                <Icon className="w-4.5 h-4.5" />
+                <span className="text-[10px]" style={{ fontWeight: 500 }}>{label}</span>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden bg-[#eef0f4] px-4 py-5">
@@ -1244,14 +1783,14 @@ export function FormatEditor() {
                           color: "#ffffff",
                         }}
                       >
-                        {settings.accountName.slice(0, 2)}
+                        {previewAccountInitials}
                       </div>
                       <div>
                         <div
                           className={isWechatChannel ? "text-[13px]" : "text-[12px]"}
                           style={{ fontWeight: isWechatChannel ? 400 : 500, color: textPrimary }}
                         >
-                          {settings.accountName}
+                          {previewAccountName}
                         </div>
                         <div className="text-[10px]" style={{ color: textMuted }}>
                           {articleDate}
@@ -1274,18 +1813,12 @@ export function FormatEditor() {
                         {isWechatChannel ? (
                           <div className="mx-auto max-w-[640px]">
                             <div className="border-b pb-5" style={{ borderColor: "#f1f1f1" }}>
-                              <div
-                                className="mb-4 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px]"
-                                style={{
-                                  ...domainPreviewStyle.badgeStyle,
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {domainPreviewStyle.badgeText}
-                              </div>
                               <h1
-                                className="text-[24px] leading-[1.45] tracking-[0.01em]"
+                                className="tracking-[0.01em]"
                                 style={{
+                                  fontSize: String(domainPreviewStyle.titleStyle.fontSize),
+                                  lineHeight: Number(domainPreviewStyle.titleStyle.lineHeight),
+                                  letterSpacing: String(domainPreviewStyle.titleStyle.letterSpacing),
                                   color: String(domainPreviewStyle.titleStyle.color),
                                   fontWeight: Number(domainPreviewStyle.titleStyle.fontWeight),
                                   textAlign: domainPreviewStyle.titleStyle.textAlign,
@@ -1298,10 +1831,10 @@ export function FormatEditor() {
                                 className="mt-3 flex flex-wrap items-center gap-2 text-[12px]"
                                 style={{
                                   color: textMuted,
-                                  justifyContent: articleDomain === "情感" || articleDomain === "社会" ? "center" : "flex-start",
+                                  justifyContent: domainPreviewStyle.metaAlign,
                                 }}
                               >
-                                <span className="text-[15px]" style={{ fontWeight: 400, color: "rgba(0,0,0,0.72)" }}>{settings.accountName}</span>
+                                <span className="text-[15px]" style={{ fontWeight: 400, color: "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
                                 <span>·</span>
                                 <span>{articleDate}</span>
                               </div>
@@ -1313,8 +1846,8 @@ export function FormatEditor() {
                                   className="text-[16px] leading-[1.85]"
                                   style={{
                                     ...domainPreviewStyle.summaryStyle,
-                                    textAlign: articleDomain === "情感" || articleDomain === "社会" ? "center" : "left",
-                                    fontStyle: articleDomain === "情感" ? "italic" : "normal",
+                                    textAlign: domainPreviewStyle.summaryTextAlign,
+                                    fontStyle: domainPreviewStyle.summaryFontStyle,
                                   }}
                                 >
                                   {renderInlineNodes(summary, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
@@ -1333,7 +1866,8 @@ export function FormatEditor() {
                                           style={{
                                             borderColor: activeScheme.primary,
                                             color: domainPreviewStyle.headingTextColor,
-                                            fontWeight: 700,
+                                            fontWeight: domainPreviewStyle.headingFontWeight,
+                                            fontFamily: domainPreviewStyle.headingFontFamily,
                                           }}
                                         >
                                           {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
@@ -1350,8 +1884,8 @@ export function FormatEditor() {
                                           style={{
                                             borderColor: activeScheme.accent,
                                             color: domainPreviewStyle.headingTextColor,
-                                            fontWeight: 600,
-                                            fontFamily: "Georgia, 'Songti SC', 'STSong', serif",
+                                            fontWeight: domainPreviewStyle.headingFontWeight,
+                                            fontFamily: domainPreviewStyle.headingFontFamily,
                                           }}
                                         >
                                           {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
@@ -1372,7 +1906,7 @@ export function FormatEditor() {
                                       >
                                         <h2
                                           className="text-[20px] leading-[1.7]"
-                                          style={{ fontWeight: 800, color: domainPreviewStyle.headingTextColor }}
+                                          style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
                                         >
                                           {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
                                         </h2>
@@ -1383,7 +1917,7 @@ export function FormatEditor() {
                                   return (
                                     <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px] flex items-start gap-3">
                                       <span
-                                        className="mt-[2px] inline-block h-[32px] w-[6px] rounded-full flex-shrink-0"
+                                        className="mt-[8px] inline-block h-[22px] w-[6px] rounded-full flex-shrink-0"
                                         style={{
                                           background: `linear-gradient(180deg, ${activeScheme.primary}, ${activeScheme.accent})`,
                                           opacity: 0.9,
@@ -1391,7 +1925,7 @@ export function FormatEditor() {
                                       />
                                       <h2
                                         className="text-[20px] leading-[1.75]"
-                                        style={{ fontWeight: 700, color: domainPreviewStyle.headingTextColor }}
+                                        style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
                                       >
                                         {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
                                       </h2>
@@ -1406,7 +1940,7 @@ export function FormatEditor() {
                                       className="my-6 rounded-[12px] px-4 py-4"
                                       style={{ background: domainPreviewStyle.quoteBackground }}
                                     >
-                                      <p className="text-[15px] leading-[1.85]" style={{ color: "rgba(0,0,0,0.58)" }}>
+                                      <p className="text-[15px] leading-[1.85]" style={{ color: domainPreviewStyle.quoteTextColor }}>
                                         {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
                                       </p>
                                     </div>
@@ -1414,7 +1948,7 @@ export function FormatEditor() {
                                 }
 
                                 if (block.type === "divider") {
-                                  return <div key={`${block.type}-${index}`} className="my-7 h-px" style={{ background: "#efefef" }} />;
+                                  return <div key={`${block.type}-${index}`} className="my-7 h-px" style={{ background: domainPreviewStyle.dividerColor }} />;
                                 }
 
                                 if (block.type === "image") {
@@ -1428,9 +1962,14 @@ export function FormatEditor() {
                                           src={block.src}
                                           alt={block.alt || block.caption || "文章配图"}
                                           className="block w-full rounded-[10px] border object-cover"
-                                          style={{ borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor) }}
+                                          style={{
+                                            borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
+                                            borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
+                                            background: String(domainPreviewStyle.imageFrameStyle.background),
+                                            boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
+                                          }}
                                         />
-                                        <figcaption className="px-2 pt-3 text-center text-[12px]" style={{ color: "#999999" }}>
+                                        <figcaption className="px-2 pt-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
                                           {block.caption || block.alt || "文章配图"}
                                         </figcaption>
                                       </figure>
@@ -1444,17 +1983,22 @@ export function FormatEditor() {
                                       style={{
                                         borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
                                         background: String(domainPreviewStyle.imageFrameStyle.background),
+                                        borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
+                                        boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
                                       }}
                                     >
                                       <div
                                         className="flex h-44 items-center justify-center"
                                         style={{ background: String(domainPreviewStyle.imageFrameStyle.background) }}
                                       >
-                                        <div className="rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[12px] text-[#888]">
+                                        <div
+                                          className="rounded-full border px-4 py-2 text-[12px]"
+                                          style={domainPreviewStyle.imagePlaceholderChipStyle}
+                                        >
                                           配图占位
                                         </div>
                                       </div>
-                                      <div className="px-4 py-3 text-center text-[12px]" style={{ color: "#999999" }}>
+                                      <div className="px-4 py-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
                                         {block.content}
                                       </div>
                                     </div>
@@ -1465,10 +2009,10 @@ export function FormatEditor() {
                                   return (
                                     <div
                                       key={`${block.type}-${block.content}-${index}`}
-                                      className="my-6 rounded-[6px] border-l-[3px] px-4 py-4"
-                                      style={{ borderColor: activeScheme.primary, background: "#f6f7f9" }}
+                                      className="my-6 rounded-[10px] border-l-[3px] px-4 py-4"
+                                      style={{ borderColor: domainPreviewStyle.goldenBorderColor, background: domainPreviewStyle.goldenBackground }}
                                     >
-                                      <p className="text-[16px] leading-[1.85]" style={{ color: "#1f2937", fontWeight: 600 }}>
+                                      <p className="text-[16px] leading-[1.85]" style={{ color: domainPreviewStyle.goldenTextColor, fontWeight: 600, textAlign: domainPreviewStyle.goldenTextAlign }}>
                                         {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
                                       </p>
                                     </div>
@@ -1479,8 +2023,8 @@ export function FormatEditor() {
                                   return (
                                     <div
                                       key={`${block.type}-${block.content}-${index}`}
-                                      className="my-6 rounded-[6px] px-4 py-4"
-                                      style={{ background: highlightBackground }}
+                                      className="my-6 rounded-[10px] border px-4 py-4"
+                                      style={{ background: highlightBackground, borderColor: domainPreviewStyle.highlightBorderColor }}
                                     >
                                       <p className="text-[16px] leading-[1.85]" style={{ color: "#1f2937", fontWeight: 500 }}>
                                         {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
@@ -1529,7 +2073,14 @@ export function FormatEditor() {
                                   <p
                                     key={`${block.type}-${block.content}-${index}`}
                                     className="mb-[18px] text-[16px] leading-[1.8] tracking-[0.02em]"
-                                    style={{ color: domainPreviewStyle.paragraphColor, fontWeight: 400 }}
+                                    style={{
+                                      color: domainPreviewStyle.paragraphColor,
+                                      fontWeight: 400,
+                                      fontSize: domainPreviewStyle.paragraphFontSize,
+                                      lineHeight: domainPreviewStyle.paragraphLineHeight,
+                                      letterSpacing: domainPreviewStyle.paragraphLetterSpacing,
+                                      fontFamily: domainPreviewStyle.paragraphFontFamily,
+                                    }}
                                   >
                                     {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
                                   </p>
@@ -1568,11 +2119,11 @@ export function FormatEditor() {
                                     boxShadow: `0 12px 24px ${activeScheme.primary}24`,
                                   }}
                                 >
-                                  {settings.accountName.slice(0, 2)}
+                                  {previewAccountInitials}
                                 </div>
                                 <div className="min-w-0">
                                   <div className="text-[14px] truncate" style={{ color: textPrimary, fontWeight: 700 }}>
-                                    {settings.accountName}
+                                    {previewAccountName}
                                   </div>
                                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: textMuted }}>
                                     <span>{articleDate}</span>
@@ -1593,7 +2144,7 @@ export function FormatEditor() {
                                   {title}
                                 </h1>
                                 <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px]" style={{ color: textMuted }}>
-                                  <span>作者：{settings.accountName}</span>
+                                  <span>作者：{previewAccountName}</span>
                                   <span>·</span>
                                   <span>{settings.accountPosition.slice(0, 20)}{settings.accountPosition.length > 20 ? "…" : ""}</span>
                                 </div>
@@ -1897,7 +2448,218 @@ export function FormatEditor() {
           </div>
         </div>
 
-        <div className="w-[320px] min-w-[320px] bg-white border-l border-gray-100 overflow-y-auto p-4 space-y-5">
+        <div
+          className={`bg-white border-l border-gray-100 overflow-y-auto p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[320px] min-w-[320px]"} space-y-5`}
+        >
+          {isImagePanelOpen ? (
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[18px] text-gray-900" style={{ fontWeight: 700 }}>插入图片</div>
+                  <div className="mt-1 text-[12px] leading-6 text-gray-500">侧栏插图不会打断中间预览区，适合边看正文边决定插入位置。</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsImagePanelOpen(false)}
+                  className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+                <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-slate-50 to-white p-3">
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-blue-600" },
+                    { key: "link" as const, label: "图片链接", icon: Link2, color: "text-emerald-600" },
+                    { key: "search" as const, label: "联网搜图", icon: Search, color: "text-amber-600" },
+                    { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-purple-600" },
+                  ].map(({ key, label, icon: Icon, color }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setActiveImageTab(key)}
+                      className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                        activeImageTab === key
+                          ? "border-blue-200 bg-blue-50"
+                          : "border-transparent bg-white hover:bg-gray-50"
+                      }`}
+                    >
+                      <Icon className={`mb-2 h-4 w-4 ${color}`} />
+                      <div className="text-[12px] text-gray-900" style={{ fontWeight: 600 }}>{label}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeImageTab === "upload" ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>本地上传</div>
+                  <p className="mt-2 text-[12px] leading-6 text-gray-500">上传后会直接插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
+                  <button
+                    type="button"
+                    disabled={imageLoading === "upload"}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                    style={{ fontWeight: 500 }}
+                  >
+                    {imageLoading === "upload" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    选择图片并插入
+                  </button>
+                </div>
+              ) : null}
+
+              {activeImageTab === "link" ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>图片链接</div>
+                  <div className="mt-3 space-y-3">
+                    <input
+                      value={imageUrl}
+                      onChange={(event) => setImageUrl(event.target.value)}
+                      placeholder="https://example.com/image.jpg"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleInsertImageByUrl}
+                      className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50"
+                      style={{ fontWeight: 500 }}
+                    >
+                      <Link2 className="h-3.5 w-3.5" /> 插入链接图片
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeImageTab === "search" ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>联网搜图</div>
+                  <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50/70 p-3">
+                    <div className="text-[12px] text-amber-700" style={{ fontWeight: 600 }}>更真实的配图</div>
+                    <p className="mt-1 text-[12px] leading-6 text-amber-700/80">所有领域默认优先找真实摄影图；默认不加文字，找不到再回退 AI。</p>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    <input
+                      value={imageSearchQuery}
+                      onChange={(event) => setImageSearchQuery(event.target.value)}
+                      placeholder="例如：travel landscape street photography"
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                    />
+                    <button
+                      type="button"
+                      disabled={imageLoading === "search"}
+                      onClick={handleSearchImage}
+                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-[12px] text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
+                      style={{ fontWeight: 500 }}
+                    >
+                      {imageLoading === "search" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                      搜索真实图片
+                    </button>
+                    {imageSearchResults.length ? (
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        {imageSearchResults.slice(0, 4).map((item) => (
+                          <button
+                            key={item.url}
+                            type="button"
+                            onClick={() => {
+                              insertImageToBody(item.url, imageCaption || title || "文章配图");
+                              setIsImagePanelOpen(false);
+                            }}
+                            className="overflow-hidden rounded-xl border border-gray-200 bg-white text-left transition hover:border-blue-300 hover:shadow-sm"
+                          >
+                            <img src={item.thumbnailUrl || item.url} alt="真实图片候选" className="h-28 w-full object-cover" loading="lazy" />
+                            <div className="space-y-1 px-3 py-2">
+                              <div className="line-clamp-2 text-[11px] text-gray-700">{item.title || "真实图片候选"}</div>
+                              <div className="text-[11px] text-gray-500">点击插入</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {activeImageTab === "ai" ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>AI 配图</div>
+                  <div className="mt-3 space-y-3">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
+                      <div className="text-[12px] text-blue-700" style={{ fontWeight: 600 }}>智能配图</div>
+                      <p className="mt-1 text-[12px] leading-6 text-blue-700/80">会根据文章内容自动配图；默认优先联网搜真实图，失败时再回退 AI。</p>
+                      <button
+                        type="button"
+                        disabled={imageLoading === "generate" || imageLoading === "search"}
+                        onClick={handleAutoGenerateImage}
+                        className="mt-3 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                        style={{ fontWeight: 500 }}
+                      >
+                        {imageLoading === "generate" || imageLoading === "search" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        智能配图并插入
+                      </button>
+                    </div>
+
+                    <textarea
+                      value={imagePrompt}
+                      onChange={(event) => setImagePrompt(event.target.value)}
+                      rows={6}
+                      placeholder="描述你想要的配图风格、主体和氛围"
+                      className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-gray-400 focus:border-blue-300"
+                    />
+                    <button
+                      type="button"
+                      disabled={imageLoading === "generate" || imageLoading === "search"}
+                      onClick={handleGenerateImage}
+                      className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-[12px] text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
+                      style={{ fontWeight: 500 }}
+                    >
+                      {imageLoading === "generate" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <WandSparkles className="h-3.5 w-3.5" />}
+                      AI 生成并插入
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-4">
+                <div>
+                  <div className="mb-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>图注</div>
+                  <input
+                    value={imageCaption}
+                    onChange={(event) => setImageCaption(event.target.value)}
+                    placeholder="图片说明 / 图注"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>插入位置</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: "auto" as const, label: "智能插入" },
+                      { value: "cursor" as const, label: "插入到光标处" },
+                      { value: "end" as const, label: "追加到末尾" },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setImageInsertMode(option.value)}
+                        className={`rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+                          imageInsertMode === option.value
+                            ? "border-blue-200 bg-blue-50 text-blue-600"
+                            : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                        }`}
+                        style={{ fontWeight: 500 }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[12px] leading-6 text-gray-500">默认优先替换图片占位；如果没有占位，就插入到正文当前光标位置。</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>当前草稿</div>
             <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-white to-slate-50 p-4 space-y-3 shadow-[0_12px_36px_rgba(15,23,42,0.04)]">
@@ -1945,12 +2707,25 @@ export function FormatEditor() {
             </div>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-[11px] text-gray-500">标题</label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="block text-[11px] text-gray-500">标题</label>
+                  <span className={`text-[11px] ${isWechatTitleTooLong ? "text-red-500" : "text-gray-400"}`}>
+                    {titleLength} / {WECHAT_TITLE_LIMIT}
+                  </span>
+                </div>
                 <input
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
-                  className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] outline-none focus:border-blue-200 focus:bg-white"
+                  aria-invalid={isWechatTitleTooLong}
+                  className={`w-full rounded-lg bg-gray-50 px-3 py-2 text-[13px] outline-none focus:bg-white ${
+                    isWechatTitleTooLong
+                      ? "border border-red-200 text-red-600 focus:border-red-300"
+                      : "border border-gray-200 focus:border-blue-200"
+                  }`}
                 />
+                {isWechatTitleTooLong ? (
+                  <div className="mt-1 text-[11px] text-red-500">公众号草稿箱标题最长支持 64 个字符，请缩短后再推送。</div>
+                ) : null}
               </div>
               <div>
                 <label className="mb-1 block text-[11px] text-gray-500">导读摘要</label>
@@ -1963,8 +2738,18 @@ export function FormatEditor() {
               <div>
                 <label className="mb-1 block text-[11px] text-gray-500">正文内容</label>
                 <textarea
+                  ref={bodyTextareaRef}
                   value={body}
-                  onChange={(event) => setBody(event.target.value)}
+                  onChange={(event) => {
+                    setBody(event.target.value);
+                    bodySelectionRef.current = {
+                      start: event.target.selectionStart ?? 0,
+                      end: event.target.selectionEnd ?? 0,
+                    };
+                  }}
+                  onClick={syncBodySelection}
+                  onKeyUp={syncBodySelection}
+                  onSelect={syncBodySelection}
                   className="min-h-56 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-blue-200 focus:bg-white"
                 />
               </div>
@@ -2054,6 +2839,8 @@ export function FormatEditor() {
               />
             </div>
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>

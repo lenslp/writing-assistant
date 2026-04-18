@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "../styles/index.css";
 import { Layout } from "./components/Layout";
+import { Toaster } from "./components/ui/sonner";
 import { AppStoreProvider } from "./providers/app-store";
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function RootLayout({
       <body>
         <AppStoreProvider>
           <Layout>{children}</Layout>
+          <Toaster richColors position="top-right" />
         </AppStoreProvider>
       </body>
     </html>

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import * as cheerio from "cheerio";
-import { normalizeTrend, pickTopHotTopicsPerSource, type HotTopicItem } from "./hot-topics";
+import { normalizeTrend, pickBalancedHotTopics, type HotTopicItem } from "./hot-topics";
 import { filterRestrictedTopics } from "./content-policy";
 
 type ScrapedHotTopic = Omit<HotTopicItem, "time"> & {
@@ -9,9 +9,9 @@ type ScrapedHotTopic = Omit<HotTopicItem, "time"> & {
   raw?: unknown;
 };
 
-const HOT_TOPIC_SOURCE_FETCH_LIMIT = 60;
-const HOT_TOPIC_SOURCE_LIMIT = 30;
-const HOT_TOPIC_TOTAL_LIMIT = 240;
+const HOT_TOPIC_SOURCE_FETCH_LIMIT = 100;
+const HOT_TOPIC_SOURCE_LIMIT = 40;
+const HOT_TOPIC_TOTAL_LIMIT = 360;
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -722,7 +722,7 @@ export async function scrapeHotTopics() {
   );
 
   const { allowed, blocked } = filterRestrictedTopics(dedupedItems);
-  const selectedItems = pickTopHotTopicsPerSource(allowed, HOT_TOPIC_SOURCE_LIMIT);
+  const selectedItems = pickBalancedHotTopics(allowed, HOT_TOPIC_TOTAL_LIMIT, HOT_TOPIC_SOURCE_LIMIT);
 
   return {
     items: selectedItems.slice(0, HOT_TOPIC_TOTAL_LIMIT),

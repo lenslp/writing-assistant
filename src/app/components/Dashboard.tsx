@@ -10,7 +10,7 @@ import {
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { formatDraftTime } from "../lib/app-data";
 import { detectArticleDomain, domainConfigs, type ArticleDomain } from "../lib/content-domains";
-import type { HotTopicItem } from "../lib/hot-topics";
+import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicIdentityKey } from "../lib/topic-utils";
 import { useAppStore } from "../providers/app-store";
 
@@ -42,7 +42,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       }
 
       try {
-        const response = await fetch("/api/hot-topics?limit=4", { cache: "no-store" });
+        const response = await fetch("/api/hot-topics?limit=24", { cache: "no-store" });
         const payload = await response.json();
 
         if (!response.ok || !Array.isArray(payload.items)) {
@@ -77,6 +77,18 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     () => Array.from(new Map(topics.map((topic) => [buildTopicIdentityKey(topic), topic])).values()),
     [topics],
   );
+  const recommendedTopics = useMemo(
+    () =>
+      [...uniqueTopics]
+        .sort((left, right) => {
+          const heatRank: Record<string, number> = { 极高: 4, 高: 3, 中高: 2, 中: 1 };
+          if (right.fit !== left.fit) return right.fit - left.fit;
+          if (right.heat !== left.heat) return (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0);
+          return left.title.localeCompare(right.title, "zh-CN");
+        })
+        .slice(0, 10),
+    [uniqueTopics],
+  );
   const fallbackHotTopics = useMemo<HotTopicItem[]>(
     () =>
       uniqueTopics.slice(0, 4).map((topic, index) => ({
@@ -104,6 +116,10 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       })),
     [resolvedDashboardHotTopics],
   );
+  const aiHotTopics = useMemo(
+    () => hotTopics.filter((topic) => isAiRelevantHotTopic(topic)),
+    [hotTopics],
+  );
   const hotTopicsByDomain = useMemo(() => {
     const orderedDomains = Array.from(new Set<ArticleDomain>([
       ...settings.contentAreas,
@@ -130,6 +146,8 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       const matched = hotTopicsByDomain.find((section) => section.domain === activeHotDomain);
       if (matched) return matched;
     }
+    const techSection = hotTopicsByDomain.find((section) => section.domain === "科技");
+    if (techSection) return techSection;
     return hotTopicsByDomain[0];
   }, [activeHotDomain, hotTopicsByDomain]);
   const publishedCount = drafts.filter((draft) => draft.status === "已发布").length;
@@ -144,7 +162,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     }
 
     if (!activeHotDomain || !hotTopicsByDomain.some((section) => section.domain === activeHotDomain)) {
-      setActiveHotDomain(hotTopicsByDomain[0].domain);
+      setActiveHotDomain(hotTopicsByDomain.find((section) => section.domain === "科技")?.domain ?? hotTopicsByDomain[0].domain);
     }
   }, [activeHotDomain, hotTopicsByDomain]);
 
@@ -153,9 +171,16 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[20px]" style={{ fontWeight: 600 }}>工作台</h1>
-          <p className="text-[13px] text-gray-500 mt-1">欢迎回来，{settings.accountName}。今天有 {hotTopics.length} 个新热点，覆盖 {hotTopicsByDomain.length} 个领域值得关注。</p>
+          <p className="text-[13px] text-gray-500 mt-1">欢迎回来，{settings.accountName}。今天有 {hotTopics.length} 个新热点，其中 {aiHotTopics.length} 条更适合往 AI / 科技方向写。</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push("/hot-topics?focus=ai")}
+            className="px-4 py-2 rounded-lg border border-blue-200 bg-blue-50 text-[13px] text-blue-700 hover:bg-blue-100"
+            style={{ fontWeight: 500 }}
+          >
+            看 AI 热点
+          </button>
           <button
             onClick={() => router.push("/topic-center")}
             className="px-4 py-2 rounded-lg bg-blue-600 text-white text-[13px] hover:bg-blue-700"
@@ -297,13 +322,14 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
               <div className="flex items-center gap-2">
                 <Lightbulb className="w-4 h-4 text-blue-500" />
                 <span className="text-[14px]" style={{ fontWeight: 600 }}>推荐选题</span>
+                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-600">Top 10</span>
               </div>
               <Link href="/topic-center" className="text-[12px] text-gray-400 hover:text-blue-600 flex items-center gap-0.5">
                 查看全部 <ChevronRight className="w-3.5 h-3.5" />
               </Link>
             </div>
             <div className="p-4 space-y-3">
-              {uniqueTopics.length ? uniqueTopics.map((topic) => (
+              {recommendedTopics.length ? recommendedTopics.map((topic) => (
                 <div key={topic.id} className="border border-gray-100 rounded-lg p-4 hover:border-blue-200 hover:shadow-sm transition-all">
                   <div className="flex items-start justify-between gap-4">
                     <button

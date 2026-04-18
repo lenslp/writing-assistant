@@ -75,23 +75,248 @@ function derivePrimaryTag(item: HotTopicLike) {
   return item.tags.find(Boolean) ?? item.source;
 }
 
-function deriveAngle(item: HotTopicLike) {
-  const title = `${item.title} ${item.tags.join(" ")}`;
-  const primaryTag = derivePrimaryTag(item);
+function normalizeTopicTitleForAngle(title: string) {
+  return title
+    .replace(/^(知乎|微博|抖音|百度|头条|今日头条)(热搜|热榜)?[:：\s-]*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  if (/AI|大模型|智能体|机器人/i.test(title)) {
-    return "从技术落地、用户价值与内容机会三个层面拆解这波 AI 热点";
+function trimTopicReason(summary?: string | null) {
+  if (!summary?.trim()) return "";
+
+  const cleaned = summary
+    .replace(/[#＃][^#\s]{2,}/g, "")
+    .replace(/欢迎关注[^。！!？?]*/g, "")
+    .replace(/微信号[:：]?[A-Za-z0-9_-]+/gi, "")
+    .replace(/\s+/g, " ")
+    .split(/[。！？!?]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("，");
+
+  if (
+    /^来自(微博|知乎|抖音|百度|头条|今日头条).*(热搜|热榜)/.test(cleaned) ||
+    /实时热点$/.test(cleaned)
+  ) {
+    return "";
   }
 
-  if (/涨|降|裁员|停更|翻车|争议|暴涨|暴跌/.test(title)) {
-    return `围绕「${primaryTag}」拆出冲突点、风险判断和读者最关心的后续影响`;
+  return cleaned;
+}
+
+function buildTopicReasonFromSignals(input: {
+  title: string;
+  source: string;
+  domain: TopicSuggestion["domain"];
+  summary?: string | null;
+}) {
+  const cleanedSummary = trimTopicReason(input.summary);
+  const subject = normalizeTopicTitleForAngle(input.title);
+  const titleCorpus = `${input.title} ${cleanedSummary}`;
+
+  if (/AI|大模型|智能体|机器人|模型|Agent/i.test(titleCorpus)) {
+    return cleanedSummary || `这条热点不只是技术圈自嗨，更适合借「${subject}」去写 AI 正在怎样进入真实场景。`;
   }
 
-  if (/发布|上线|更新|新品|首发|开源/.test(title)) {
-    return `把「${primaryTag}」转成读者看得懂、愿意转发的机会解读`;
+  if (/发布|上线|更新|新品|首发|开源|升级|发布会/.test(titleCorpus)) {
+    return cleanedSummary || `这条消息的写作价值不在“上新”本身，而在于它有没有带来足够具体的产品增量和现实影响。`;
   }
 
-  return `围绕「${primaryTag}」提炼趋势判断、实际影响与行动建议`;
+  if (/补贴|公积金|社保|医保|退休|工资|福利|政策|新规|征求意见|通知|调整/.test(titleCorpus)) {
+    return cleanedSummary || `这类政策热度背后通常连着现金流、规则变化和预期波动，适合尽快写成对普通人有用的解释。`;
+  }
+
+  if (/警方|通报|坠楼|身亡|受伤|急诊|爆炸|起火|车祸|袭击|冲突|咬伤|走失|失联/.test(titleCorpus)) {
+    return cleanedSummary || `这类事故型热点传播很快，但真正值得写的是事实边界、责任归属和普通人能从中避开的风险。`;
+  }
+
+  if (/演唱会|明星|演员|歌手|恋情|离婚|回应|梦回|官宣|塌房|剧组|综艺|校花/.test(titleCorpus)) {
+    return cleanedSummary || `这类娱乐话题容易空转，适合借「${subject}」去写公众情绪、代入机制和现实投射。`;
+  }
+
+  if (/复试|考研|高考|录取|博士|本科|研究生|学校|上岸|保研|分数线/.test(titleCorpus)) {
+    return cleanedSummary || `这类教育热搜之所以能反复冲上来，往往不是因为结果本身，而是它会触发更深的机会焦虑。`;
+  }
+
+  if (/融资|投资|估值|募资|天使轮|并购/.test(titleCorpus)) {
+    return cleanedSummary || `融资消息本身不是重点，重点是资本现在为什么愿意为这件事下注，以及它会先改变什么。`;
+  }
+
+  const domainFallback: Record<TopicSuggestion["domain"], string> = {
+    科技: `这条热点有时效，也有延展空间，适合从技术变化和现实影响两个层面立住判断。`,
+    教育: `这类题容易引发家长和学生共鸣，适合把情绪卡点、误区和能马上做的动作一起讲清楚。`,
+    旅游: `这类出行话题如果只写热闹很快就过去，真正有价值的是把体验、预算和避坑写具体。`,
+    情感: `这类关系话题最有价值的部分，不是表态，而是把说不出口的情绪和边界说准。`,
+    社会: `这类社会议题通常自带讨论度，适合尽快把冲突、后果和规则变化拆开讲。`,
+    汽车: `这类汽车热度背后往往连着真实购车判断，适合把价格、配置和适配人群讲明白。`,
+    其他: `${input.source} 这条内容正在快速升温，适合从冲突、后果和读者代入感三个层面尽快立题。`,
+  };
+
+  return cleanedSummary || domainFallback[input.domain];
+}
+
+function pickDomainAudience(domain: TopicSuggestion["domain"]) {
+  const audienceMap: Record<TopicSuggestion["domain"], string> = {
+    科技: "普通用户和内容创作者",
+    教育: "家长、老师和学生",
+    旅游: "准备出发的人",
+    情感: "关系里容易纠结的人",
+    社会: "对现实议题有代入感的普通人",
+    汽车: "正在看车和准备换车的人",
+    其他: "普通读者",
+  };
+
+  return audienceMap[domain];
+}
+
+function deriveAnglesFromSignals(input: {
+  title: string;
+  tags: string[];
+  source: string;
+  domain: TopicSuggestion["domain"];
+}) {
+  const subject = normalizeTopicTitleForAngle(input.title);
+  const titleCorpus = `${input.title} ${input.tags.join(" ")}`;
+  const domain = input.domain;
+  const audience = pickDomainAudience(domain);
+
+  if (/AI|大模型|智能体|机器人|模型|Agent/i.test(titleCorpus)) {
+    return [
+      `别只盯着「${subject}」的热闹，更值得写的是 AI 到底开始在哪些真实场景落地了`,
+      `对${audience}来说，最实际的问题不是技术名词，而是这波变化会先改掉什么习惯和门槛`,
+      `如果热度继续往上走，真正会被拉开差距的是谁，代价和风险又会落到哪里`,
+    ];
+  }
+
+  if (/发布|上线|更新|新品|首发|开源|升级|发布会/.test(titleCorpus)) {
+    return [
+      `表面看是「${subject}」发布了新东西，真正该写的是它有没有带来足够具体的增量`,
+      `对${audience}来说，最该关心的不是参数堆了多少，而是这次更新会不会真的改变选择`,
+      `这类消息最容易被宣传话术带偏，文章里要把值得期待和不该高估的部分分开讲`,
+    ];
+  }
+
+  if (/涨|降|裁员|停更|翻车|争议|暴涨|暴跌|下架|约谈|曝光|封禁|叫停/.test(titleCorpus)) {
+    return [
+      `别急着站队「${subject}」，更值得写的是情绪背后到底是哪种矛盾被戳破了`,
+      `这件事为什么会让${audience}有代入感，说明现实里哪种焦虑已经积累很久了`,
+      `热度退下去之后，真正该继续追问的不是输赢，而是谁来承担后果、规则会不会变`,
+    ];
+  }
+
+  if (/融资|投资|估值|募资|天使轮|并购/.test(titleCorpus)) {
+    return [
+      `这不只是「${subject}」拿到一笔钱，更值得判断的是资本现在在押什么方向`,
+      `对${audience}来说，真正有价值的不是看热闹，而是看这笔钱会把哪个场景先做实`,
+      `文章里要把机会和泡沫一起写清楚，别把融资消息直接翻译成行业确定性`,
+    ];
+  }
+
+  if (/演唱会|明星|演员|歌手|恋情|离婚|回应|梦回|官宣|塌房|剧组|综艺|校花/.test(titleCorpus)) {
+    return [
+      `别把「${subject}」只写成娱乐八卦，更值得写的是它为什么总能精准戳中大众的代入和投射`,
+      `对${audience}来说，真正值得讨论的不是谁又上热搜了，而是我们到底在借这些故事表达什么情绪`,
+      `这类题如果只跟着吃瓜，很快就会空掉；文章里要把情绪机制、公众想象和现实落差一起拆开`,
+    ];
+  }
+
+  if (/高温|暴雨|台风|气温|极端天气|预警|降温|升温|地震|洪水|山火/.test(titleCorpus)) {
+    return [
+      `别把「${subject}」只写成天气提醒，更值得写的是极端变化为什么越来越频繁地闯进普通人的日常`,
+      `对${audience}来说，真正重要的不是转发一句“注意安全”，而是哪些生活成本和风险已经在悄悄抬高`,
+      `这类题不能只停在情绪感叹，文章里要把眼前影响、长期趋势和具体应对分开讲清楚`,
+    ];
+  }
+
+  if (/复试|考研|高考|录取|博士|本科|研究生|学校|上岸|保研|分数线/.test(titleCorpus)) {
+    return [
+      `表面看是「${subject}」又上了热搜，真正该写的是教育竞争里的哪种执念被再次点燃`,
+      `对${audience}来说，真正刺痛人的不只是结果本身，而是资源、身份和机会分配带来的落差感`,
+      `这类题最容易吵成立场之争，文章里要继续往下写：大家到底在替什么焦虑，边界又该画在哪里`,
+    ];
+  }
+
+  if (/警方|通报|坠楼|身亡|受伤|急诊|爆炸|起火|车祸|袭击|冲突|咬伤|走失|失联/.test(titleCorpus)) {
+    return [
+      `别急着把「${subject}」写成猎奇事件，更值得写的是这种事故为什么总会迅速击中公众神经`,
+      `对${audience}来说，真正需要的不是再添一层情绪，而是先分清事实、责任和可避免的风险`,
+      `这类题如果只写震惊很快就空了，文章里要把制度漏洞、行为门槛和现实教训继续追下去`,
+    ];
+  }
+
+  if (/补贴|公积金|社保|医保|退休|工资|福利|政策|新规|征求意见|通知|调整/.test(titleCorpus)) {
+    return [
+      `别把「${subject}」只当政策新闻看，更值得写的是它会怎样改动普通人的现金流、选择和预期`,
+      `对${audience}来说，最关键的不是把条文背下来，而是先知道自己到底会不会被这次变化真正影响`,
+      `这类题最怕写成政策复读，文章里要把能立刻执行的动作和容易误判的地方一起讲明白`,
+    ];
+  }
+
+  if (/比赛|夺冠|战队|选手|无畏契约|LOL|电竞|联赛|季后赛|足球|篮球/.test(titleCorpus)) {
+    return [
+      `别把「${subject}」只写成赛果播报，更值得写的是这场热度为什么会外溢到圈外`,
+      `对${audience}来说，真正有意思的不是输赢本身，而是人们在这类竞技叙事里投射了什么期待`,
+      `这类题如果只复盘过程会很快同质化，文章里要把情绪动员、商业价值和后续影响一起讲`,
+    ];
+  }
+
+  if (domain === "教育") {
+    return [
+      `别把「${subject}」只写成一个教育话题，更该写的是它为什么总能卡住家长和学生`,
+      `对${audience}来说，真正需要的不是道理更满，而是先知道最先该改哪一步`,
+      `这类题最怕空泛鸡汤，文章里要把误区、边界和能马上做的动作讲具体`,
+    ];
+  }
+
+  if (domain === "情感") {
+    return [
+      `表面看是「${subject}」引发共鸣，真正该写的是关系里那种说不出口的卡点`,
+      `对${audience}来说，最需要的不是站在高处劝，而是先把情绪和边界说准`,
+      `这类题只写共鸣不够，文章里还得往下追问：如果继续这样，会把关系推向哪里`,
+    ];
+  }
+
+  if (domain === "汽车") {
+    return [
+      `别只把「${subject}」写成新车资讯，更值得写的是它对真实购车决策意味着什么`,
+      `对${audience}来说，真正重要的不是配置表本身，而是这些变化值不值那个价格`,
+      `文章里要把亮点、门槛和适合谁说清楚，别让内容停在“看起来很香”`,
+    ];
+  }
+
+  if (domain === "旅游") {
+    return [
+      `别把「${subject}」写成打卡安利，更值得写的是这件事到底值不值得专门安排`,
+      `对${audience}来说，最关心的不是漂亮话，而是体验、预算和避坑信息够不够真`,
+      `这类题要把“适合谁去”和“什么时候去容易踩坑”一起写出来，收藏价值才会高`,
+    ];
+  }
+
+  return [
+    `别把「${subject}」只当一条热搜看，更值得写的是它为什么会在这个时间点突然冲上来`,
+    `对${audience}来说，真正有代入感的不是标题本身，而是这件事会把什么现实问题重新推到台前`,
+    `这类题最容易止步于表态，文章里要继续往下追问：真正的影响会落到谁身上，接下来又会怎么发展`,
+  ];
+}
+
+export function deriveTopicAngles(input: {
+  title: string;
+  tags: string[];
+  source: string;
+  domain: TopicSuggestion["domain"];
+}) {
+  return deriveAnglesFromSignals(input);
+}
+
+export function deriveTopicReason(input: {
+  title: string;
+  source: string;
+  domain: TopicSuggestion["domain"];
+  summary?: string | null;
+}) {
+  return buildTopicReasonFromSignals(input);
 }
 
 function buildTopicHeatLabel(heat: number): TopicSuggestion["heat"] {
@@ -104,6 +329,12 @@ function buildTopicHeatLabel(heat: number): TopicSuggestion["heat"] {
 export function buildTopicSuggestionFromHotTopic(item: HotTopicLike): TopicSuggestion {
   const primaryTag = derivePrimaryTag(item);
   const domain = detectArticleDomain(item.title, item.tags, item.source);
+  const angles = deriveAnglesFromSignals({
+    title: item.title,
+    tags: item.tags,
+    source: item.source,
+    domain,
+  });
 
   return {
     id: buildTopicSuggestionId(item.source, item.title),
@@ -111,12 +342,13 @@ export function buildTopicSuggestionFromHotTopic(item: HotTopicLike): TopicSugge
     domain,
     heat: buildTopicHeatLabel(item.heat),
     fit: clamp(Math.round(item.heat / 100), 72, 96),
-    reason: item.summary || `${item.source} 正在快速升温，适合抢时效输出观点并沉淀公众号读者认知。`,
-    angles: [
-      deriveAngle(item),
-      `从普通读者视角解释「${item.title}」为什么现在值得关注`,
-      `结合账号定位，输出「${primaryTag}」带来的机会、风险与行动建议`,
-    ],
+    reason: buildTopicReasonFromSignals({
+      title: item.title,
+      source: item.source,
+      domain,
+      summary: item.summary,
+    }),
+    angles,
     source: `${item.source} · 实时热点`,
     type: "热点型",
     tags: item.tags.length ? item.tags : [primaryTag],
@@ -193,7 +425,13 @@ function buildMethods(item: HotTopicLike, angle: string) {
 export function buildArticleAnalysisFromHotTopic(item: HotTopicLike): ArticleAnalysisItem {
   const trend = resolveTrend(item);
   const time = formatFetchedTime(toIsoString(item.fetchedAt));
-  const angle = deriveAngle(item);
+  const domain = detectArticleDomain(item.title, item.tags, item.source);
+  const angle = deriveAnglesFromSignals({
+    title: item.title,
+    tags: item.tags,
+    source: item.source,
+    domain,
+  })[0];
   const primaryTag = derivePrimaryTag(item);
   const reads = Math.round(item.heat * 9.2);
   const likes = Math.round(item.heat * 0.11);

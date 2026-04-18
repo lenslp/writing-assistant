@@ -1,19 +1,60 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { RotateCcw, Save, Plus, X } from "lucide-react";
+import { RotateCcw, Save, Plus, X, Star, Pencil, Trash2 } from "lucide-react";
 import { defaultSettings } from "../lib/app-data";
 import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
 import { useAppStore } from "../providers/app-store";
+
+type WechatAccountView = {
+  id: string;
+  name: string;
+  appId: string;
+  appIdMasked: string;
+  hasAppSecret: boolean;
+  defaultAuthor: string;
+  contentSourceUrl: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type WechatAccountForm = {
+  id: string;
+  name: string;
+  appId: string;
+  appSecret: string;
+  defaultAuthor: string;
+  contentSourceUrl: string;
+  setAsSelected: boolean;
+};
+
+const emptyWechatAccountForm: WechatAccountForm = {
+  id: "",
+  name: "",
+  appId: "",
+  appSecret: "",
+  defaultAuthor: "",
+  contentSourceUrl: "",
+  setAsSelected: true,
+};
 
 export function Settings() {
   const { settings, saveSettings } = useAppStore();
   const [form, setForm] = useState(settings);
   const [notice, setNotice] = useState("");
+  const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
+  const [selectedWechatAccountId, setSelectedWechatAccountId] = useState<string | null>(null);
+  const [wechatForm, setWechatForm] = useState<WechatAccountForm>(emptyWechatAccountForm);
+  const [wechatLoading, setWechatLoading] = useState(false);
+  const [wechatLoaded, setWechatLoaded] = useState(false);
 
   useEffect(() => {
     setForm(settings);
   }, [settings]);
+
+  useEffect(() => {
+    void loadWechatAccounts();
+  }, []);
 
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(settings), [form, settings]);
 
@@ -32,6 +73,180 @@ export function Settings() {
     saveSettings(defaultSettings);
     setNotice("已恢复并保存默认设置");
     window.setTimeout(() => setNotice(""), 2000);
+  };
+
+  async function loadWechatAccounts() {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/accounts", { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+
+      if (response.ok && payload) {
+        setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
+        setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
+        setWechatLoaded(true);
+        return;
+      }
+
+      throw new Error(payload?.message ?? "加载公众号账号失败");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载公众号账号失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setWechatLoading(false);
+    }
+  }
+
+  const handleWechatFormChange = <K extends keyof WechatAccountForm>(key: K, value: WechatAccountForm[K]) => {
+    setWechatForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleEditWechatAccount = (account: WechatAccountView) => {
+    setWechatForm({
+      id: account.id,
+      name: account.name,
+      appId: account.appId,
+      appSecret: "",
+      defaultAuthor: account.defaultAuthor,
+      contentSourceUrl: account.contentSourceUrl,
+      setAsSelected: selectedWechatAccountId === account.id,
+    });
+  };
+
+  const resetWechatForm = () => {
+    setWechatForm({
+      ...emptyWechatAccountForm,
+      setAsSelected: wechatAccounts.length === 0,
+    });
+  };
+
+  const handleSaveWechatAccount = async () => {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/accounts", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "upsert",
+          account: wechatForm,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "保存公众号账号失败");
+      }
+
+      setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
+      setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
+      resetWechatForm();
+      setNotice("公众号账号已保存");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "保存公众号账号失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setWechatLoading(false);
+    }
+  };
+
+  const handleDeleteWechatAccount = async (id: string) => {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/accounts", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "删除公众号账号失败");
+      }
+
+      setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
+      setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
+      if (wechatForm.id === id) {
+        resetWechatForm();
+      }
+      setNotice("公众号账号已删除");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "删除公众号账号失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setWechatLoading(false);
+    }
+  };
+
+  const handleSelectWechatAccount = async (id: string) => {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/accounts", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "select",
+          selectedAccountId: id,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "切换默认公众号失败");
+      }
+
+      setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
+      setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
+      setWechatForm((current) => ({ ...current, setAsSelected: current.id ? current.id === id : true }));
+      setNotice("默认公众号已更新");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "切换默认公众号失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setWechatLoading(false);
+    }
+  };
+
+  const handleVerifyWechatAccount = async (id: string) => {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/accounts", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "verify",
+          accountId: id,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? "公众号连接测试失败");
+      }
+
+      setNotice(`连接测试通过${payload.accountName ? ` · ${payload.accountName}` : ""}`);
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "公众号连接测试失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setWechatLoading(false);
+    }
   };
 
   return (
@@ -107,6 +322,133 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title="公众号接入">
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] leading-6 text-emerald-800">
+          AppSecret 只会走服务端保存，不会进入浏览器本地草稿和普通设置同步里。
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>已配置公众号</div>
+              <button
+                type="button"
+                onClick={resetWechatForm}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
+                style={{ fontWeight: 500 }}
+              >
+                新增账号
+              </button>
+            </div>
+
+            {!wechatAccounts.length && wechatLoaded ? (
+              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-[13px] text-gray-500">
+                还没有配置公众号账号。添加后就可以在排版页选择并推送到对应草稿箱。
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              {wechatAccounts.map((account) => {
+                const isSelected = selectedWechatAccountId === account.id;
+
+                return (
+                  <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-emerald-200 bg-emerald-50/70" : "border-gray-200 bg-white"}`}>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>{account.name}</span>
+                          {isSelected ? (
+                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] text-white">默认</span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-[12px] text-gray-500">AppID：{account.appIdMasked}</div>
+                        <div className="mt-1 text-[12px] text-gray-500">
+                          Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
+                        </div>
+                      </div>
+                      <div className="flex flex-nowrap items-center gap-2 lg:max-w-[46%] lg:justify-end">
+                        {!isSelected ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleSelectWechatAccount(account.id)}
+                            aria-label="设为默认"
+                            title="设为默认"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                          >
+                            <Star className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => handleEditWechatAccount(account)}
+                          aria-label="编辑"
+                          title="编辑"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteWechatAccount(account.id)}
+                          aria-label="删除"
+                          title="删除"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
+            <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
+              {wechatForm.id ? "编辑公众号账号" : "新增公众号账号"}
+            </div>
+            <Field label="账号名称" value={wechatForm.name} onChange={(value) => handleWechatFormChange("name", value)} />
+            <Field label="AppID" value={wechatForm.appId} onChange={(value) => handleWechatFormChange("appId", value)} />
+            <Field
+              label={wechatForm.id ? "AppSecret（留空则保持不变）" : "AppSecret"}
+              value={wechatForm.appSecret}
+              onChange={(value) => handleWechatFormChange("appSecret", value)}
+              type="password"
+            />
+            <Field label="默认作者" value={wechatForm.defaultAuthor} onChange={(value) => handleWechatFormChange("defaultAuthor", value)} />
+            <label className="flex items-center gap-2 text-[12px] text-gray-600">
+              <input
+                type="checkbox"
+                checked={wechatForm.setAsSelected}
+                onChange={(event) => handleWechatFormChange("setAsSelected", event.target.checked)}
+              />
+              保存后设为默认公众号
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleSaveWechatAccount()}
+                disabled={wechatLoading}
+                className="rounded-lg bg-emerald-600 px-3 py-2 text-[12px] text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+                style={{ fontWeight: 500 }}
+              >
+                {wechatForm.id ? "保存账号" : "添加账号"}
+              </button>
+              {wechatForm.id ? (
+                <button
+                  type="button"
+                  onClick={resetWechatForm}
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-50"
+                  style={{ fontWeight: 500 }}
+                >
+                  取消编辑
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </Section>
+
       <Section title="内容偏好标签">
         <TagEditor label="你偏好生成的内容形式" values={form.contentPreferences} color="purple" onChange={(values) => updateField("contentPreferences", values)} />
       </Section>
@@ -131,16 +473,18 @@ function Field({
   label,
   value,
   onChange,
+  type = "text",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  type?: "text" | "password";
 }) {
   return (
     <div>
       <label className="text-[12px] text-gray-500 mb-1.5 block">{label}</label>
       <input
-        type="text"
+        type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300 focus:bg-white transition-colors"

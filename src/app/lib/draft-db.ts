@@ -1,4 +1,6 @@
 import { prisma } from "./prisma";
+import { hasDatabaseUrl } from "./prisma";
+import { getSupabaseAdmin } from "./supabase-admin";
 import {
   calculateWords,
   createFormattingForDomain,
@@ -8,6 +10,7 @@ import {
   type DraftFormatting,
   type DraftStatus,
 } from "./app-data";
+import { decodeEscapedStructuralText } from "./body-structure";
 import { resolveArticleDomain } from "./content-domains";
 
 type DraftRecord = {
@@ -26,12 +29,12 @@ type DraftRecord = {
   body: string;
   source: string;
   formatting: unknown;
-  publishedAt?: Date | null;
+  publishedAt?: Date | string | null;
   publishedChannel?: string | null;
-  lastExportedAt?: Date | null;
+  lastExportedAt?: Date | string | null;
   lastExportFormat?: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 };
 
 const validStatuses = new Set<DraftStatus>(["待生成", "待修改", "审核中", "已发布"]);
@@ -64,12 +67,14 @@ function normalizeExportFormat(format: unknown): Draft["lastExportFormat"] {
 }
 
 function normalizeDraftInput(draft: Draft): Draft {
-  const words = draft.body ? calculateWords(draft.body) : draft.words;
+  const normalizedBody = decodeEscapedStructuralText(draft.body ?? "");
+  const words = normalizedBody ? calculateWords(normalizedBody) : draft.words;
   const domain = resolveArticleDomain(draft.domain);
 
   return {
     ...draft,
     domain,
+    body: normalizedBody,
     status: normalizeStatus(draft.status),
     words,
     formatting: normalizeFormatting(draft.formatting ?? createFormattingForDomain(domain, defaultSettings.defaultTemplate)),
@@ -77,6 +82,14 @@ function normalizeDraftInput(draft: Draft): Draft {
 }
 
 export function mapDraftRecord(record: DraftRecord): Draft {
+  const updatedAt = record.updatedAt instanceof Date ? record.updatedAt : new Date(record.updatedAt);
+  const publishedAt = record.publishedAt instanceof Date || record.publishedAt == null
+    ? record.publishedAt
+    : new Date(record.publishedAt);
+  const lastExportedAt = record.lastExportedAt instanceof Date || record.lastExportedAt == null
+    ? record.lastExportedAt
+    : new Date(record.lastExportedAt);
+
   return {
     id: record.id,
     domain: resolveArticleDomain(record.domain),
@@ -84,24 +97,57 @@ export function mapDraftRecord(record: DraftRecord): Draft {
     titleCandidates: record.titleCandidates,
     selectedAngle: record.selectedAngle,
     status: normalizeStatus(record.status),
-    updatedAt: record.updatedAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
     topic: record.topic,
     topicId: record.topicId,
     tags: record.tags,
-    words: record.words,
+    words: record.body ? calculateWords(decodeEscapedStructuralText(record.body)) : record.words,
     summary: record.summary,
     outline: record.outline,
-    body: record.body,
+    body: decodeEscapedStructuralText(record.body),
     source: record.source,
     formatting: normalizeFormatting(record.formatting),
-    publishedAt: record.publishedAt?.toISOString(),
+    publishedAt: publishedAt?.toISOString(),
     publishedChannel: normalizePublishedChannel(record.publishedChannel),
-    lastExportedAt: record.lastExportedAt?.toISOString(),
+    lastExportedAt: lastExportedAt?.toISOString(),
     lastExportFormat: normalizeExportFormat(record.lastExportFormat),
   };
 }
 
 export async function readDrafts() {
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("drafts")
+      .select("*")
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []).map((item) => mapDraftRecord({
+      id: item.id,
+      domain: item.domain,
+      title: item.title,
+      titleCandidates: item.title_candidates ?? [],
+      selectedAngle: item.selected_angle,
+      status: item.status,
+      topic: item.topic,
+      topicId: item.topic_id,
+      tags: item.tags ?? [],
+      words: item.words,
+      summary: item.summary,
+      outline: item.outline ?? [],
+      body: item.body,
+      source: item.source,
+      formatting: item.formatting,
+      publishedAt: item.published_at,
+      publishedChannel: item.published_channel,
+      lastExportedAt: item.last_exported_at,
+      lastExportFormat: item.last_export_format,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    }));
+  }
+
   const drafts = await prisma.draft.findMany({
     orderBy: [{ updatedAt: "desc" }],
   });
@@ -110,6 +156,42 @@ export async function readDrafts() {
 }
 
 export async function readDraftById(draftId: string) {
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("drafts")
+      .select("*")
+      .eq("id", draftId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return mapDraftRecord({
+      id: data.id,
+      domain: data.domain,
+      title: data.title,
+      titleCandidates: data.title_candidates ?? [],
+      selectedAngle: data.selected_angle,
+      status: data.status,
+      topic: data.topic,
+      topicId: data.topic_id,
+      tags: data.tags ?? [],
+      words: data.words,
+      summary: data.summary,
+      outline: data.outline ?? [],
+      body: data.body,
+      source: data.source,
+      formatting: data.formatting,
+      publishedAt: data.published_at,
+      publishedChannel: data.published_channel,
+      lastExportedAt: data.last_exported_at,
+      lastExportFormat: data.last_export_format,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    });
+  }
+
   const draft = await prisma.draft.findUnique({
     where: { id: draftId },
   });
@@ -119,6 +201,62 @@ export async function readDraftById(draftId: string) {
 
 export async function upsertDraft(draft: Draft) {
   const normalized = normalizeDraftInput(draft);
+
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const payload = {
+      id: normalized.id,
+      domain: normalized.domain,
+      title: normalized.title,
+      title_candidates: normalized.titleCandidates,
+      selected_angle: normalized.selectedAngle,
+      status: normalized.status,
+      topic: normalized.topic,
+      topic_id: normalized.topicId,
+      tags: normalized.tags,
+      words: normalized.words,
+      summary: normalized.summary,
+      outline: normalized.outline,
+      body: normalized.body,
+      source: normalized.source,
+      formatting: normalized.formatting,
+      published_at: normalized.publishedAt ?? null,
+      published_channel: normalized.publishedChannel ?? null,
+      last_exported_at: normalized.lastExportedAt ?? null,
+      last_export_format: normalized.lastExportFormat ?? null,
+      updated_at: normalized.updatedAt,
+    };
+    const { data, error } = await supabase
+      .from("drafts")
+      .upsert(payload, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return mapDraftRecord({
+      id: data.id,
+      domain: data.domain,
+      title: data.title,
+      titleCandidates: data.title_candidates ?? [],
+      selectedAngle: data.selected_angle,
+      status: data.status,
+      topic: data.topic,
+      topicId: data.topic_id,
+      tags: data.tags ?? [],
+      words: data.words,
+      summary: data.summary,
+      outline: data.outline ?? [],
+      body: data.body,
+      source: data.source,
+      formatting: data.formatting,
+      publishedAt: data.published_at,
+      publishedChannel: data.published_channel,
+      lastExportedAt: data.last_exported_at,
+      lastExportFormat: data.last_export_format,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    });
+  }
 
   const saved = await prisma.draft.upsert({
     where: { id: normalized.id },
@@ -171,19 +309,71 @@ export async function upsertDraft(draft: Draft) {
 }
 
 export async function patchDraft(draftId: string, patch: Partial<Draft>) {
-  const existing = await prisma.draft.findUnique({
-    where: { id: draftId },
-  });
-
+  const existing = await readDraftById(draftId);
   if (!existing) return null;
 
   const merged = normalizeDraftInput({
-    ...mapDraftRecord(existing),
+    ...existing,
     ...patch,
     id: draftId,
     updatedAt: patch.updatedAt ?? new Date().toISOString(),
-    words: patch.body ? calculateWords(patch.body) : patch.words ?? mapDraftRecord(existing).words,
+    words: patch.body ? calculateWords(patch.body) : patch.words ?? existing.words,
   });
+
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("drafts")
+      .update({
+        title: merged.title,
+        domain: merged.domain,
+        title_candidates: merged.titleCandidates,
+        selected_angle: merged.selectedAngle,
+        status: merged.status,
+        topic: merged.topic,
+        topic_id: merged.topicId,
+        tags: merged.tags,
+        words: merged.words,
+        summary: merged.summary,
+        outline: merged.outline,
+        body: merged.body,
+        source: merged.source,
+        formatting: merged.formatting,
+        published_at: merged.publishedAt ?? null,
+        published_channel: merged.publishedChannel ?? null,
+        last_exported_at: merged.lastExportedAt ?? null,
+        last_export_format: merged.lastExportFormat ?? null,
+        updated_at: merged.updatedAt,
+      })
+      .eq("id", draftId)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return mapDraftRecord({
+      id: data.id,
+      domain: data.domain,
+      title: data.title,
+      titleCandidates: data.title_candidates ?? [],
+      selectedAngle: data.selected_angle,
+      status: data.status,
+      topic: data.topic,
+      topicId: data.topic_id,
+      tags: data.tags ?? [],
+      words: data.words,
+      summary: data.summary,
+      outline: data.outline ?? [],
+      body: data.body,
+      source: data.source,
+      formatting: data.formatting,
+      publishedAt: data.published_at,
+      publishedChannel: data.published_channel,
+      lastExportedAt: data.last_exported_at,
+      lastExportFormat: data.last_export_format,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    });
+  }
 
   const saved = await prisma.draft.update({
     where: { id: draftId },
@@ -214,6 +404,44 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
 }
 
 export async function updateDraftStatusById(draftId: string, status: DraftStatus) {
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("drafts")
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draftId)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    return mapDraftRecord({
+      id: data.id,
+      domain: data.domain,
+      title: data.title,
+      titleCandidates: data.title_candidates ?? [],
+      selectedAngle: data.selected_angle,
+      status: data.status,
+      topic: data.topic,
+      topicId: data.topic_id,
+      tags: data.tags ?? [],
+      words: data.words,
+      summary: data.summary,
+      outline: data.outline ?? [],
+      body: data.body,
+      source: data.source,
+      formatting: data.formatting,
+      publishedAt: data.published_at,
+      publishedChannel: data.published_channel,
+      lastExportedAt: data.last_exported_at,
+      lastExportFormat: data.last_export_format,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    });
+  }
+
   const saved = await prisma.draft.update({
     where: { id: draftId },
     data: {
@@ -226,6 +454,17 @@ export async function updateDraftStatusById(draftId: string, status: DraftStatus
 }
 
 export async function deleteDraftById(draftId: string) {
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("drafts")
+      .delete()
+      .eq("id", draftId);
+
+    if (error) throw error;
+    return;
+  }
+
   await prisma.draft.delete({
     where: { id: draftId },
   });

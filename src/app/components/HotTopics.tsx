@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { useAppStore } from "../providers/app-store";
-import { type HotTopicItem } from "../lib/hot-topics";
+import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { detectArticleDomain } from "../lib/content-domains";
 import { Skeleton } from "./ui/skeleton";
@@ -17,8 +17,8 @@ const trendData = Array.from({ length: 12 }, (_, i) => ({ v: Math.random() * 100
 const loadingStages = ["连接热点源", "聚合平台数据", "整理可写选题"];
 const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
-const HOT_TOPICS_MIXED_PAGE_SIZE = 30;
-const HOT_TOPICS_GROUPED_PAGE_SIZE = 5;
+const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
+const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
 const SOURCE_PRIORITY = ["微博", "知乎", "抖音", "百度", "今日头条"] as const;
 
 type HotTopicsCachePayload = {
@@ -162,6 +162,7 @@ function HotTopicsLoadingShell() {
 export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData }) {
   const [activeSource, setActiveSource] = useState("全部");
   const [activeCategory, setActiveCategory] = useState("全部");
+  const [activeFocus, setActiveFocus] = useState<"all" | "ai">("all");
   const [sortMode, setSortMode] = useState<"heat" | "trend">("heat");
   const [viewMode, setViewMode] = useState<"mixed" | "grouped">("grouped");
   const [keyword, setKeyword] = useState("");
@@ -260,6 +261,15 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       ),
     [items],
   );
+  const aiRelevantTopicIds = useMemo(
+    () => new Set(items.filter((topic) => isAiRelevantHotTopic(topic)).map((topic) => topic.id)),
+    [items],
+  );
+  const aiRelevantCount = aiRelevantTopicIds.size;
+  const techTopicCount = useMemo(
+    () => items.filter((topic) => topicDomainMap.get(topic.id) === "科技").length,
+    [items, topicDomainMap],
+  );
 
   const sortTopics = (topicItems: HotTopicItem[]) =>
     [...topicItems].sort((left, right) => {
@@ -275,13 +285,14 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         items.filter((topic) => {
           const matchesSource = activeSource === "全部" ? true : topic.source === activeSource;
           const matchesCategory = activeCategory === "全部" ? true : topicDomainMap.get(topic.id) === activeCategory;
+          const matchesFocus = activeFocus === "all" ? true : aiRelevantTopicIds.has(topic.id);
           const matchesKeyword = keyword
             ? topic.title.includes(keyword) || topic.tags.some((tag) => tag.includes(keyword))
             : true;
-          return matchesSource && matchesCategory && matchesKeyword;
+          return matchesSource && matchesCategory && matchesFocus && matchesKeyword;
         }),
       ),
-    [activeCategory, activeSource, items, keyword, sortMode, topicDomainMap],
+    [activeCategory, activeFocus, activeSource, aiRelevantTopicIds, items, keyword, sortMode, topicDomainMap],
   );
   const groupedTopics = useMemo(() => {
     const grouped = new Map<string, HotTopicItem[]>();
@@ -315,19 +326,20 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   useEffect(() => {
     setMixedPage(1);
     setGroupedPages({});
-  }, [activeSource, activeCategory, keyword, sortMode, viewMode, items]);
+  }, [activeSource, activeCategory, activeFocus, keyword, sortMode, viewMode, items]);
 
   useEffect(() => {
     const nextCategory = searchParams.get("category");
-    if (nextCategory && nextCategory !== activeCategory) {
+    const nextFocus = searchParams.get("focus");
+
+    if (nextCategory && categoryOptions.includes(nextCategory)) {
       setActiveCategory(nextCategory);
-      return;
     }
 
-    if (!nextCategory && activeCategory !== "全部") {
-      setActiveCategory("全部");
+    if (nextFocus === "ai") {
+      setActiveFocus("ai");
     }
-  }, [activeCategory, searchParams]);
+  }, [categoryOptions, searchParams]);
 
   const openTopic = (topic: HotTopicItem, mode: "topic" | "writing") => {
     const topicId = upsertTopic(buildTopicSuggestionFromHotTopic(topic)).id;
@@ -399,7 +411,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[20px]" style={{ fontWeight: 600 }}>热点中心</h1>
-          <p className="text-[13px] text-gray-500 mt-1">聚合多平台热点，发现适合创作的趋势内容</p>
+          <p className="text-[13px] text-gray-500 mt-1">聚合多平台热点，优先把适合写 AI / 科技的内容抬到前面</p>
         </div>
         <div className="flex items-center gap-2">
           {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
@@ -439,6 +451,29 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         </div>
       </div>
 
+      <div className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+          <div className="text-[12px] text-gray-400">当前热点</div>
+          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{items.length}</div>
+          <div className="text-[12px] text-gray-500">本轮可用条目</div>
+        </div>
+        <div className="rounded-xl border border-blue-100 bg-linear-to-r from-blue-50 via-cyan-50 to-white px-4 py-3">
+          <div className="text-[12px] text-blue-600">AI / 科技相关</div>
+          <div className="mt-1 text-[22px] text-slate-900" style={{ fontWeight: 600 }}>{aiRelevantCount}</div>
+          <div className="text-[12px] text-blue-700/80">已做保底曝光</div>
+        </div>
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+          <div className="text-[12px] text-gray-400">科技领域</div>
+          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{techTopicCount}</div>
+          <div className="text-[12px] text-gray-500">自动识别后的归类</div>
+        </div>
+        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+          <div className="text-[12px] text-gray-400">屏蔽条目</div>
+          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{restrictedCount}</div>
+          <div className="text-[12px] text-gray-500">{dataSource === "database" ? "优先使用缓存库" : "当前为实时抓取"}</div>
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
         {isRefreshing ? (
@@ -470,6 +505,26 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             placeholder="搜索热点关键词..."
             className="bg-transparent border-none outline-none text-[13px] w-full placeholder:text-gray-400"
           />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">专题</span>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {[
+              { key: "all" as const, label: "全部" },
+              { key: "ai" as const, label: `AI / 科技优先 (${aiRelevantCount})` },
+            ].map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setActiveFocus(item.key)}
+                className={`px-3 py-1 rounded-full text-[12px] transition-colors ${
+                  activeFocus === item.key ? "bg-blue-600 text-white" : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                }`}
+                style={{ fontWeight: 500 }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">来源</span>
@@ -630,8 +685,8 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
               <div className="flex-1 divide-y divide-gray-50">
                 {visibleItems.map((topic, index) => (
                   <div key={topic.id} className="min-h-[128px] px-5 py-4 transition-colors hover:bg-slate-50/70">
-                    <div className="flex min-h-full items-start gap-4">
-                      <span className={`mt-0.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-[15px] shadow-sm ${
+                    <div className="flex min-h-full items-start gap-3">
+                      <span className={`mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[14px] text-[13px] shadow-sm ${
                         index + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE < 3 ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-500"
                       }`} style={{ fontWeight: 600 }}>
                         {index + 1 + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE}
@@ -639,12 +694,12 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                       <div className="flex min-h-full min-w-0 flex-1 flex-col">
                         <button
                           onClick={() => openTopic(topic, "topic")}
-                          className="line-clamp-2 min-h-[52px] text-left text-[14px] leading-7 text-slate-800 transition-colors hover:text-blue-600"
+                          className="line-clamp-2 self-start text-left text-[14px] leading-6 text-slate-800 transition-colors hover:text-blue-600"
                           style={{ fontWeight: 500 }}
                         >
                           {topic.title}
                         </button>
-                        <div className="mt-2 flex min-h-[32px] flex-wrap items-center gap-x-3 gap-y-2">
+                        <div className="mt-3 flex min-h-[32px] flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-1 text-[12px] text-slate-500">
                             <Flame className="h-3.5 w-3.5 text-orange-400" />
                             {topic.heat.toLocaleString()}
@@ -685,7 +740,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
               {sourceItems.length > HOT_TOPICS_GROUPED_PAGE_SIZE ? (
                 <div className="flex items-center justify-between border-t border-gray-100 bg-slate-50/60 px-4 py-3">
                   <span className="text-[12px] text-gray-400">
-                    每页 5 条
+                    每页 10 条
                   </span>
                   <div className="flex items-center gap-2">
                   <button

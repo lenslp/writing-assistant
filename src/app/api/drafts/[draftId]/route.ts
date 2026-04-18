@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteDraftById, patchDraft, readDraftById } from "../../../lib/draft-db";
-import { hasDatabaseUrl } from "../../../lib/prisma";
+import { hasPersistenceBackend } from "../../../lib/persistence";
 
 type RouteContext = {
   params: Promise<{
@@ -11,7 +11,7 @@ type RouteContext = {
 export const dynamic = "force-dynamic";
 
 export async function GET(_: Request, context: RouteContext) {
-  if (!hasDatabaseUrl()) {
+  if (!hasPersistenceBackend()) {
     return NextResponse.json({ item: null, persisted: false });
   }
 
@@ -27,8 +27,8 @@ export async function GET(_: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({ message: "DATABASE_URL is not configured" }, { status: 500 });
+  if (!hasPersistenceBackend()) {
+    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
   }
 
   const { draftId } = await context.params;
@@ -54,8 +54,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_: Request, context: RouteContext) {
-  if (!hasDatabaseUrl()) {
-    return NextResponse.json({ message: "DATABASE_URL is not configured" }, { status: 500 });
+  if (!hasPersistenceBackend()) {
+    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
   }
 
   const { draftId } = await context.params;

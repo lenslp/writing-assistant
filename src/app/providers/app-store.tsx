@@ -24,6 +24,7 @@ import {
   type DraftStatus,
   type TopicSuggestion,
 } from "../lib/app-data";
+import { decodeEscapedStructuralText } from "../lib/body-structure";
 import { detectArticleDomain, resolveArticleDomain } from "../lib/content-domains";
 import { buildTopicIdentityKey } from "../lib/topic-utils";
 
@@ -31,6 +32,12 @@ const SETTINGS_KEY = "wechat-writer:settings";
 const DRAFTS_KEY = "wechat-writer:drafts";
 const TOPIC_KEY = "wechat-writer:selected-topic";
 const CUSTOM_TOPICS_KEY = "wechat-writer:custom-topics";
+
+function getBrowserStorage() {
+  if (typeof window === "undefined") return null;
+  const storage = window.localStorage;
+  return storage && typeof storage.getItem === "function" && typeof storage.setItem === "function" ? storage : null;
+}
 
 type GenerateScope = "title" | "outline" | "body";
 
@@ -77,9 +84,12 @@ function normalizeClientSettings(settings: AppSettings): AppSettings {
 
 function normalizeDraft(settings: AppSettings, draft: Draft): Draft {
   const domain = resolveArticleDomain(draft.domain);
+  const body = decodeEscapedStructuralText(draft.body ?? "");
   return {
     ...draft,
+    body,
     domain,
+    words: calculateWords(body),
     formatting: draft.formatting ?? createFormattingForDomain(domain, settings.defaultTemplate),
   };
 }
@@ -168,6 +178,7 @@ function createDraft(topic: TopicSuggestion, settings: AppSettings, scope: Gener
   const outline = createOutline(topic);
   const summary = createSummary(topic, settings);
   const body = scope === "body" ? createBody(topic, settings) : "";
+  const hasBody = Boolean(body.trim());
 
   return {
     id: `draft-${topic.id}`,
@@ -175,7 +186,7 @@ function createDraft(topic: TopicSuggestion, settings: AppSettings, scope: Gener
     title: titleCandidates[0],
     titleCandidates,
     selectedAngle: topic.angles[0],
-    status: scope === "body" ? "待修改" : "待生成",
+    status: hasBody ? "待修改" : "待生成",
     updatedAt: new Date().toISOString(),
     topic: topic.title,
     topicId: topic.id,
@@ -236,13 +247,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
 
   useEffect(() => {
+    const storage = getBrowserStorage();
+    if (!storage) return;
+
     const storedSettings = normalizeClientSettings(
-      parseStoredValue<AppSettings>(localStorage.getItem(SETTINGS_KEY), defaultSettings),
+      parseStoredValue<AppSettings>(storage.getItem(SETTINGS_KEY), defaultSettings),
     );
-    const storedDrafts = parseStoredValue<Draft[]>(localStorage.getItem(DRAFTS_KEY), defaultDrafts)
+    const storedDrafts = parseStoredValue<Draft[]>(storage.getItem(DRAFTS_KEY), defaultDrafts)
       .filter((draft) => !isLegacySeedDraft(draft));
-    const storedCustomTopics = parseStoredValue<TopicSuggestion[]>(localStorage.getItem(CUSTOM_TOPICS_KEY), []).map(normalizeTopic);
-    const storedSelectedTopicId = parseStoredValue<string | null>(localStorage.getItem(TOPIC_KEY), null);
+    const storedCustomTopics = parseStoredValue<TopicSuggestion[]>(storage.getItem(CUSTOM_TOPICS_KEY), []).map(normalizeTopic);
+    const storedSelectedTopicId = parseStoredValue<string | null>(storage.getItem(TOPIC_KEY), null);
 
     setSettings(storedSettings);
     setDrafts(storedDrafts.map((draft) => normalizeDraft(storedSettings, draft)));
@@ -259,17 +273,28 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         if (draftsResponse.ok) {
           const draftsPayload = await draftsResponse.json();
+          const serverDraftItems = Array.isArray(draftsPayload.items) ? (draftsPayload.items as Draft[]) : [];
           const normalizedServerDrafts = Array.isArray(draftsPayload.items)
-            ? draftsPayload.items.map((draft: Draft) => normalizeDraft(storedSettings, draft))
+            ? serverDraftItems.map((draft) => normalizeDraft(storedSettings, draft))
             : [];
           const normalizedLocalDrafts = storedDrafts.map((draft) => normalizeDraft(storedSettings, draft));
           const { mergedDrafts, draftsToSync } = mergeDraftCollections(normalizedServerDrafts, normalizedLocalDrafts);
+          const draftsToRepair = serverDraftItems
+            .map((draft, index) => {
+              const normalizedDraft = normalizedServerDrafts[index];
+              if (!normalizedDraft || normalizedDraft.body === draft.body) {
+                return null;
+              }
+
+              return normalizedDraft;
+            })
+            .filter((draft): draft is Draft => Boolean(draft));
 
           setDrafts(mergedDrafts);
 
-          if (draftsToSync.length) {
+          if (draftsToSync.length || draftsToRepair.length) {
             await Promise.all(
-              draftsToSync.map((draft) =>
+              [...draftsToSync, ...draftsToRepair].map((draft) =>
                 persistDraftSnapshot(draft).catch((error) => {
                   console.error("Failed to sync local draft:", error);
                 }),
@@ -325,19 +350,27 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    const storage = getBrowserStorage();
+    if (!storage) return;
+    storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
   useEffect(() => {
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    const storage = getBrowserStorage();
+    if (!storage) return;
+    storage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
   }, [drafts]);
 
   useEffect(() => {
-    localStorage.setItem(CUSTOM_TOPICS_KEY, JSON.stringify(customTopics));
+    const storage = getBrowserStorage();
+    if (!storage) return;
+    storage.setItem(CUSTOM_TOPICS_KEY, JSON.stringify(customTopics));
   }, [customTopics]);
 
   useEffect(() => {
-    localStorage.setItem(TOPIC_KEY, JSON.stringify(selectedTopicId));
+    const storage = getBrowserStorage();
+    if (!storage) return;
+    storage.setItem(TOPIC_KEY, JSON.stringify(selectedTopicId));
   }, [selectedTopicId]);
 
   const allTopics = useMemo(() => dedupeTopics([...customTopics, ...recommendedTopics]), [customTopics]);
@@ -407,17 +440,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const baseDraft = createDraft(topic, settings, scope);
       const existingDraft = drafts.find((draft) => draft.topicId === topicId);
       const nextDraft: Draft = existingDraft
-        ? {
-            ...existingDraft,
-            titleCandidates: baseDraft.titleCandidates,
-            title: scope === "title" ? baseDraft.titleCandidates[0] : existingDraft.title || baseDraft.title,
-            summary: scope === "title" ? existingDraft.summary : baseDraft.summary,
-            outline: scope === "outline" || scope === "body" ? baseDraft.outline : existingDraft.outline,
-            body: scope === "body" ? baseDraft.body : existingDraft.body,
-            status: scope === "body" ? "待修改" : existingDraft.status === "已发布" ? "已发布" : "待生成",
-            words: scope === "body" ? baseDraft.words : existingDraft.words,
-            updatedAt: new Date().toISOString(),
-            domain: baseDraft.domain,
+          ? {
+              ...existingDraft,
+              titleCandidates: baseDraft.titleCandidates,
+              title: scope === "title" ? baseDraft.titleCandidates[0] : existingDraft.title || baseDraft.title,
+              summary: scope === "title" ? existingDraft.summary : baseDraft.summary,
+              outline: scope === "outline" || scope === "body" ? baseDraft.outline : existingDraft.outline,
+              body: scope === "body" ? baseDraft.body : existingDraft.body,
+              status:
+                scope === "body"
+                  ? (baseDraft.body.trim() ? "待修改" : existingDraft.status === "已发布" ? "已发布" : "待生成")
+                  : existingDraft.status === "已发布"
+                    ? "已发布"
+                    : "待生成",
+              words: scope === "body" ? baseDraft.words : existingDraft.words,
+              updatedAt: new Date().toISOString(),
+              domain: baseDraft.domain,
             formatting: existingDraft.domain === baseDraft.domain ? existingDraft.formatting : baseDraft.formatting,
             selectedAngle: existingDraft.selectedAngle || baseDraft.selectedAngle,
           }

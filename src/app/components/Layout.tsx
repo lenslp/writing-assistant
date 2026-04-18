@@ -27,6 +27,12 @@ type LayoutProps = {
   children: ReactNode;
 };
 
+function getBrowserStorage() {
+  if (typeof window === "undefined") return null;
+  const storage = window.localStorage;
+  return storage && typeof storage.getItem === "function" && typeof storage.setItem === "function" ? storage : null;
+}
+
 export function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -69,7 +75,10 @@ export function Layout({ children }: LayoutProps) {
   const unreadCount = notifications.filter((item) => !readNotificationIds.includes(item.id)).length;
 
   useEffect(() => {
-    const storedValue = window.localStorage.getItem("wechat-writer:read-notifications");
+    const storage = getBrowserStorage();
+    if (!storage) return;
+
+    const storedValue = storage.getItem("wechat-writer:read-notifications");
     if (!storedValue) return;
 
     try {
@@ -80,7 +89,9 @@ export function Layout({ children }: LayoutProps) {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("wechat-writer:read-notifications", JSON.stringify(readNotificationIds));
+    const storage = getBrowserStorage();
+    if (!storage) return;
+    storage.setItem("wechat-writer:read-notifications", JSON.stringify(readNotificationIds));
   }, [readNotificationIds]);
 
   useEffect(() => {

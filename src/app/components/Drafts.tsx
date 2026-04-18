@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Search, Filter, LayoutGrid, List, Copy, Trash2,
+  Search, Filter, LayoutGrid, List, Trash2,
   Clock, Edit3, ArrowRightCircle, Palette, CheckCircle2,
 } from "lucide-react";
 import { formatDraftTime, type DraftStatus } from "../lib/app-data";
@@ -21,7 +21,7 @@ const statusStyles: Record<DraftStatus, { bg: string; dot: string }> = {
 };
 
 export function Drafts() {
-  const { drafts, updateDraftStatus, submitDraftReview, deleteDraft, duplicateDraft } = useAppStore();
+  const { drafts, updateDraftStatus, submitDraftReview, deleteDraft } = useAppStore();
   const [activeStatus, setActiveStatus] = useState<(typeof statusTabs)[number]>("全部");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [keyword, setKeyword] = useState("");
@@ -63,13 +63,6 @@ export function Drafts() {
       updateDraftStatus(draftId, nextStatus);
     }
     setNotice(`已流转到「${nextStatus}」`);
-    window.setTimeout(() => setNotice(""), 1500);
-  };
-
-  const handleDuplicate = (draftId: string) => {
-    const nextDraft = duplicateDraft(draftId);
-    if (!nextDraft) return;
-    setNotice("已复制草稿");
     window.setTimeout(() => setNotice(""), 1500);
   };
 
@@ -136,7 +129,7 @@ export function Drafts() {
 
       {viewMode === "list" ? (
         <div className="bg-white rounded-xl border border-gray-100">
-          <div className="grid grid-cols-[1fr_100px_120px_80px_80px_120px] px-5 py-2.5 border-b border-gray-100 text-[12px] text-gray-400" style={{ fontWeight: 500 }}>
+          <div className="grid grid-cols-[1fr_100px_120px_80px_80px_112px] px-5 py-2.5 border-b border-gray-100 text-[12px] text-gray-400" style={{ fontWeight: 500 }}>
             <span>标题</span>
             <span>状态</span>
             <span>更新时间</span>
@@ -148,7 +141,7 @@ export function Drafts() {
             {filtered.length ? filtered.map((draft) => {
               const statusStyle = statusStyles[draft.status];
               return (
-                <div key={draft.id} className="grid grid-cols-[1fr_100px_120px_80px_80px_120px] items-center px-5 py-3 hover:bg-gray-50/50 transition-colors group">
+                <div key={draft.id} className="grid grid-cols-[1fr_100px_120px_80px_80px_112px] items-center px-5 py-3 hover:bg-gray-50/50 transition-colors group">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="text-[13px] truncate group-hover:text-blue-600 transition-colors" style={{ fontWeight: 500 }}>{draft.title}</div>
@@ -173,27 +166,37 @@ export function Drafts() {
                     ))}
                   </div>
                   <div className="flex items-center justify-end gap-1">
-                    <Link href={`/writing?draftId=${draft.id}`} className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100">
+                    <Link
+                      href={`/writing?draftId=${draft.id}`}
+                      title="继续写作"
+                      aria-label="继续写作"
+                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100"
+                    >
                       <Edit3 className="w-3.5 h-3.5 text-gray-400" />
                     </Link>
-                    <Link href={`/format-editor?draftId=${draft.id}`} className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100">
+                    <Link
+                      href={`/format-editor?draftId=${draft.id}`}
+                      title="排版编辑"
+                      aria-label="排版编辑"
+                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100"
+                    >
                       <Palette className="w-3.5 h-3.5 text-gray-400" />
                     </Link>
-                    <button onClick={() => moveToNextStatus(draft.id, draft.status)} className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100">
+                    <button
+                      onClick={() => moveToNextStatus(draft.id, draft.status)}
+                      title="推进流程"
+                      aria-label="推进流程"
+                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100"
+                    >
                       <ArrowRightCircle className="w-3.5 h-3.5 text-gray-400" />
                     </button>
                     <button
-                      onClick={() => handleDuplicate(draft.id)}
-                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100"
-                      title="复制草稿"
-                    >
-                      <Copy className="w-3.5 h-3.5 text-gray-400" />
-                    </button>
-                    <button
                       onClick={() => handleDelete(draft.id)}
-                      className="text-[11px] text-red-500 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50"
+                      title="删除草稿"
+                      aria-label="删除草稿"
+                      className="w-7 h-7 flex items-center justify-center rounded text-red-400 hover:bg-red-50 hover:text-red-500"
                     >
-                      删除
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -221,16 +224,28 @@ export function Drafts() {
                     {draft.status}
                   </span>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                    <Link href={`/format-editor?draftId=${draft.id}`} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100">
+                    <Link
+                      href={`/format-editor?draftId=${draft.id}`}
+                      title="排版编辑"
+                      aria-label="排版编辑"
+                      className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100"
+                    >
                       <Palette className="w-3.5 h-3.5 text-gray-400" />
                     </Link>
-                    <button onClick={() => moveToNextStatus(draft.id, draft.status)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100">
+                    <button
+                      onClick={() => moveToNextStatus(draft.id, draft.status)}
+                      title="推进流程"
+                      aria-label="推进流程"
+                      className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100"
+                    >
                       <ArrowRightCircle className="w-3.5 h-3.5 text-gray-400" />
                     </button>
-                    <button onClick={() => handleDuplicate(draft.id)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400">
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={() => handleDelete(draft.id)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-50 text-red-400">
+                    <button
+                      onClick={() => handleDelete(draft.id)}
+                      title="删除草稿"
+                      aria-label="删除草稿"
+                      className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-50 text-red-400"
+                    >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>

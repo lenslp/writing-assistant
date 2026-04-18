@@ -5,9 +5,11 @@ import {
   transformWechatText,
 } from "../../../lib/ai-writing";
 import { getRestrictedReason } from "../../../lib/content-policy";
+import { resolveHotTopicSourceContext } from "../../../lib/hot-topic-context";
 import type { AIWriteRequest } from "../../../lib/ai-writing-types";
 
 export const dynamic = "force-dynamic";
+const SOURCE_CONTEXT_TIME_BUDGET_MS = 2500;
 
 function isValidRequest(payload: unknown): payload is AIWriteRequest {
   if (!payload || typeof payload !== "object" || !("mode" in payload)) {
@@ -97,12 +99,28 @@ export async function POST(request: Request) {
     }
 
     if (payload.mode === "generate") {
-      const result = await generateWechatArticle(payload);
+      const sourceContextPromise = resolveHotTopicSourceContext(payload.topic).catch((error) => {
+        console.error("Failed to resolve hot topic source context:", error);
+        return null;
+      });
+      const sourceContext = await Promise.race<Awaited<typeof sourceContextPromise> | null>([
+        sourceContextPromise,
+        new Promise<null>((resolve) => {
+          setTimeout(() => resolve(null), SOURCE_CONTEXT_TIME_BUDGET_MS);
+        }),
+      ]);
+
+      const result = await generateWechatArticle({
+        ...payload,
+        sourceContext,
+      });
+
       return NextResponse.json({
         configured: true,
         provider: result.provider,
         model: result.model,
         result: result.result,
+        sourceContextUsed: Boolean(sourceContext?.content),
       });
     }
 

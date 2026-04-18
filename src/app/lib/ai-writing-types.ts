@@ -5,6 +5,16 @@ export type AIWriteScope = "title" | "outline" | "body" | "full";
 
 export type AITransformAction = "rewrite" | "expand" | "shorten";
 
+export type HotTopicSourceContext = {
+  title: string;
+  source: string;
+  url: string;
+  summary: string;
+  content: string;
+  facts: string[];
+  extractedAt: string;
+};
+
 export type DraftWritingSnapshot = Pick<
   Draft,
   | "id"
@@ -32,6 +42,7 @@ export type AIWriteGenerateRequest = {
   targetReader: string;
   tone: string;
   draft?: DraftWritingSnapshot | null;
+  sourceContext?: HotTopicSourceContext | null;
 };
 
 export type AIWriteTransformRequest = {
@@ -46,6 +57,7 @@ export type AIWriteTransformRequest = {
   draft?: DraftWritingSnapshot | null;
   body: string;
   selectedText?: string;
+  sourceContext?: HotTopicSourceContext | null;
 };
 
 export type AIWriteRequest = AIWriteGenerateRequest | AIWriteTransformRequest;
