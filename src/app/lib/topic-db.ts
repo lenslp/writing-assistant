@@ -246,3 +246,47 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
 
   return mapTopicRecord(item);
 }
+
+function rebuildTopicWithCurrentRules(topic: TopicSuggestion): TopicSuggestion {
+  const domain = detectArticleDomain(topic.title, topic.tags, topic.source, topic.reason);
+
+  return {
+    ...topic,
+    domain,
+    reason: deriveTopicReason({
+      title: topic.title,
+      source: topic.source,
+      domain,
+      summary: topic.reason,
+    }),
+    angles: deriveTopicAngles({
+      title: topic.title,
+      tags: topic.tags,
+      source: topic.source,
+      domain,
+    }),
+  };
+}
+
+export async function reclassifyTopicRecords() {
+  const topics = await readTopics();
+  let updatedCount = 0;
+
+  for (const topic of topics) {
+    const nextTopic = rebuildTopicWithCurrentRules(topic);
+    const changed =
+      nextTopic.domain !== topic.domain ||
+      nextTopic.reason !== topic.reason ||
+      nextTopic.angles.join("\n") !== topic.angles.join("\n");
+
+    if (!changed) continue;
+
+    await upsertTopicRecord(nextTopic);
+    updatedCount += 1;
+  }
+
+  return {
+    total: topics.length,
+    updatedCount,
+  };
+}

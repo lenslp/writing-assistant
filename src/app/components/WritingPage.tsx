@@ -58,6 +58,10 @@ const domainUiThemes: Record<
   情感: { primary: "#db2777", accent: "#f472b6", soft: "#fff1f2", border: "#fbcfe8", text: "#be185d" },
   社会: { primary: "#ea580c", accent: "#eab308", soft: "#fefce8", border: "#fde68a", text: "#ca8a04" },
   汽车: { primary: "#1d4ed8", accent: "#dc2626", soft: "#eff6ff", border: "#bfdbfe", text: "#1e40af" },
+  体育: { primary: "#16a34a", accent: "#22c55e", soft: "#f0fdf4", border: "#bbf7d0", text: "#15803d" },
+  娱乐: { primary: "#c026d3", accent: "#ec4899", soft: "#fdf4ff", border: "#f5d0fe", text: "#a21caf" },
+  财经: { primary: "#b45309", accent: "#f59e0b", soft: "#fffbeb", border: "#fde68a", text: "#92400e" },
+  文化: { primary: "#7c3aed", accent: "#a78bfa", soft: "#f5f3ff", border: "#ddd6fe", text: "#6d28d9" },
   其他: { primary: "#475569", accent: "#94a3b8", soft: "#f8fafc", border: "#cbd5e1", text: "#334155" },
 };
 
@@ -68,6 +72,10 @@ const domainArticleTypeOptions: Record<keyof typeof domainConfigs, string[]> = {
   情感: ["共鸣文", "故事文", "观点文", "关系解读"],
   社会: ["热点解读", "事件观察", "观点文", "案例文"],
   汽车: ["评测文", "对比文", "解读文", "购车指南"],
+  体育: ["赛事解读", "人物文", "观点文", "复盘文"],
+  娱乐: ["热点解读", "人物文", "作品解读", "舆论观察"],
+  财经: ["商业解读", "消费观察", "公司分析", "观点文"],
+  文化: ["文化观察", "生活方式", "人物文", "观点文"],
   其他: ["综合观察", "热点杂谈", "信息解读", "清单文"],
 };
 
@@ -1119,7 +1127,7 @@ export function WritingPage() {
                 <div className="text-[13px] mb-2" style={{ fontWeight: 600 }}>AI 写作状态</div>
                 <div className="bg-amber-50/70 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-1">
                   <p>{aiStatus ? `当前模型：${aiStatus}` : "尚未发起 AI 写作请求"}</p>
-                  <p>生成失败时，请检查服务端 `AI_API_KEY / OPENAI_API_KEY` 与模型配置。</p>
+                  <p>生成失败时，请到设置页检查模型配置，并使用“测试模型”确认接口可用。</p>
                 </div>
               </div>
             </div>

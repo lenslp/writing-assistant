@@ -46,7 +46,7 @@ function isValidRequest(payload: unknown): payload is AIWriteRequest {
 }
 
 export async function POST(request: Request) {
-  const config = getAIProviderConfig();
+  const config = await getAIProviderConfig();
 
   if (!config.configured) {
     return NextResponse.json(

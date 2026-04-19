@@ -10,6 +10,7 @@ import {
 import { domainConfigs, resolveArticleDomain } from "./content-domains";
 import { resolveWritingTone } from "./writing-tones";
 import { decodeEscapedStructuralText, normalizeStructuredBodyText } from "./body-structure";
+import { readAIProviderSecret, type AIProviderSecret } from "./app-config-db";
 import type {
   AITransformAction,
   AIWriteGenerateRequest,
@@ -32,6 +33,7 @@ type ModelSelection = {
   primary: string;
   fallback?: string;
 };
+type RuntimeModelConfig = Partial<AIProviderSecret> | null;
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_MODEL = "qwen3.5-plus";
@@ -209,6 +211,7 @@ function getEnv(name: string) {
 
 function detectProvider(baseUrl: string) {
   if (baseUrl.includes("dashscope") || baseUrl.includes("aliyuncs")) return "Qwen / DashScope";
+  if (baseUrl.includes("anthropic")) return "Claude / Anthropic";
   if (baseUrl.includes("openrouter")) return "OpenRouter";
   if (baseUrl.includes("deepseek")) return "DeepSeek";
   if (baseUrl.includes("siliconflow")) return "SiliconFlow";
@@ -281,9 +284,13 @@ function toErrorCause(error: unknown) {
   return error instanceof Error ? error : undefined;
 }
 
-export function getAIProviderConfig(): ProviderConfig {
-  const apiKey = getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
-  const baseUrl = (getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, "");
+export async function getAIProviderConfig(): Promise<ProviderConfig> {
+  const storedConfig = await readAIProviderSecret().catch((error) => {
+    console.error("Failed to read AI provider config:", error);
+    return null;
+  });
+  const apiKey = storedConfig?.apiKey || getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
+  const baseUrl = (storedConfig?.baseUrl || getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, "");
 
   return {
     configured: Boolean(apiKey),
@@ -293,49 +300,55 @@ export function getAIProviderConfig(): ProviderConfig {
   };
 }
 
-function getTaskSpecificModel(task: AIModelTask) {
+function getTaskSpecificModel(task: AIModelTask, runtimeConfig: RuntimeModelConfig) {
   const upperTask = task.toUpperCase();
+  const runtimeTaskModel =
+    task === "title" || task === "outline" || task === "transform"
+      ? runtimeConfig?.fastModel
+      : runtimeConfig?.longformModel;
 
   return (
+    runtimeTaskModel ||
     getEnv(`AI_MODEL_${upperTask}`) ||
     getEnv(`OPENAI_MODEL_${upperTask}`) ||
     ""
   );
 }
 
-function getExplicitFastModel() {
-  return getEnv("AI_MODEL_FAST") || getEnv("OPENAI_MODEL_FAST") || "";
+function getExplicitFastModel(runtimeConfig: RuntimeModelConfig) {
+  return runtimeConfig?.fastModel || getEnv("AI_MODEL_FAST") || getEnv("OPENAI_MODEL_FAST") || "";
 }
 
-function getExplicitLongformModel() {
-  return getEnv("AI_MODEL_LONGFORM") || getEnv("OPENAI_MODEL_LONGFORM") || "";
+function getExplicitLongformModel(runtimeConfig: RuntimeModelConfig) {
+  return runtimeConfig?.longformModel || getEnv("AI_MODEL_LONGFORM") || getEnv("OPENAI_MODEL_LONGFORM") || "";
 }
 
-function getAIModelSelectionForTask(task: AIModelTask): ModelSelection {
-  const directTaskModel = getTaskSpecificModel(task);
+async function getAIModelSelectionForTask(task: AIModelTask): Promise<ModelSelection> {
+  const runtimeConfig = await readAIProviderSecret().catch((error) => {
+    console.error("Failed to read AI provider model selection:", error);
+    return null;
+  });
+  const directTaskModel = getTaskSpecificModel(task, runtimeConfig);
   if (directTaskModel) return { primary: directTaskModel };
 
-  const generalModel = getEnv("AI_MODEL") || getEnv("OPENAI_MODEL") || "";
+  const generalModel = runtimeConfig?.model || getEnv("AI_MODEL") || getEnv("OPENAI_MODEL") || "";
 
   if (task === "title" || task === "outline" || task === "transform") {
-    const fastModel = getExplicitFastModel() || DEFAULT_FAST_MODEL;
+    const explicitFastModel = getExplicitFastModel(runtimeConfig);
+    const fastModel = explicitFastModel || DEFAULT_FAST_MODEL;
 
     return {
-      primary: getExplicitFastModel() || generalModel || DEFAULT_FAST_MODEL,
+      primary: explicitFastModel || generalModel || DEFAULT_FAST_MODEL,
       fallback:
-        !getExplicitFastModel() && generalModel && generalModel !== fastModel
+        !explicitFastModel && generalModel && generalModel !== fastModel
           ? fastModel
           : undefined,
     };
   }
 
   return {
-    primary: getExplicitLongformModel() || generalModel || DEFAULT_MODEL,
+    primary: getExplicitLongformModel(runtimeConfig) || generalModel || DEFAULT_MODEL,
   };
-}
-
-function getAIModelForTask(task: AIModelTask) {
-  return getAIModelSelectionForTask(task).primary;
 }
 
 function createBaseResult(
@@ -600,23 +613,46 @@ function selectPrimaryTitle(preferredTitle: string, titleCandidates: string[], f
   return candidates.sort((left, right) => scoreTitleNaturalness(right) - scoreTitleNaturalness(left))[0] ?? fallbackTitle;
 }
 
-function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: string) {
+function getTitleCandidateDiversityIssue(titleCandidates: string[], topicTitle: string) {
   const normalized = Array.from(new Set(titleCandidates.map((item) => item.trim()).filter(Boolean)));
   if (normalized.length < 4) {
-    throw new Error("标题候选太少，句式不够分散，请重新生成。");
+    return "标题候选太少，句式不够分散，请重新生成。";
   }
 
   const archetypeCount = new Set(normalized.map((item) => detectTitleArchetype(item))).size;
   if (archetypeCount < 2) {
-    throw new Error("标题候选句式过于单一，请重新生成。");
+    return "标题候选句式过于单一，请重新生成。";
   }
 
   const repeatedLeadCount = normalized.filter((item) =>
     item.startsWith("别把") || item.startsWith("为什么") || item.startsWith("关于") || item.startsWith(topicTitle),
   ).length;
   if (archetypeCount < 3 && repeatedLeadCount >= 4) {
-    throw new Error("标题候选开头太像一套模板，请重新生成。");
+    return "标题候选开头太像一套模板，请重新生成。";
   }
+
+  return "";
+}
+
+function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: string) {
+  const issue = getTitleCandidateDiversityIssue(titleCandidates, topicTitle);
+  if (issue) {
+    throw new Error(issue);
+  }
+}
+
+function resolveSafeTitleCandidates(aiCandidates: string[], fallbackCandidates: string[], topicTitle: string) {
+  const normalizedAiCandidates = polishTitleCandidates(aiCandidates);
+  if (!getTitleCandidateDiversityIssue(normalizedAiCandidates, topicTitle)) {
+    return normalizedAiCandidates;
+  }
+
+  const normalizedFallbackCandidates = polishTitleCandidates(fallbackCandidates);
+  if (normalizedFallbackCandidates.length) {
+    return normalizedFallbackCandidates;
+  }
+
+  return normalizedAiCandidates;
 }
 
 function assertOutlineDiversity(outline: string[]) {
@@ -875,14 +911,15 @@ function assertResultConsistency(
 
   const summaryMatches = countMatchedKeywords(result.summary, keywords);
   const outlineMatches = countMatchedKeywords(result.outline.join(" "), keywords);
+  const planningMatches = summaryMatches + outlineMatches;
 
-  if (summaryMatches === 0 && outlineMatches === 0) {
+  if (planningMatches === 0) {
     throw new Error("生成结果和当前选题的关联度太弱，请重新生成。");
   }
 
   if (options?.requireBody) {
     const bodyMatches = countMatchedKeywords(stripNonArticleText(result.body), keywords);
-    if (bodyMatches === 0) {
+    if (bodyMatches === 0 && planningMatches === 0) {
       throw new Error("正文和当前选题的关联度太弱，请重新生成。");
     }
   }
@@ -1248,8 +1285,8 @@ async function callCompatibleModel({
   temperature: number;
   task: AIModelTask;
 }) {
-  const config = getAIProviderConfig();
-  const modelSelection = getAIModelSelectionForTask(task);
+  const config = await getAIProviderConfig();
+  const modelSelection = await getAIModelSelectionForTask(task);
   const model = modelSelection.primary;
   const fallbackModel = modelSelection.fallback;
 
@@ -1337,14 +1374,17 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
   const existingSummary = request.draft?.summary?.trim() ?? base.summary;
   const existingOutline = request.draft?.outline?.filter(Boolean).length ? request.draft.outline : [];
 
-  const titleCandidates = polishTitleCandidates(normalizeStringList(parsed.titleCandidates, base.titleCandidates));
+  const titleCandidates = resolveSafeTitleCandidates(
+    normalizeStringList(parsed.titleCandidates, base.titleCandidates),
+    base.titleCandidates,
+    request.topic.title,
+  );
   const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, base.body));
 
-  assertTitleCandidateDiversity(titleCandidates, request.topic.title);
   if (request.scope !== "title") {
     assertOutlineDiversity(outline);
   }
@@ -1392,13 +1432,16 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
   const base = createBaseResult(request.topic, request.settings, request.draft);
   const parsed = extractJsonPayload(rawText);
 
-  const titleCandidates = polishTitleCandidates(normalizeStringList(parsed.titleCandidates, base.titleCandidates));
+  const titleCandidates = resolveSafeTitleCandidates(
+    normalizeStringList(parsed.titleCandidates, base.titleCandidates),
+    base.titleCandidates,
+    request.topic.title,
+  );
   const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
 
-  assertTitleCandidateDiversity(titleCandidates, request.topic.title);
   assertOutlineDiversity(outline);
   assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline);
   assertResultConsistency(request.topic, { summary, outline, body: "" });
@@ -1420,11 +1463,14 @@ function mergeBodyWithPlan(
   fallbackBody = "",
 ): AIWriteResult {
   const parsed = extractJsonPayload(rawText);
-  const titleCandidates = polishTitleCandidates(normalizeStringList(parsed.titleCandidates, plan.titleCandidates));
+  const titleCandidates = resolveSafeTitleCandidates(
+    normalizeStringList(parsed.titleCandidates, plan.titleCandidates),
+    plan.titleCandidates,
+    topic.title,
+  );
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, plan.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, plan.body));
 
-  assertTitleCandidateDiversity(titleCandidates, topic.title);
   assertOutlineDiversity(outline);
   assertGeneratedBodyQuality(body, fallbackBody || plan.body);
   assertResultConsistency(topic, { summary: plan.summary, outline: plan.outline, body }, { requireBody: true });

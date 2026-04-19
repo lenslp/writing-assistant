@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { readAIImageProviderSecret } from "./app-config-db";
 
 type ImageProviderConfig = {
   configured: boolean;
@@ -116,16 +117,21 @@ async function waitForDashScopeTask(baseUrl: string, apiKey: string, taskId: str
   throw new Error("AI 图片生成超时，请稍后重试。");
 }
 
-export function getAIImageConfig(): ImageProviderConfig {
-  const apiKey = getEnv("AI_IMAGE_API_KEY") || getEnv("OPENAI_IMAGE_API_KEY") || getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
+export async function getAIImageConfig(): Promise<ImageProviderConfig> {
+  const storedConfig = await readAIImageProviderSecret().catch((error) => {
+    console.error("Failed to read AI image provider config:", error);
+    return null;
+  });
+  const apiKey = storedConfig?.apiKey || getEnv("AI_IMAGE_API_KEY") || getEnv("OPENAI_IMAGE_API_KEY") || getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
   const baseUrl = (
+    storedConfig?.baseUrl ||
     getEnv("AI_IMAGE_BASE_URL") ||
     getEnv("OPENAI_IMAGE_BASE_URL") ||
     getEnv("AI_BASE_URL") ||
     getEnv("OPENAI_BASE_URL") ||
     DEFAULT_IMAGE_BASE_URL
   ).replace(/\/+$/, "");
-  const model = getEnv("AI_IMAGE_MODEL") || getEnv("OPENAI_IMAGE_MODEL");
+  const model = storedConfig?.model || getEnv("AI_IMAGE_MODEL") || getEnv("OPENAI_IMAGE_MODEL");
 
   return {
     configured: Boolean(apiKey && model),
@@ -171,7 +177,7 @@ async function normalizeGeneratedImageUrl(url: string) {
 }
 
 export async function generateArticleImage(prompt: string) {
-  const config = getAIImageConfig();
+  const config = await getAIImageConfig();
 
   if (!config.configured) {
     throw new Error("AI 图片模型未配置，请补充 AI_IMAGE_MODEL 及对应 API Key。");

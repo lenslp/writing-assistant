@@ -74,6 +74,13 @@ type RealImageSearchItem = {
   thumbnailUrl?: string;
 };
 
+type WechatDraftCheckItem = {
+  key: string;
+  label: string;
+  ok: boolean;
+  message: string;
+};
+
 const AUTO_HIGHLIGHT_PATTERNS = [
   /(?:先说结论|结论先说|一句话总结|核心在于|关键在于|本质上|更重要的是|最重要的是|真正重要的是|真正的问题是|需要注意的是|说白了|简单来说|换句话说|归根结底|一定要记住|记住一句话)/g,
   /不是[^，。；！？\n]{1,30}而是[^，。；！？\n]{1,40}/g,
@@ -845,6 +852,8 @@ export function FormatEditor() {
   const [imageInsertMode, setImageInsertMode] = useState<ImageInsertMode>("auto");
   const [imageLoading, setImageLoading] = useState<"upload" | "search" | "generate" | null>(null);
   const [wechatDraftLoading, setWechatDraftLoading] = useState(false);
+  const [wechatDraftChecking, setWechatDraftChecking] = useState(false);
+  const [wechatDraftCheckItems, setWechatDraftCheckItems] = useState<WechatDraftCheckItem[]>([]);
   const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
   const [selectedWechatAccountId, setSelectedWechatAccountId] = useState<string | null>(null);
   const [isToolbarMoreOpen, setIsToolbarMoreOpen] = useState(false);
@@ -1419,17 +1428,67 @@ export function FormatEditor() {
     router.push("/published");
   };
 
+  const runWechatDraftCheck = async () => {
+    const response = await fetch("/api/wechat/draft/check", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title,
+        summary,
+        body,
+        author: selectedWechatAccount?.name || settings.accountName,
+        domain: articleDomain,
+        accountId: selectedWechatAccountId,
+      }),
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !Array.isArray(payload?.items)) {
+      throw new Error(payload?.message ?? "推送前检查失败");
+    }
+
+    const items = payload.items as WechatDraftCheckItem[];
+    setWechatDraftCheckItems(items);
+    return {
+      ok: Boolean(payload.ok),
+      items,
+    };
+  };
+
+  const handleCheckWechatDraft = async () => {
+    if (!currentDraft || wechatDraftChecking) return;
+
+    setWechatDraftChecking(true);
+
+    try {
+      const result = await runWechatDraftCheck();
+      if (result.ok) {
+        toast.success("推送前检查通过");
+      } else {
+        const firstIssue = result.items.find((item) => !item.ok);
+        toast.error(firstIssue?.message ?? "推送前检查未通过");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "推送前检查失败");
+    } finally {
+      setWechatDraftChecking(false);
+    }
+  };
+
   const handlePushToWechatDraft = async () => {
     if (!currentDraft || wechatDraftLoading) return;
-
-    if (isWechatTitleTooLong) {
-      toast.error(`标题过长，当前 ${titleLength} / ${WECHAT_TITLE_LIMIT}，请先缩短后再推送`);
-      return;
-    }
 
     setWechatDraftLoading(true);
 
     try {
+      const checkResult = await runWechatDraftCheck();
+      if (!checkResult.ok) {
+        const firstIssue = checkResult.items.find((item) => !item.ok);
+        throw new Error(firstIssue?.message ?? "推送前检查未通过");
+      }
+
       const response = await fetch("/api/wechat/draft", {
         method: "POST",
         headers: {
@@ -1542,6 +1601,15 @@ export function FormatEditor() {
             </div>
           ) : null}
           <button
+            onClick={() => void handleCheckWechatDraft()}
+            disabled={wechatDraftChecking || wechatDraftLoading}
+            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-lg text-[12px] hover:bg-emerald-50 disabled:opacity-60"
+            style={{ fontWeight: 500 }}
+          >
+            {wechatDraftChecking ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
+            推送检查
+          </button>
+          <button
             onClick={() => void handlePushToWechatDraft()}
             disabled={wechatDraftLoading}
             className="flex shrink-0 items-center gap-1.5 whitespace-nowrap bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
@@ -1589,6 +1657,23 @@ export function FormatEditor() {
         {notice ? <span className="shrink-0 text-[12px] text-green-600 whitespace-nowrap px-1">{notice}</span> : null}
         </div>
       </div>
+      {wechatDraftCheckItems.length ? (
+        <div className="border-b border-emerald-100 bg-emerald-50/70 px-4 py-2">
+          <div className="flex flex-wrap gap-2">
+            {wechatDraftCheckItems.map((item) => (
+              <span
+                key={item.key}
+                className={`rounded-full px-2.5 py-1 text-[11px] ${
+                  item.ok ? "bg-white text-emerald-700" : "bg-red-50 text-red-600"
+                }`}
+                title={item.message}
+              >
+                {item.ok ? "通过" : "需处理"} · {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {isToolbarMoreOpen && toolbarMoreMenuPosition ? createPortal(
         <div
           ref={toolbarMoreMenuRef}

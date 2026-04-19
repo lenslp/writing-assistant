@@ -9,8 +9,8 @@ import {
 } from "lucide-react";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { formatDraftTime } from "../lib/app-data";
-import { detectArticleDomain, domainConfigs, type ArticleDomain } from "../lib/content-domains";
-import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
+import { articleDomains, detectArticleDomain, domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import { type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicIdentityKey } from "../lib/topic-utils";
 import { useAppStore } from "../providers/app-store";
 
@@ -20,6 +20,7 @@ const statusColors: Record<string, string> = {
   审核中: "bg-purple-50 text-purple-600",
   已发布: "bg-green-50 text-green-600",
 };
+const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
 
 export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTopicItem[] }) {
   const router = useRouter();
@@ -116,15 +117,11 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       })),
     [resolvedDashboardHotTopics],
   );
-  const aiHotTopics = useMemo(
-    () => hotTopics.filter((topic) => isAiRelevantHotTopic(topic)),
-    [hotTopics],
-  );
   const hotTopicsByDomain = useMemo(() => {
     const orderedDomains = Array.from(new Set<ArticleDomain>([
       ...settings.contentAreas,
       ...hotTopics.map((topic) => topic.domain),
-    ]));
+    ])).sort((left, right) => (DOMAIN_ORDER.get(left) ?? 999) - (DOMAIN_ORDER.get(right) ?? 999));
 
     return orderedDomains
       .map((domain) => {
@@ -171,16 +168,9 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[20px]" style={{ fontWeight: 600 }}>工作台</h1>
-          <p className="text-[13px] text-gray-500 mt-1">欢迎回来，{settings.accountName}。今天有 {hotTopics.length} 个新热点，其中 {aiHotTopics.length} 条更适合往 AI / 科技方向写。</p>
+          <p className="text-[13px] text-gray-500 mt-1">欢迎回来，{settings.accountName}。今天有 {hotTopics.length} 个新热点，先挑一个值得写的开始。</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => router.push("/hot-topics?focus=ai")}
-            className="px-4 py-2 rounded-lg border border-blue-200 bg-blue-50 text-[13px] text-blue-700 hover:bg-blue-100"
-            style={{ fontWeight: 500 }}
-          >
-            看 AI 热点
-          </button>
           <button
             onClick={() => router.push("/topic-center")}
             className="px-4 py-2 rounded-lg bg-blue-600 text-white text-[13px] hover:bg-blue-700"

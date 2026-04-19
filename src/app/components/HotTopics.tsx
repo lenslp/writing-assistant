@@ -8,9 +8,9 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { useAppStore } from "../providers/app-store";
-import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
+import { type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
-import { detectArticleDomain } from "../lib/content-domains";
+import { articleDomains, detectArticleDomain, type ArticleDomain } from "../lib/content-domains";
 import { Skeleton } from "./ui/skeleton";
 
 const trendData = Array.from({ length: 12 }, (_, i) => ({ v: Math.random() * 100 + 20 }));
@@ -20,6 +20,7 @@ const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
 const SOURCE_PRIORITY = ["微博", "知乎", "抖音", "百度", "今日头条"] as const;
+const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
 
 type HotTopicsCachePayload = {
   items: HotTopicItem[];
@@ -162,9 +163,8 @@ function HotTopicsLoadingShell() {
 export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData }) {
   const [activeSource, setActiveSource] = useState("全部");
   const [activeCategory, setActiveCategory] = useState("全部");
-  const [activeFocus, setActiveFocus] = useState<"all" | "ai">("all");
   const [sortMode, setSortMode] = useState<"heat" | "trend">("heat");
-  const [viewMode, setViewMode] = useState<"mixed" | "grouped">("grouped");
+  const [viewMode, setViewMode] = useState<"mixed" | "grouped">("mixed");
   const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<HotTopicItem[]>(initialData?.items ?? []);
   const [dataSource, setDataSource] = useState<"database" | "live">(initialData?.source ?? "live");
@@ -175,6 +175,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const [restrictedCount, setRestrictedCount] = useState(initialData?.restrictedCount ?? 0);
   const [mixedPage, setMixedPage] = useState(1);
   const [groupedPages, setGroupedPages] = useState<Record<string, number>>({});
+  const [isReclassifying, setIsReclassifying] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { settings, upsertTopic } = useAppStore();
@@ -261,11 +262,6 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       ),
     [items],
   );
-  const aiRelevantTopicIds = useMemo(
-    () => new Set(items.filter((topic) => isAiRelevantHotTopic(topic)).map((topic) => topic.id)),
-    [items],
-  );
-  const aiRelevantCount = aiRelevantTopicIds.size;
   const techTopicCount = useMemo(
     () => items.filter((topic) => topicDomainMap.get(topic.id) === "科技").length,
     [items, topicDomainMap],
@@ -285,14 +281,13 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         items.filter((topic) => {
           const matchesSource = activeSource === "全部" ? true : topic.source === activeSource;
           const matchesCategory = activeCategory === "全部" ? true : topicDomainMap.get(topic.id) === activeCategory;
-          const matchesFocus = activeFocus === "all" ? true : aiRelevantTopicIds.has(topic.id);
           const matchesKeyword = keyword
             ? topic.title.includes(keyword) || topic.tags.some((tag) => tag.includes(keyword))
             : true;
-          return matchesSource && matchesCategory && matchesFocus && matchesKeyword;
+          return matchesSource && matchesCategory && matchesKeyword;
         }),
       ),
-    [activeCategory, activeFocus, activeSource, aiRelevantTopicIds, items, keyword, sortMode, topicDomainMap],
+    [activeCategory, activeSource, items, keyword, sortMode, topicDomainMap],
   );
   const groupedTopics = useMemo(() => {
     const grouped = new Map<string, HotTopicItem[]>();
@@ -313,7 +308,11 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
     [items],
   );
   const categoryOptions = useMemo(
-    () => ["全部", ...Array.from(new Set([...settings.contentAreas, ...Array.from(topicDomainMap.values())]))],
+    () => [
+      "全部",
+      ...Array.from(new Set([...settings.contentAreas, ...Array.from(topicDomainMap.values())]))
+        .sort((left, right) => (DOMAIN_ORDER.get(left) ?? 999) - (DOMAIN_ORDER.get(right) ?? 999)),
+    ],
     [settings.contentAreas, topicDomainMap],
   );
   const refreshStage = loadingStages[Math.min(loadingStages.length - 1, Math.floor((items.length || 0) / 10))];
@@ -326,18 +325,13 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   useEffect(() => {
     setMixedPage(1);
     setGroupedPages({});
-  }, [activeSource, activeCategory, activeFocus, keyword, sortMode, viewMode, items]);
+  }, [activeSource, activeCategory, keyword, sortMode, viewMode, items]);
 
   useEffect(() => {
     const nextCategory = searchParams.get("category");
-    const nextFocus = searchParams.get("focus");
 
     if (nextCategory && categoryOptions.includes(nextCategory)) {
       setActiveCategory(nextCategory);
-    }
-
-    if (nextFocus === "ai") {
-      setActiveFocus("ai");
     }
   }, [categoryOptions, searchParams]);
 
@@ -402,6 +396,44 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
     }
   };
 
+  const handleReclassify = async () => {
+    setIsReclassifying(true);
+    setRefreshWarning("");
+
+    try {
+      const response = await fetch("/api/hot-topics/reclassify", { method: "POST" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message ?? "重新归类失败");
+      }
+
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(HOT_TOPICS_CACHE_KEY);
+      }
+
+      const latest = await fetch("/api/hot-topics", { cache: "no-store" });
+      const latestPayload = await latest.json().catch(() => null);
+      if (latest.ok && Array.isArray(latestPayload?.items)) {
+        setItems(latestPayload.items);
+        setDataSource(latestPayload.source === "database" ? "database" : "live");
+        setRestrictedCount(typeof latestPayload.restrictedCount === "number" ? latestPayload.restrictedCount : 0);
+        writeHotTopicsCache({
+          items: latestPayload.items,
+          source: latestPayload.source === "database" ? "database" : "live",
+          restrictedCount: typeof latestPayload.restrictedCount === "number" ? latestPayload.restrictedCount : 0,
+        });
+      }
+
+      setNotice(`已按最新分类规则重算 ${payload.updatedCount ?? 0} 个选题`);
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (error) {
+      setRefreshWarning(error instanceof Error ? error.message : "重新归类失败");
+    } finally {
+      setIsReclassifying(false);
+    }
+  };
+
   if (isLoading) {
     return <HotTopicsLoadingShell />;
   }
@@ -411,7 +443,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[20px]" style={{ fontWeight: 600 }}>热点中心</h1>
-          <p className="text-[13px] text-gray-500 mt-1">聚合多平台热点，优先把适合写 AI / 科技的内容抬到前面</p>
+          <p className="text-[13px] text-gray-500 mt-1">聚合多平台热点，方便按来源、领域和关键词筛选可写内容</p>
         </div>
         <div className="flex items-center gap-2">
           {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
@@ -422,6 +454,14 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
             {isRefreshing ? "刷新中" : "抓取热点"}
+          </button>
+          <button
+            onClick={handleReclassify}
+            disabled={isReclassifying || isRefreshing || isLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isReclassifying ? "animate-spin" : ""}`} />
+            {isReclassifying ? "归类中" : "重新归类"}
           </button>
           <button
             onClick={() => setSortMode((current) => (current === "heat" ? "trend" : "heat"))}
@@ -451,16 +491,11 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
           <div className="text-[12px] text-gray-400">当前热点</div>
           <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{items.length}</div>
           <div className="text-[12px] text-gray-500">本轮可用条目</div>
-        </div>
-        <div className="rounded-xl border border-blue-100 bg-linear-to-r from-blue-50 via-cyan-50 to-white px-4 py-3">
-          <div className="text-[12px] text-blue-600">AI / 科技相关</div>
-          <div className="mt-1 text-[22px] text-slate-900" style={{ fontWeight: 600 }}>{aiRelevantCount}</div>
-          <div className="text-[12px] text-blue-700/80">已做保底曝光</div>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
           <div className="text-[12px] text-gray-400">科技领域</div>
@@ -505,26 +540,6 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             placeholder="搜索热点关键词..."
             className="bg-transparent border-none outline-none text-[13px] w-full placeholder:text-gray-400"
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">专题</span>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {[
-              { key: "all" as const, label: "全部" },
-              { key: "ai" as const, label: `AI / 科技优先 (${aiRelevantCount})` },
-            ].map((item) => (
-              <button
-                key={item.key}
-                onClick={() => setActiveFocus(item.key)}
-                className={`px-3 py-1 rounded-full text-[12px] transition-colors ${
-                  activeFocus === item.key ? "bg-blue-600 text-white" : "bg-gray-50 text-gray-600 hover:bg-gray-100"
-                }`}
-                style={{ fontWeight: 500 }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">来源</span>

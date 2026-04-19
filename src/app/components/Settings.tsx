@@ -28,6 +28,36 @@ type WechatAccountForm = {
   setAsSelected: boolean;
 };
 
+type AIProviderView = {
+  baseUrl: string;
+  model: string;
+  fastModel: string;
+  longformModel: string;
+  hasApiKey: boolean;
+  source: "database" | "environment" | "default";
+};
+
+type AIProviderForm = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  fastModel: string;
+  longformModel: string;
+};
+
+type AIImageProviderView = {
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  source: "database" | "environment" | "default";
+};
+
+type AIImageProviderForm = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+};
+
 const emptyWechatAccountForm: WechatAccountForm = {
   id: "",
   name: "",
@@ -38,6 +68,65 @@ const emptyWechatAccountForm: WechatAccountForm = {
   setAsSelected: true,
 };
 
+const emptyAIProviderForm: AIProviderForm = {
+  baseUrl: "",
+  apiKey: "",
+  model: "",
+  fastModel: "",
+  longformModel: "",
+};
+
+const emptyAIImageProviderForm: AIImageProviderForm = {
+  baseUrl: "",
+  apiKey: "",
+  model: "",
+};
+
+const aiProviderPresets = [
+  {
+    name: "Claude",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-4-6",
+    fastModel: "claude-3-5-haiku-latest",
+    longformModel: "claude-sonnet-4-6",
+  },
+  {
+    name: "通义千问",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen3.5-plus",
+    fastModel: "qwen-turbo",
+    longformModel: "qwen3.5-plus",
+  },
+  {
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    fastModel: "deepseek-chat",
+    longformModel: "deepseek-chat",
+  },
+  {
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-4o-mini",
+    fastModel: "openai/gpt-4o-mini",
+    longformModel: "openai/gpt-4o",
+  },
+  {
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    fastModel: "gpt-4o-mini",
+    longformModel: "gpt-4o",
+  },
+  {
+    name: "中转服务",
+    baseUrl: "https://你的中转域名/v1",
+    model: "gpt-4o-mini",
+    fastModel: "gpt-4o-mini",
+    longformModel: "gpt-4o",
+  },
+] as const;
+
 export function Settings() {
   const { settings, saveSettings } = useAppStore();
   const [form, setForm] = useState(settings);
@@ -47,6 +136,13 @@ export function Settings() {
   const [wechatForm, setWechatForm] = useState<WechatAccountForm>(emptyWechatAccountForm);
   const [wechatLoading, setWechatLoading] = useState(false);
   const [wechatLoaded, setWechatLoaded] = useState(false);
+  const [aiProvider, setAIProvider] = useState<AIProviderView | null>(null);
+  const [aiProviderForm, setAIProviderForm] = useState<AIProviderForm>(emptyAIProviderForm);
+  const [aiProviderLoading, setAIProviderLoading] = useState(false);
+  const [aiProviderTesting, setAIProviderTesting] = useState(false);
+  const [aiImageProvider, setAIImageProvider] = useState<AIImageProviderView | null>(null);
+  const [aiImageProviderForm, setAIImageProviderForm] = useState<AIImageProviderForm>(emptyAIImageProviderForm);
+  const [aiImageProviderLoading, setAIImageProviderLoading] = useState(false);
 
   useEffect(() => {
     setForm(settings);
@@ -54,6 +150,8 @@ export function Settings() {
 
   useEffect(() => {
     void loadWechatAccounts();
+    void loadAIProviderConfig();
+    void loadAIImageProviderConfig();
   }, []);
 
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(settings), [form, settings]);
@@ -98,8 +196,219 @@ export function Settings() {
     }
   }
 
+  async function loadAIProviderConfig() {
+    setAIProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/provider", { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "加载模型配置失败");
+      }
+
+      const config = payload.config as AIProviderView;
+      setAIProvider(config);
+      setAIProviderForm({
+        baseUrl: config.baseUrl || aiProviderPresets[0].baseUrl,
+        apiKey: "",
+        model: config.model || aiProviderPresets[0].model,
+        fastModel: config.fastModel || "",
+        longformModel: config.longformModel || "",
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载模型配置失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setAIProviderLoading(false);
+    }
+  }
+
+  async function loadAIImageProviderConfig() {
+    setAIImageProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/image-provider", { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "加载图片模型配置失败");
+      }
+
+      const config = payload.config as AIImageProviderView;
+      setAIImageProvider(config);
+      setAIImageProviderForm({
+        baseUrl: config.baseUrl || "https://api.openai.com/v1",
+        apiKey: "",
+        model: config.model || "",
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "加载图片模型配置失败");
+      window.setTimeout(() => setNotice(""), 2500);
+    } finally {
+      setAIImageProviderLoading(false);
+    }
+  }
+
   const handleWechatFormChange = <K extends keyof WechatAccountForm>(key: K, value: WechatAccountForm[K]) => {
     setWechatForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleAIProviderFormChange = <K extends keyof AIProviderForm>(key: K, value: AIProviderForm[K]) => {
+    setAIProviderForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleAIImageProviderFormChange = <K extends keyof AIImageProviderForm>(key: K, value: AIImageProviderForm[K]) => {
+    setAIImageProviderForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleApplyAIProviderPreset = (preset: typeof aiProviderPresets[number]) => {
+    setAIProviderForm((current) => ({
+      ...current,
+      baseUrl: preset.baseUrl,
+      model: preset.model,
+      fastModel: preset.fastModel,
+      longformModel: preset.longformModel,
+    }));
+  };
+
+  const handleSaveAIProviderConfig = async () => {
+    setAIProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/provider", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(aiProviderForm),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "保存模型配置失败");
+      }
+
+      const config = payload.config as AIProviderView;
+      setAIProvider(config);
+      setAIProviderForm((current) => ({ ...current, apiKey: "" }));
+      setNotice("模型配置已保存");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "保存模型配置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setAIProviderLoading(false);
+    }
+  };
+
+  const handleTestAIProviderConfig = async () => {
+    setAIProviderTesting(true);
+
+    try {
+      const response = await fetch("/api/ai/test", { method: "POST" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message ?? "模型连接测试失败");
+      }
+
+      setNotice(`${payload.provider ?? "模型"} · ${payload.model ?? ""} 测试通过`);
+      window.setTimeout(() => setNotice(""), 3000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "模型连接测试失败");
+      window.setTimeout(() => setNotice(""), 4000);
+    } finally {
+      setAIProviderTesting(false);
+    }
+  };
+
+  const handleDeleteAIProviderConfig = async () => {
+    setAIProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/provider", { method: "DELETE" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "恢复环境变量配置失败");
+      }
+
+      const config = payload.config as AIProviderView;
+      setAIProvider(config);
+      setAIProviderForm({
+        baseUrl: config.baseUrl || aiProviderPresets[0].baseUrl,
+        apiKey: "",
+        model: config.model || aiProviderPresets[0].model,
+        fastModel: config.fastModel || "",
+        longformModel: config.longformModel || "",
+      });
+      setNotice("已恢复使用环境变量模型配置");
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "恢复环境变量配置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setAIProviderLoading(false);
+    }
+  };
+
+  const handleSaveAIImageProviderConfig = async () => {
+    setAIImageProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/image-provider", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(aiImageProviderForm),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "保存图片模型配置失败");
+      }
+
+      const config = payload.config as AIImageProviderView;
+      setAIImageProvider(config);
+      setAIImageProviderForm((current) => ({ ...current, apiKey: "" }));
+      setNotice("图片模型配置已保存");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "保存图片模型配置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setAIImageProviderLoading(false);
+    }
+  };
+
+  const handleDeleteAIImageProviderConfig = async () => {
+    setAIImageProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/image-provider", { method: "DELETE" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "恢复图片模型环境变量配置失败");
+      }
+
+      const config = payload.config as AIImageProviderView;
+      setAIImageProvider(config);
+      setAIImageProviderForm({
+        baseUrl: config.baseUrl || "https://api.openai.com/v1",
+        apiKey: "",
+        model: config.model || "",
+      });
+      setNotice("已恢复使用环境变量图片模型配置");
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "恢复图片模型环境变量配置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setAIImageProviderLoading(false);
+    }
   };
 
   const handleEditWechatAccount = (account: WechatAccountView) => {
@@ -319,6 +628,165 @@ export function Settings() {
               </button>
             ))}
           </div>
+        </div>
+      </Section>
+
+      <Section title="AI 写作模型">
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-[13px] leading-6 text-blue-800">
+          API Key 只保存在服务端配置里。中转服务直接填写它提供的 OpenAI 兼容 Base URL、Key 和模型名；保存后，标题、大纲、正文生成会优先使用这里的模型。
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-6">
+          {aiProviderPresets.map((preset) => (
+            <button
+              key={preset.name}
+              type="button"
+              onClick={() => handleApplyAIProviderPreset(preset)}
+              className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-100"
+              style={{ fontWeight: 500 }}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Field
+            label="接口地址 Base URL"
+            value={aiProviderForm.baseUrl}
+            onChange={(value) => handleAIProviderFormChange("baseUrl", value)}
+          />
+          <Field
+            label={aiProvider?.hasApiKey ? "API Key（留空则保持不变）" : "API Key"}
+            value={aiProviderForm.apiKey}
+            onChange={(value) => handleAIProviderFormChange("apiKey", value)}
+            type="password"
+          />
+          <Field
+            label="默认写作模型"
+            value={aiProviderForm.model}
+            onChange={(value) => handleAIProviderFormChange("model", value)}
+          />
+          <Field
+            label="快模型（标题 / 大纲 / 改写）"
+            value={aiProviderForm.fastModel}
+            onChange={(value) => handleAIProviderFormChange("fastModel", value)}
+          />
+          <Field
+            label="长文模型（正文 / 全文）"
+            value={aiProviderForm.longformModel}
+            onChange={(value) => handleAIProviderFormChange("longformModel", value)}
+          />
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-[12px] leading-6 text-gray-500">
+            <div className="text-gray-900" style={{ fontWeight: 600 }}>当前状态</div>
+            <div>来源：{aiProvider?.source === "database" ? "页面配置" : aiProvider?.source === "environment" ? "环境变量" : "默认配置"}</div>
+            <div>密钥：{aiProvider?.hasApiKey ? "已配置" : "未配置"}</div>
+            <div className="truncate">模型：{aiProvider?.model || aiProviderForm.model || "未设置"}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSaveAIProviderConfig()}
+            disabled={aiProviderLoading}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
+            style={{ fontWeight: 500 }}
+          >
+            {aiProviderLoading ? "保存中" : "保存模型配置"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void loadAIProviderConfig()}
+            disabled={aiProviderLoading}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+            style={{ fontWeight: 500 }}
+          >
+            重新读取
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleTestAIProviderConfig()}
+            disabled={aiProviderLoading || aiProviderTesting}
+            className="rounded-lg border border-blue-200 px-4 py-2 text-[13px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+            style={{ fontWeight: 500 }}
+          >
+            {aiProviderTesting ? "测试中" : "测试模型"}
+          </button>
+          {aiProvider?.source === "database" ? (
+            <button
+              type="button"
+              onClick={() => void handleDeleteAIProviderConfig()}
+              disabled={aiProviderLoading}
+              className="rounded-lg border border-red-100 px-4 py-2 text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-60"
+              style={{ fontWeight: 500 }}
+            >
+              使用环境变量
+            </button>
+          ) : null}
+        </div>
+      </Section>
+
+      <Section title="AI 图片模型">
+        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-[13px] leading-6 text-amber-800">
+          这里配置的是 AI 配图模型；真实图片搜索不受影响。留空时继续使用环境变量里的图片模型。
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Field
+            label="图片接口 Base URL"
+            value={aiImageProviderForm.baseUrl}
+            onChange={(value) => handleAIImageProviderFormChange("baseUrl", value)}
+          />
+          <Field
+            label={aiImageProvider?.hasApiKey ? "图片 API Key（留空则保持不变）" : "图片 API Key"}
+            value={aiImageProviderForm.apiKey}
+            onChange={(value) => handleAIImageProviderFormChange("apiKey", value)}
+            type="password"
+          />
+          <Field
+            label="图片模型"
+            value={aiImageProviderForm.model}
+            onChange={(value) => handleAIImageProviderFormChange("model", value)}
+          />
+          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-[12px] leading-6 text-gray-500">
+            <div className="text-gray-900" style={{ fontWeight: 600 }}>当前状态</div>
+            <div>来源：{aiImageProvider?.source === "database" ? "页面配置" : aiImageProvider?.source === "environment" ? "环境变量" : "默认配置"}</div>
+            <div>密钥：{aiImageProvider?.hasApiKey ? "已配置" : "未配置"}</div>
+            <div className="truncate">模型：{aiImageProvider?.model || aiImageProviderForm.model || "未设置"}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSaveAIImageProviderConfig()}
+            disabled={aiImageProviderLoading}
+            className="rounded-lg bg-amber-600 px-4 py-2 text-[13px] text-white hover:bg-amber-700 disabled:bg-amber-300"
+            style={{ fontWeight: 500 }}
+          >
+            {aiImageProviderLoading ? "保存中" : "保存图片模型"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void loadAIImageProviderConfig()}
+            disabled={aiImageProviderLoading}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+            style={{ fontWeight: 500 }}
+          >
+            重新读取
+          </button>
+          {aiImageProvider?.source === "database" ? (
+            <button
+              type="button"
+              onClick={() => void handleDeleteAIImageProviderConfig()}
+              disabled={aiImageProviderLoading}
+              className="rounded-lg border border-red-100 px-4 py-2 text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-60"
+              style={{ fontWeight: 500 }}
+            >
+              使用环境变量
+            </button>
+          ) : null}
         </div>
       </Section>
 

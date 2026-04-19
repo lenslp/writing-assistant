@@ -26,7 +26,7 @@ function buildPrompt(payload: Payload) {
 }
 
 export async function POST(request: Request) {
-  const config = getAIImageConfig();
+  const config = await getAIImageConfig();
 
   if (!config.configured) {
     return NextResponse.json(

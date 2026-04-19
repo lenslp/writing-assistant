@@ -137,6 +137,10 @@ export function createFormattingForDomain(domain: ArticleDomain, fallbackTemplat
     情感: { template: "暖色调", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
     社会: { template: "暖色调", colorScheme: "商务橙", gradientQuote: true, roundedQuote: true, numberedBadge: false },
     汽车: { template: "商务灰", colorScheme: "默认蓝", gradientQuote: true, roundedQuote: false, numberedBadge: false },
+    体育: { template: "商务灰", colorScheme: "默认蓝", gradientQuote: true, roundedQuote: false, numberedBadge: true },
+    娱乐: { template: "暖色调", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    财经: { template: "商务灰", colorScheme: "商务橙", gradientQuote: true, roundedQuote: false, numberedBadge: true },
+    文化: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
     其他: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
   };
 

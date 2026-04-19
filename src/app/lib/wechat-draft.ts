@@ -42,6 +42,13 @@ type WechatDraftInput = {
   accountId?: string | null;
 };
 
+export type WechatDraftPrecheckItem = {
+  key: string;
+  label: string;
+  ok: boolean;
+  message: string;
+};
+
 const WECHAT_API_BASE = "https://api.weixin.qq.com";
 const WECHAT_DIGEST_LIMIT = 120;
 const IMAGE_MARKDOWN_PATTERN = /^!\[(.*?)\]\((.+)\)$/;
@@ -397,6 +404,20 @@ function validateWechatDraftTitle(title: string) {
   }
 }
 
+function getWechatDraftTitleIssue(title: string) {
+  const normalizedTitle = title.trim();
+
+  if (!normalizedTitle) {
+    return "标题不能为空。";
+  }
+
+  if (normalizedTitle.length > 64) {
+    return `标题过长，当前 ${normalizedTitle.length} / 64。`;
+  }
+
+  return "";
+}
+
 function normalizeWechatDigest(summary: string) {
   const normalizedSummary = summary.trim();
 
@@ -720,7 +741,7 @@ function renderWechatArticleHtml(title: string, summary: string, blocks: DraftBl
     );
   });
 
-  return `<section style="font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;color:${domainStyle.paragraphColor};"><div style="display:inline-block;margin:0 0 16px;padding:6px 12px;border-radius:999px;background:${primary};color:#ffffff;font-size:12px;font-weight:700;">${escapeHtml(domainStyle.badgeText)}</div>${sections.join("")}</section>`;
+  return `<section style="font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;color:${domainStyle.paragraphColor};">${sections.join("")}</section>`;
 }
 
 export async function pushArticleToWechatDraft(input: WechatDraftInput) {
@@ -791,5 +812,82 @@ export async function pushArticleToWechatDraft(input: WechatDraftInput) {
     mediaId: payload.media_id,
     articleCount: 1,
     digestTruncated: digestInfo.truncated,
+  };
+}
+
+export async function precheckWechatDraft(input: WechatDraftInput) {
+  const items: WechatDraftPrecheckItem[] = [];
+  const config = await getWechatConfig(input.accountId);
+
+  items.push({
+    key: "account",
+    label: "公众号账号",
+    ok: config.configured,
+    message: config.configured
+      ? `已配置${config.accountName ? `：${config.accountName}` : ""}`
+      : "未配置公众号账号或 AppSecret。",
+  });
+
+  const titleIssue = getWechatDraftTitleIssue(input.title);
+  items.push({
+    key: "title",
+    label: "标题长度",
+    ok: !titleIssue,
+    message: titleIssue || `标题长度 ${input.title.trim().length} / 64。`,
+  });
+
+  const digestInfo = normalizeWechatDigest(input.summary);
+  items.push({
+    key: "summary",
+    label: "摘要",
+    ok: true,
+    message: digestInfo.truncated ? `摘要会自动截断到 ${WECHAT_DIGEST_LIMIT} 字。` : "摘要长度可用。",
+  });
+
+  const body = input.body.trim();
+  items.push({
+    key: "body",
+    label: "正文",
+    ok: Boolean(body),
+    message: body ? "正文已填写。" : "正文不能为空。",
+  });
+
+  const blocks = extractBlocks(body);
+  const imageBlocks = blocks.filter((block): block is Extract<DraftBlock, { type: "image" }> => block.type === "image");
+  items.push({
+    key: "image",
+    label: "正文图片",
+    ok: imageBlocks.length > 0,
+    message: imageBlocks.length ? `已检测到 ${imageBlocks.length} 张图片。` : "推送前至少插入一张图片。",
+  });
+
+  if (config.configured) {
+    try {
+      await getAccessToken(config);
+      items.push({
+        key: "credential",
+        label: "微信凭证",
+        ok: true,
+        message: "AppID / AppSecret 可用。",
+      });
+    } catch (error) {
+      items.push({
+        key: "credential",
+        label: "微信凭证",
+        ok: false,
+        message: error instanceof Error ? error.message : "微信凭证校验失败。",
+      });
+    }
+  }
+
+  const ok = items.every((item) => item.ok);
+
+  return {
+    ok,
+    accountId: config.accountId,
+    accountName: config.accountName,
+    digestTruncated: digestInfo.truncated,
+    imageCount: imageBlocks.length,
+    items,
   };
 }

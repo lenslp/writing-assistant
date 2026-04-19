@@ -41,6 +41,7 @@ const SEARCH_HEADERS = {
 const BLOCKED_HOST_PATTERNS = [
   /shetu66\.com/i,
   /58pic\.com/i,
+  /588ku\.com/i,
   /699pic\.com/i,
   /pngtree\.com/i,
   /nipic\.com/i,
@@ -59,6 +60,12 @@ const BLOCKED_HOST_PATTERNS = [
   /96weixin\.com/i,
   /dashangu\.com/i,
   /design006\.com/i,
+  /photophoto\.cn/i,
+  /ooopic\.com/i,
+  /enterdesk\.com/i,
+  /vcg\.com/i,
+  /gettyimages\./i,
+  /istockphoto\./i,
 ];
 
 const BLOCKED_TEXT_PATTERNS = [
@@ -70,9 +77,18 @@ const BLOCKED_TEXT_PATTERNS = [
   /logo/i,
   /icon/i,
   /watermark/i,
+  /copyright/i,
+  /all rights reserved/i,
   /素材/i,
   /海报/i,
   /模板/i,
+  /千库网/i,
+  /摄图网/i,
+  /包图网/i,
+  /我图网/i,
+  /昵图网/i,
+  /视觉中国/i,
+  /盖帝图像/i,
   /公众号/i,
   /图库/i,
   /壁纸/i,
@@ -367,7 +383,7 @@ function isLikelyUsableEntry(entry: BingImageEntry) {
   try {
     const parsed = new URL(entry.url);
     const href = parsed.toString();
-    const text = `${entry.title} ${entry.desc} ${entry.pageUrl}`;
+    const text = `${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.thumbnailUrl}`;
 
     if (!/^https?:$/i.test(parsed.protocol)) return false;
     if (matchesBlockedHost(entry.url) || matchesBlockedHost(entry.pageUrl)) return false;
@@ -393,13 +409,32 @@ function isRelevantEnoughEntry(entry: BingImageEntry, input: RealImageSearchInpu
   const domain = resolveArticleDomain(input.domain) as ArticleDomain;
   const entryText = `${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`;
   const inputText = `${input.title || ""} ${input.summary || ""} ${input.query || ""}`;
+  const normalizedEntry = normalizeText(entryText);
 
   if (domain === "汽车") {
     const expectedBrand = findAutoBrand(inputText);
     if (expectedBrand) {
-      const normalizedEntry = normalizeText(entryText);
       const hasExpectedBrand = expectedBrand.some((alias) => normalizedEntry.includes(normalizeText(alias)));
       if (!hasExpectedBrand || hasDifferentAutoBrand(entryText, expectedBrand)) {
+        return false;
+      }
+    }
+  }
+
+  if (domain === "科技") {
+    const expectsRobotics = /(机器人|人形机器人|机器狗|robot|robotics)/i.test(inputText);
+    const expectsRace = /(马拉松|比赛|赛道|夺冠|冠军|race|marathon|track|competition)/i.test(inputText);
+
+    if (expectsRobotics) {
+      const hasRoboticsCue = /(机器人|人形机器人|机器狗|robot|robotics)/.test(normalizedEntry);
+      if (!hasRoboticsCue) {
+        return false;
+      }
+    }
+
+    if (expectsRace) {
+      const hasRaceCue = /(马拉松|比赛|赛道|冠军|race|marathon|track|competition|event)/.test(normalizedEntry);
+      if (!hasRaceCue) {
         return false;
       }
     }
@@ -472,10 +507,22 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
   if (domain === "汽车" && /(autohome|bitauto|che168|pcauto|sohuauto|cheshi)/i.test(pageHost)) score += 8;
   if (domain === "旅游" && /(qunar|ctrip|mafengwo|feizhu|ly\.com)/i.test(pageHost)) score += 8;
   if (domain === "社会" && /(news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 6;
+  if (domain === "科技" && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
 
   if (/text\//i.test(entry.url) || /x_image_process=text/i.test(entry.url)) score -= 18;
   if (/图库|壁纸|头像|素材|海报|模板/.test(`${entry.title} ${entry.desc}`)) score -= 18;
+  if (/千库网|摄图网|包图网|我图网|昵图网|视觉中国|盖帝图像|watermark|copyright/.test(`${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`)) score -= 30;
   if (!terms.some(([term]) => haystack.includes(normalizeText(term)))) score -= 12;
+
+  if (domain === "科技") {
+    const roboticsBoost = /(机器人|人形机器人|机器狗|robot|robotics)/.test(haystack);
+    const raceBoost = /(马拉松|比赛|赛道|冠军|race|marathon|track|competition|event)/.test(haystack);
+    const genericDeskPenalty = /(keyboard|workspace|desk|laptop|notebook|coffee|cup|flower|键盘|桌面|笔记本|咖啡|茶杯|花瓶)/.test(haystack);
+
+    if (roboticsBoost) score += 12;
+    if (raceBoost) score += 10;
+    if (genericDeskPenalty && !roboticsBoost) score -= 14;
+  }
 
   return score;
 }

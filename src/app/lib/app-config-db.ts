@@ -1,12 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { hasDatabaseUrl } from "./prisma";
-import { getSupabaseAdmin } from "./supabase-admin";
+import { getSupabaseAdmin, hasSupabaseAdminConfig } from "./supabase-admin";
 import { defaultSettings, type AppSettings } from "./app-data";
 import { resolveArticleDomain } from "./content-domains";
 
 const APP_CONFIG_ID = "single-user";
 const WECHAT_INTEGRATION_KEY = "__wechatIntegration";
+const AI_PROVIDER_CONFIG_KEY = "__aiProviderConfig";
+const AI_IMAGE_PROVIDER_CONFIG_KEY = "__aiImageProviderConfig";
 
 type AppConfigRecord = {
   id: string;
@@ -41,6 +43,36 @@ export type WechatOfficialAccountSummary = {
 type WechatIntegration = {
   accounts: WechatOfficialAccountSecret[];
   selectedAccountId: string | null;
+};
+
+export type AIProviderSecret = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  fastModel: string;
+  longformModel: string;
+};
+
+export type AIProviderSummary = {
+  baseUrl: string;
+  model: string;
+  fastModel: string;
+  longformModel: string;
+  hasApiKey: boolean;
+  source: "database" | "environment" | "default";
+};
+
+export type AIImageProviderSecret = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+};
+
+export type AIImageProviderSummary = {
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  source: "database" | "environment" | "default";
 };
 
 function normalizeStringArray(value: unknown, fallback: string[]) {
@@ -115,6 +147,56 @@ function normalizeWechatIntegration(settings: unknown): WechatIntegration {
   };
 }
 
+function normalizeAIProviderConfig(settings: unknown): AIProviderSecret | null {
+  const root = isPlainObject(settings) ? settings : {};
+  const rawConfig = isPlainObject(root[AI_PROVIDER_CONFIG_KEY]) ? root[AI_PROVIDER_CONFIG_KEY] : null;
+
+  if (!rawConfig) {
+    return null;
+  }
+
+  const baseUrl = typeof rawConfig.baseUrl === "string" ? rawConfig.baseUrl.trim().replace(/\/+$/, "") : "";
+  const apiKey = typeof rawConfig.apiKey === "string" ? rawConfig.apiKey.trim() : "";
+  const model = typeof rawConfig.model === "string" ? rawConfig.model.trim() : "";
+  const fastModel = typeof rawConfig.fastModel === "string" ? rawConfig.fastModel.trim() : "";
+  const longformModel = typeof rawConfig.longformModel === "string" ? rawConfig.longformModel.trim() : "";
+
+  if (!baseUrl && !apiKey && !model && !fastModel && !longformModel) {
+    return null;
+  }
+
+  return {
+    baseUrl,
+    apiKey,
+    model,
+    fastModel,
+    longformModel,
+  };
+}
+
+function normalizeAIImageProviderConfig(settings: unknown): AIImageProviderSecret | null {
+  const root = isPlainObject(settings) ? settings : {};
+  const rawConfig = isPlainObject(root[AI_IMAGE_PROVIDER_CONFIG_KEY]) ? root[AI_IMAGE_PROVIDER_CONFIG_KEY] : null;
+
+  if (!rawConfig) {
+    return null;
+  }
+
+  const baseUrl = typeof rawConfig.baseUrl === "string" ? rawConfig.baseUrl.trim().replace(/\/+$/, "") : "";
+  const apiKey = typeof rawConfig.apiKey === "string" ? rawConfig.apiKey.trim() : "";
+  const model = typeof rawConfig.model === "string" ? rawConfig.model.trim() : "";
+
+  if (!baseUrl && !apiKey && !model) {
+    return null;
+  }
+
+  return {
+    baseUrl,
+    apiKey,
+    model,
+  };
+}
+
 function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOfficialAccountSummary {
   return {
     id: account.id,
@@ -129,13 +211,28 @@ function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOff
   };
 }
 
-function mergePublicSettingsWithWechatIntegration(publicSettings: AppSettings, integration: WechatIntegration) {
+function mergePublicSettingsWithSecrets(
+  publicSettings: AppSettings,
+  integration: WechatIntegration,
+  aiProviderConfig: AIProviderSecret | null,
+  aiImageProviderConfig: AIImageProviderSecret | null,
+) {
   return {
     ...publicSettings,
     [WECHAT_INTEGRATION_KEY]: {
       accounts: integration.accounts,
       selectedAccountId: integration.selectedAccountId,
     },
+    ...(aiProviderConfig
+      ? {
+          [AI_PROVIDER_CONFIG_KEY]: aiProviderConfig,
+        }
+      : {}),
+    ...(aiImageProviderConfig
+      ? {
+          [AI_IMAGE_PROVIDER_CONFIG_KEY]: aiImageProviderConfig,
+        }
+      : {}),
   };
 }
 
@@ -258,10 +355,17 @@ export async function upsertAppConfig(input: { settings?: AppSettings; selectedT
   const currentRecord = await readRawAppConfigRecord();
   const current = currentRecord ? mapAppConfigRecord(currentRecord) : null;
   const existingWechatIntegration = normalizeWechatIntegration(currentRecord?.settings);
+  const existingAIProviderConfig = normalizeAIProviderConfig(currentRecord?.settings);
+  const existingAIImageProviderConfig = normalizeAIImageProviderConfig(currentRecord?.settings);
   const settings = normalizeAppSettings(input.settings ?? current?.settings ?? defaultSettings);
   const selectedTopicId = input.selectedTopicId === undefined ? current?.selectedTopicId ?? null : input.selectedTopicId;
   const updatedAt = new Date().toISOString();
-  const storedSettings = mergePublicSettingsWithWechatIntegration(settings, existingWechatIntegration);
+  const storedSettings = mergePublicSettingsWithSecrets(
+    settings,
+    existingWechatIntegration,
+    existingAIProviderConfig,
+    existingAIImageProviderConfig,
+  );
 
   const saved = await saveRawAppConfigRecord({
     settings: storedSettings,
@@ -310,6 +414,8 @@ export async function upsertWechatOfficialAccount(input: {
   const record = await readRawAppConfigRecord();
   const currentPublicSettings = normalizeAppSettings(record?.settings);
   const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
   const now = new Date().toISOString();
   const targetId = input.id?.trim() || crypto.randomUUID();
   const existing = integration.accounts.find((item) => item.id === targetId) ?? null;
@@ -349,10 +455,15 @@ export async function upsertWechatOfficialAccount(input: {
       ? targetId
       : integration.selectedAccountId;
 
-  const storedSettings = mergePublicSettingsWithWechatIntegration(currentPublicSettings, {
-    accounts,
-    selectedAccountId,
-  });
+  const storedSettings = mergePublicSettingsWithSecrets(
+    currentPublicSettings,
+    {
+      accounts,
+      selectedAccountId,
+    },
+    aiProviderConfig,
+    aiImageProviderConfig,
+  );
   await saveRawAppConfigRecord({
     settings: storedSettings,
     selectedTopicId: record?.selectedTopicId ?? null,
@@ -369,15 +480,22 @@ export async function deleteWechatOfficialAccount(accountId: string) {
   const record = await readRawAppConfigRecord();
   const currentPublicSettings = normalizeAppSettings(record?.settings);
   const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
   const accounts = integration.accounts.filter((item) => item.id !== accountId);
   const selectedAccountId =
     integration.selectedAccountId === accountId
       ? accounts[0]?.id ?? null
       : integration.selectedAccountId;
-  const storedSettings = mergePublicSettingsWithWechatIntegration(currentPublicSettings, {
-    accounts,
-    selectedAccountId,
-  });
+  const storedSettings = mergePublicSettingsWithSecrets(
+    currentPublicSettings,
+    {
+      accounts,
+      selectedAccountId,
+    },
+    aiProviderConfig,
+    aiImageProviderConfig,
+  );
   const now = new Date().toISOString();
 
   await saveRawAppConfigRecord({
@@ -396,14 +514,21 @@ export async function selectWechatOfficialAccount(accountId: string | null) {
   const record = await readRawAppConfigRecord();
   const currentPublicSettings = normalizeAppSettings(record?.settings);
   const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
   const selectedAccountId =
     accountId && integration.accounts.some((item) => item.id === accountId)
       ? accountId
       : integration.accounts[0]?.id ?? null;
-  const storedSettings = mergePublicSettingsWithWechatIntegration(currentPublicSettings, {
-    accounts: integration.accounts,
-    selectedAccountId,
-  });
+  const storedSettings = mergePublicSettingsWithSecrets(
+    currentPublicSettings,
+    {
+      accounts: integration.accounts,
+      selectedAccountId,
+    },
+    aiProviderConfig,
+    aiImageProviderConfig,
+  );
   const now = new Date().toISOString();
 
   await saveRawAppConfigRecord({
@@ -416,4 +541,212 @@ export async function selectWechatOfficialAccount(accountId: string | null) {
     accounts: integration.accounts.map(toWechatAccountSummary),
     selectedAccountId,
   };
+}
+
+function getEnv(name: string) {
+  return process.env[name]?.trim() ?? "";
+}
+
+function hasAppConfigBackend() {
+  return hasDatabaseUrl() || hasSupabaseAdminConfig();
+}
+
+export async function readAIProviderConfig() {
+  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
+  const storedConfig = normalizeAIProviderConfig(record?.settings);
+
+  if (storedConfig) {
+    return {
+      baseUrl: storedConfig.baseUrl,
+      model: storedConfig.model,
+      fastModel: storedConfig.fastModel,
+      longformModel: storedConfig.longformModel,
+      hasApiKey: Boolean(storedConfig.apiKey),
+      source: "database",
+    } satisfies AIProviderSummary;
+  }
+
+  const envBaseUrl = getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL");
+  const envModel = getEnv("AI_MODEL") || getEnv("OPENAI_MODEL");
+  const envFastModel = getEnv("AI_MODEL_FAST") || getEnv("OPENAI_MODEL_FAST");
+  const envLongformModel = getEnv("AI_MODEL_LONGFORM") || getEnv("OPENAI_MODEL_LONGFORM");
+  const envApiKey = getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
+
+  return {
+    baseUrl: envBaseUrl,
+    model: envModel,
+    fastModel: envFastModel,
+    longformModel: envLongformModel,
+    hasApiKey: Boolean(envApiKey),
+    source: envBaseUrl || envModel || envApiKey ? "environment" : "default",
+  } satisfies AIProviderSummary;
+}
+
+export async function readAIProviderSecret() {
+  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
+  return normalizeAIProviderConfig(record?.settings);
+}
+
+export async function upsertAIProviderConfig(input: {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  fastModel?: string;
+  longformModel?: string;
+}) {
+  const record = await readRawAppConfigRecord();
+  const currentPublicSettings = normalizeAppSettings(record?.settings);
+  const integration = normalizeWechatIntegration(record?.settings);
+  const existingConfig = normalizeAIProviderConfig(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
+  const baseUrl = input.baseUrl.trim().replace(/\/+$/, "");
+  const model = input.model.trim();
+  const fastModel = input.fastModel?.trim() ?? "";
+  const longformModel = input.longformModel?.trim() ?? "";
+  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingConfig?.apiKey ?? "";
+
+  if (!baseUrl) {
+    throw new Error("请填写模型接口地址。");
+  }
+
+  if (!model) {
+    throw new Error("请填写默认写作模型。");
+  }
+
+  if (!apiKey) {
+    throw new Error("请填写 API Key。");
+  }
+
+  const nextConfig: AIProviderSecret = {
+    baseUrl,
+    apiKey,
+    model,
+    fastModel,
+    longformModel,
+  };
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, nextConfig, aiImageProviderConfig);
+
+  await saveRawAppConfigRecord({
+    settings: storedSettings,
+    selectedTopicId: record?.selectedTopicId ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return {
+    baseUrl: nextConfig.baseUrl,
+    model: nextConfig.model,
+    fastModel: nextConfig.fastModel,
+    longformModel: nextConfig.longformModel,
+    hasApiKey: Boolean(nextConfig.apiKey),
+    source: "database",
+  } satisfies AIProviderSummary;
+}
+
+export async function deleteAIProviderConfig() {
+  const record = await readRawAppConfigRecord();
+  const currentPublicSettings = normalizeAppSettings(record?.settings);
+  const integration = normalizeWechatIntegration(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, null, aiImageProviderConfig);
+
+  await saveRawAppConfigRecord({
+    settings: storedSettings,
+    selectedTopicId: record?.selectedTopicId ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return readAIProviderConfig();
+}
+
+export async function readAIImageProviderConfig() {
+  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
+  const storedConfig = normalizeAIImageProviderConfig(record?.settings);
+
+  if (storedConfig) {
+    return {
+      baseUrl: storedConfig.baseUrl,
+      model: storedConfig.model,
+      hasApiKey: Boolean(storedConfig.apiKey),
+      source: "database",
+    } satisfies AIImageProviderSummary;
+  }
+
+  const envBaseUrl = getEnv("AI_IMAGE_BASE_URL") || getEnv("OPENAI_IMAGE_BASE_URL") || getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL");
+  const envModel = getEnv("AI_IMAGE_MODEL") || getEnv("OPENAI_IMAGE_MODEL");
+  const envApiKey = getEnv("AI_IMAGE_API_KEY") || getEnv("OPENAI_IMAGE_API_KEY") || getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
+
+  return {
+    baseUrl: envBaseUrl,
+    model: envModel,
+    hasApiKey: Boolean(envApiKey),
+    source: envBaseUrl || envModel || envApiKey ? "environment" : "default",
+  } satisfies AIImageProviderSummary;
+}
+
+export async function readAIImageProviderSecret() {
+  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
+  return normalizeAIImageProviderConfig(record?.settings);
+}
+
+export async function upsertAIImageProviderConfig(input: {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+}) {
+  const record = await readRawAppConfigRecord();
+  const currentPublicSettings = normalizeAppSettings(record?.settings);
+  const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const existingConfig = normalizeAIImageProviderConfig(record?.settings);
+  const baseUrl = input.baseUrl.trim().replace(/\/+$/, "");
+  const model = input.model.trim();
+  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingConfig?.apiKey ?? "";
+
+  if (!baseUrl) {
+    throw new Error("请填写图片模型接口地址。");
+  }
+
+  if (!model) {
+    throw new Error("请填写图片模型。");
+  }
+
+  if (!apiKey) {
+    throw new Error("请填写图片模型 API Key。");
+  }
+
+  const nextConfig: AIImageProviderSecret = {
+    baseUrl,
+    apiKey,
+    model,
+  };
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, aiProviderConfig, nextConfig);
+
+  await saveRawAppConfigRecord({
+    settings: storedSettings,
+    selectedTopicId: record?.selectedTopicId ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return {
+    baseUrl: nextConfig.baseUrl,
+    model: nextConfig.model,
+    hasApiKey: Boolean(nextConfig.apiKey),
+    source: "database",
+  } satisfies AIImageProviderSummary;
+}
+
+export async function deleteAIImageProviderConfig() {
+  const record = await readRawAppConfigRecord();
+  const currentPublicSettings = normalizeAppSettings(record?.settings);
+  const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, aiProviderConfig, null);
+
+  await saveRawAppConfigRecord({
+    settings: storedSettings,
+    selectedTopicId: record?.selectedTopicId ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return readAIImageProviderConfig();
 }

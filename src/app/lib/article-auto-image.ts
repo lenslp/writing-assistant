@@ -32,6 +32,44 @@ const VISUAL_STOPWORDS = new Set([
   "所以",
 ]);
 
+function buildSearchSceneHint(input: {
+  title: string;
+  summary: string;
+  body: string;
+  domain: ArticleDomain;
+}) {
+  const text = `${input.title} ${input.summary} ${input.body}`;
+  const avoidPortrait = shouldAvoidAiPortrait(input);
+
+  if (/(机器人|人形机器人|机器狗|robot|robotics)/i.test(text) && /(马拉松|比赛|赛道|夺冠|冠军|race|marathon|track|competition)/i.test(text)) {
+    return "humanoid robot marathon race track event real photo";
+  }
+
+  if (/(机器人|人形机器人|机器狗|robot|robotics)/i.test(text)) {
+    return "humanoid robot robotics event real photo";
+  }
+
+  if (/(芯片|算力|服务器|机房|半导体|gpu|cpu)/i.test(text)) {
+    return "chip server lab data center real photo";
+  }
+
+  if (/(发布会|新品|手机|电脑|耳机|平板|手表)/i.test(text)) {
+    return "device launch product real photo";
+  }
+
+  if (/(书桌|课堂|办公室|会议室|录音棚|键盘|耳机|麦克风|合同|版权|电脑|屏幕|文件|桌面|设备)/.test(text)) {
+    return avoidPortrait ? "office desk workspace real photo" : "technology workspace real photo";
+  }
+
+  if (input.domain === "科技") return avoidPortrait ? "technology event device real photo" : "technology scene real photo";
+  if (input.domain === "教育") return avoidPortrait ? "study desk classroom notebook real photo" : "classroom study real photo";
+  if (input.domain === "旅游") return "destination landscape street travel real photo";
+  if (input.domain === "情感") return avoidPortrait ? "home interior objects ambient scene real photo" : "lifestyle people home real photo";
+  if (input.domain === "社会") return avoidPortrait ? "documentary office street documents real photo" : "documentary street life real photo";
+  if (input.domain === "汽车") return "car vehicle road automotive real photo";
+  return avoidPortrait ? "workspace objects ambient scene real photo" : "editorial lifestyle real photo";
+}
+
 export function buildImageSnippet(url: string, caption: string) {
   const safeCaption = (caption || "配图").trim();
   const safeUrl = url.trim();
@@ -194,17 +232,6 @@ export function buildAutoImageSearchQuery(input: {
   body: string;
   domain: ArticleDomain;
 }) {
-  const avoidPortrait = shouldAvoidAiPortrait(input);
-  const domainHints: Record<ArticleDomain, string> = {
-    科技: avoidPortrait ? "office desk keyboard monitor workspace real photo" : "technology workspace real photo",
-    教育: avoidPortrait ? "study desk classroom notebook real photo" : "classroom study real photo",
-    旅游: "destination landscape street travel real photo",
-    情感: avoidPortrait ? "home interior objects ambient scene real photo" : "lifestyle people home real photo",
-    社会: avoidPortrait ? "documentary office street documents real photo" : "documentary street life real photo",
-    汽车: "car vehicle road automotive real photo",
-    其他: avoidPortrait ? "workspace objects ambient scene real photo" : "editorial lifestyle real photo",
-  };
-
   const latinTokens = Array.from(
     new Set(
       `${input.title} ${input.summary} ${input.body}`
@@ -223,11 +250,11 @@ export function buildAutoImageSearchQuery(input: {
         ...collectAutoImageKeyPoints(input.body),
       ])
         .filter((item) => item.length >= 2 && item.length <= 4)
-        .slice(0, 2),
+        .slice(0, 3),
     ),
   );
 
-  return [...hanTokens, ...latinTokens, domainHints[input.domain]]
+  return [...hanTokens, ...latinTokens, buildSearchSceneHint(input), "editorial real photo no watermark"]
     .filter(Boolean)
     .join(" ")
     .trim();
