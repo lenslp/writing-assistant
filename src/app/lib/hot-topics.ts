@@ -37,7 +37,7 @@ export function normalizeTrend(score: number) {
   return `+${Math.max(8, Math.min(98, score))}%`;
 }
 
-const CORE_SOURCE_PRIORITY = ["微博", "知乎", "抖音", "百度", "今日头条"] as const;
+const CORE_SOURCE_PRIORITY = ["微博", "Twitter/X", "知乎", "抖音", "百度", "今日头条"] as const;
 const AI_HOT_TOPIC_PATTERN = /(ai|aigc|gpt|openai|claude|gemini|deepseek|agent|copilot|llm|mcp|人工智能|大模型|智能体|生成式|机器人|算力|芯片|半导体|多模态|机器学习|深度学习|自动驾驶|人形机器人)/i;
 const AI_FRIENDLY_SOURCE_PATTERN = /(36氪|爱范儿|机器之心|量子位|雷峰网|极客公园|infoq)/i;
 

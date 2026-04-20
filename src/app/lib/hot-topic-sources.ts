@@ -39,6 +39,12 @@ function getListEnv(name: string) {
     .filter(Boolean);
 }
 
+function getNumberEnv(name: string, fallbackValue: number) {
+  const raw = process.env[name]?.trim() ?? "";
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallbackValue;
+}
+
 function hasListEnv(name: string) {
   return getListEnv(name).length > 0;
 }
@@ -92,6 +98,54 @@ async function fetchJson<T>(url: string, options: RequestOptions = {}) {
     },
   });
   return response.json() as Promise<T>;
+}
+
+function ensureArray<T>(value: T | T[] | undefined | null) {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function readXmlText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record["#text"] === "string") {
+      return record["#text"].trim();
+    }
+  }
+
+  return "";
+}
+
+function collapseWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function extractRssBridgeErrorMessage(markup: string) {
+  const $ = cheerio.load(markup);
+  const explicitMessage = collapseWhitespace($(".error-message").first().text()).replace(/^Message:\s*/i, "");
+  if (explicitMessage) {
+    return explicitMessage;
+  }
+
+  const text = collapseWhitespace($.text());
+  const matchedMessage = text.match(/Message:\s*(.+?)(?:File:|Line:|Trace:|$)/i)?.[1]?.trim();
+  if (matchedMessage) {
+    return matchedMessage;
+  }
+
+  return text.slice(0, 180);
+}
+
+function detectBridgeHtmlError(markup: string) {
+  if (!/<html[\s>]/i.test(markup) || !/RSS-Bridge/i.test(markup)) {
+    return "";
+  }
+
+  return extractRssBridgeErrorMessage(markup);
 }
 
 function normalizeTitle(title: string) {
@@ -656,36 +710,126 @@ async function scrapeToutiaoHot(): Promise<ScrapedHotTopic[]> {
 
 async function scrapeRssFeed(source: string, sourceUrl: string, defaultTags: string[]) {
   const xml = await fetchText(sourceUrl);
-  const parsed = xmlParser.parse(xml);
-  const channel = parsed?.rss?.channel;
-  const items = Array.isArray(channel?.item) ? channel.item : channel?.item ? [channel.item] : [];
+  const bridgeHtmlError = detectBridgeHtmlError(xml);
+  if (bridgeHtmlError) {
+    throw new Error(`${source} bridge error: ${bridgeHtmlError}`);
+  }
 
-  return items.slice(0, HOT_TOPIC_SOURCE_FETCH_LIMIT).map((item: Record<string, unknown>, index: number) => {
-    const link = String(item.link ?? "");
-    const title = String(item.title ?? "").replace("<![CDATA[", "").replace("]]>", "").trim();
-    const description = String(item.description ?? item["content:encoded"] ?? "").replace(/<[^>]+>/g, "").trim();
-    const category = item.category;
-    const tags = Array.isArray(category)
-      ? category.map((value) => String(value)).filter(Boolean).slice(0, 3)
-      : category
-        ? [String(category)]
-        : defaultTags;
+  const parsed = xmlParser.parse(xml);
+  const channel = parsed?.rss?.channel ?? null;
+  const rssItems = ensureArray<Record<string, unknown>>(channel?.item as Record<string, unknown> | Record<string, unknown>[] | undefined);
+
+  if (rssItems.length) {
+    return rssItems.slice(0, HOT_TOPIC_SOURCE_FETCH_LIMIT).map((item, index) => {
+      const link = String(item.link ?? "");
+      const title = String(item.title ?? "").replace("<![CDATA[", "").replace("]]>", "").trim();
+      const description = String(item.description ?? item["content:encoded"] ?? "").replace(/<[^>]+>/g, "").trim();
+      const category = item.category;
+      const tags = Array.isArray(category)
+        ? category.map((value) => String(value)).filter(Boolean).slice(0, 3)
+        : category
+          ? [String(category)]
+          : defaultTags;
+
+      return {
+        id: `${source.toLowerCase()}-${hashId(source, link || title)}`,
+        externalId: hashId(source, link || title),
+        title,
+        source,
+        sourceType: "rss",
+        heat: 7600 - index * 180,
+        trend: normalizeTrend(32 - index),
+        tags,
+        url: link,
+        summary: description.slice(0, 120),
+        fetchedAt: new Date().toISOString(),
+        raw: item,
+      } satisfies ScrapedHotTopic;
+    });
+  }
+
+  const feed = parsed?.feed ?? null;
+  const atomEntries = ensureArray<Record<string, unknown>>(feed?.entry as Record<string, unknown> | Record<string, unknown>[] | undefined);
+
+  if (!atomEntries.length) {
+    throw new Error(`${source} feed returned empty payload`);
+  }
+
+  if (readXmlText(atomEntries[0]?.title).includes("Bridge returned error")) {
+    const bridgeFeedError = extractRssBridgeErrorMessage(readXmlText(atomEntries[0]?.content ?? atomEntries[0]?.summary));
+    throw new Error(
+      bridgeFeedError
+        ? `${source} bridge error: ${bridgeFeedError}`
+        : `${source} feed bridge returned an error`,
+    );
+  }
+
+  return atomEntries.slice(0, HOT_TOPIC_SOURCE_FETCH_LIMIT).map((item, index) => {
+    const title = readXmlText(item.title).replace(/<[^>]+>/g, "").trim();
+    const links = ensureArray<Record<string, unknown>>(item.link as Record<string, unknown> | Record<string, unknown>[] | undefined);
+    const alternateLink = links.find((link) => String(link.rel ?? "alternate") === "alternate") ?? links[0] ?? {};
+    const link = String(alternateLink.href ?? alternateLink.link ?? "").trim();
+    const summary = readXmlText(item.summary ?? item.content).replace(/<[^>]+>/g, "").trim();
+    const categories = ensureArray<Record<string, unknown>>(item.category as Record<string, unknown> | Record<string, unknown>[] | undefined);
+    const tags = categories
+      .map((category) => String(category.term ?? category.label ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
 
     return {
       id: `${source.toLowerCase()}-${hashId(source, link || title)}`,
       externalId: hashId(source, link || title),
       title,
       source,
-      sourceType: "rss",
-      heat: 7600 - index * 180,
-      trend: normalizeTrend(32 - index),
-      tags,
+      sourceType: "atom",
+      heat: 7800 - index * 180,
+      trend: normalizeTrend(36 - index),
+      tags: tags.length ? tags : defaultTags,
       url: link,
-      summary: description.slice(0, 120),
-      fetchedAt: new Date().toISOString(),
+      summary: summary.slice(0, 120),
+      fetchedAt: String(item.published ?? item.updated ?? new Date().toISOString()),
       raw: item,
     } satisfies ScrapedHotTopic;
-  });
+  }).filter((item) => item.title);
+}
+
+function buildTwitterRssBridgeUrl(baseUrl: string, country: string, limit: number) {
+  const normalized = baseUrl.trim();
+  const url = normalized.includes("://")
+    ? new URL(normalized)
+    : new URL(`https://${normalized}`);
+
+  if (!url.searchParams.get("action")) url.searchParams.set("action", "display");
+  if (!url.searchParams.get("bridge")) url.searchParams.set("bridge", "TwitScoopBridge");
+  url.searchParams.set("country", country);
+  url.searchParams.set("limit", String(Math.max(1, Math.min(50, limit))));
+  url.searchParams.set("format", "Atom");
+
+  if (!url.pathname || url.pathname === "/") {
+    url.pathname = "/";
+  }
+
+  return url.toString();
+}
+
+async function scrapeTwitterHotFromRssBridge(): Promise<ScrapedHotTopic[]> {
+  const baseUrls = getListEnv("HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS");
+  if (!baseUrls.length) {
+    throw new Error("HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS is not configured");
+  }
+
+  const country = (process.env.HOTLIST_TWITTER_COUNTRY ?? "worldwide").trim().toLowerCase() || "worldwide";
+  const limit = getNumberEnv("HOTLIST_TWITTER_LIMIT", 20);
+
+  return trySequentialFetchers(
+    baseUrls.map((baseUrl) => async () =>
+      scrapeRssFeed(
+        "Twitter/X",
+        buildTwitterRssBridgeUrl(baseUrl, country, limit),
+        ["Twitter/X 热点", `TwitScoop ${country}`],
+      ),
+    ),
+  );
 }
 
 export async function scrapeHotTopics() {
@@ -699,6 +843,13 @@ export async function scrapeHotTopics() {
     { source: "少数派", fetch: () => scrapeRssFeed("少数派", "https://sspai.com/feed", ["效率", "工具"]) },
     { source: "爱范儿", fetch: () => scrapeRssFeed("爱范儿", "https://www.ifanr.com/feed", ["科技", "产品"]) },
   ];
+
+  if (hasListEnv("HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS")) {
+    sourceFetchers.splice(1, 0, {
+      source: "Twitter/X",
+      fetch: scrapeTwitterHotFromRssBridge,
+    });
+  }
 
   const settled = await Promise.allSettled(
     sourceFetchers.map(async (sourceFetcher) => ({

@@ -19,7 +19,7 @@ const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
-const SOURCE_PRIORITY = ["微博", "知乎", "抖音", "百度", "今日头条"] as const;
+const SOURCE_PRIORITY = ["微博", "Twitter/X", "知乎", "抖音", "百度", "今日头条"] as const;
 const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
 
 type HotTopicsCachePayload = {
@@ -33,6 +33,11 @@ type HotTopicsInitialData = {
   items: HotTopicItem[];
   source: "database" | "live";
   restrictedCount: number;
+};
+
+type FailedSourceItem = {
+  source?: string;
+  error?: string;
 };
 
 function readHotTopicsCache() {
@@ -65,6 +70,32 @@ function writeHotTopicsCache(payload: Omit<HotTopicsCachePayload, "cachedAt">) {
   } catch {
     // ignore cache write errors
   }
+}
+
+function formatFailedSourceWarning(failedSources: unknown, baseMessage = "") {
+  if (!Array.isArray(failedSources) || !failedSources.length) {
+    return baseMessage;
+  }
+
+  const entries = failedSources
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const failed = item as FailedSourceItem;
+      const source = typeof failed.source === "string" ? failed.source.trim() : "";
+      const error = typeof failed.error === "string" ? failed.error.trim() : "";
+      if (!source) return "";
+      if (!error) return source;
+      return `${source}（${error}）`;
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (!entries.length) {
+    return baseMessage;
+  }
+
+  const prefix = baseMessage ? `${baseMessage} ` : "";
+  return `${prefix}部分来源抓取失败：${entries.join("；")}`;
 }
 
 function HotTopicsLoadingShell() {
@@ -378,8 +409,9 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
       setRestrictedCount(typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0);
 
-      if (payload.message) {
-        setRefreshWarning(payload.message);
+      const nextWarning = formatFailedSourceWarning(payload.failedSources, typeof payload.message === "string" ? payload.message : "");
+      if (nextWarning) {
+        setRefreshWarning(nextWarning);
       }
 
       setNotice(

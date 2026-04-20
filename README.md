@@ -45,6 +45,9 @@ HOTLIST_DOUYIN_FALLBACK_URLS=
 HOTLIST_TOUTIAO_FALLBACK_URLS=
 HOTLIST_BAIDU_FALLBACK_URLS=
 HOTLIST_RSSHUB_BASE_URLS=
+HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS=
+HOTLIST_TWITTER_COUNTRY=worldwide
+HOTLIST_TWITTER_LIMIT=20
 ZHIHU_COOKIE=
 ```
 
@@ -78,6 +81,7 @@ AI 写作说明：
 当前已接入的抓取源：
 
 - 微博热搜
+- Twitter/X 热点（可选，需配置 RSS-Bridge TwitScoop 源）
 - 知乎热榜（优先官方接口，失败自动回退）
 - 抖音热搜（优先官方接口，失败自动回退）
 - 今日头条热榜（优先官方接口，可配置 fallback）
@@ -92,6 +96,11 @@ AI 写作说明：
 - 热点中心页面已经改为读取真实接口数据
 - 可通过 `HOTLIST_*_FALLBACK_URLS` 配置你自建聚合接口作为备源，多个地址用英文逗号分隔
 - `HOTLIST_RSSHUB_BASE_URLS` 可用于补知乎 RSSHub 备源
+- `HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS` 可配置一个或多个 RSS-Bridge 根地址，系统会自动请求 `TwitScoopBridge`
+- `HOTLIST_TWITTER_COUNTRY` 默认为 `worldwide`，可改成 `united-states`、`japan` 等 TwitScoop 支持的国家
+- `HOTLIST_TWITTER_LIMIT` 默认为 `20`，最大按 TwitScoop 支持的 `50` 处理
+- Twitter/X 可先尝试公开实例：`https://rss-bridge.org/bridge01/`、`https://rss-bridge.nomadic.name/`
+- 建议至少配置 2 个 RSS-Bridge 地址做兜底；公共实例和 TwitScoop 源站都可能偶发超时或返回 500
 - `ZHIHU_COOKIE` 可选；如果官方接口偶发风控，可填入浏览器登录态 Cookie 提升知乎抓取稳定性
 
 ## 当前页面

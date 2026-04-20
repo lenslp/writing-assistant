@@ -16,9 +16,55 @@ const CORE_PLATFORM_SOURCES = ["微博", "抖音", "知乎", "今日头条", "�
 const HOT_TOPICS_RETENTION_DAYS = 7;
 const HOT_TOPIC_FETCH_JOB_KEEP_COUNT = 100;
 
+function stripHtmlTags(input: string) {
+  return input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function summarizeHtmlErrorMessage(input: string) {
+  const plainText = stripHtmlTags(input);
+  const matchedErrorCode = plainText.match(/Error code\s*(\d{3})/i)?.[1];
+
+  if (matchedErrorCode === "502") {
+    return "Supabase 服务暂时返回 502，请稍后重试。";
+  }
+
+  if (/<html[\s>]/i.test(input)) {
+    const titleMatch = input.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1]?.trim();
+    if (titleMatch) {
+      return titleMatch;
+    }
+  }
+
+  return plainText.slice(0, 240);
+}
+
 function formatPersistenceError(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    return /<html[\s>]/i.test(message) ? summarizeHtmlErrorMessage(message) : message;
+  }
+
+  if (typeof error === "string") {
+    const message = error.trim();
+    return /<html[\s>]/i.test(message) ? summarizeHtmlErrorMessage(message) : message;
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code : "";
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const hint = typeof record.hint === "string" ? record.hint.trim() : "";
+
+    if (message) {
+      const summarized = /<html[\s>]/i.test(message) ? summarizeHtmlErrorMessage(message) : message;
+      return code ? `${summarized}（${code}）` : summarized;
+    }
+
+    if (hint) {
+      return hint;
+    }
+  }
+
   try {
     return JSON.stringify(error);
   } catch {
@@ -117,6 +163,19 @@ function hasCoreSourceCoverage(items: Array<Pick<HotTopicItem, "source">>) {
   return CORE_PLATFORM_SOURCES.every((source) => presentSources.has(source));
 }
 
+function dedupeHotTopicsForPersistence<T extends { source: string; externalId?: string; id: string }>(items: T[]) {
+  const deduped = new Map<string, T>();
+
+  for (const item of items) {
+    const uniqueKey = `${item.source}::${item.externalId || item.id}`;
+    if (!deduped.has(uniqueKey)) {
+      deduped.set(uniqueKey, item);
+    }
+  }
+
+  return Array.from(deduped.values());
+}
+
 export async function getHotTopicsSnapshot(limit: number, ttlMs = HOT_TOPIC_CACHE_TTL_MS) {
   if (!hasPersistenceBackend()) {
     const { items, failedSources, restrictedCount } = await scrapeHotTopics();
@@ -170,6 +229,7 @@ export async function refreshHotTopicsAndPersist() {
   const startedAt = new Date().toISOString();
   const batchFetchedAt = new Date(startedAt);
   const { items, failedSources, restrictedCount } = await scrapeHotTopics();
+  const persistedItems = dedupeHotTopicsForPersistence(items);
   const generatedTopics = items.slice(0, 24).map((item) => buildTopicSuggestionFromHotTopic(item));
 
   if (!hasPersistenceBackend()) {
@@ -219,7 +279,7 @@ export async function refreshHotTopicsAndPersist() {
       const { error: hotTopicError } = await supabase
         .from("hot_topics")
         .upsert(
-          items.map((item) => ({
+          persistedItems.map((item) => ({
             id: randomUUID(),
             external_id: item.externalId,
             title: item.title,
@@ -246,7 +306,7 @@ export async function refreshHotTopicsAndPersist() {
         .update({
           status: "success",
           source: "all",
-          inserted_count: items.length,
+          inserted_count: persistedItems.length,
           message: "热点抓取、入库并生成选题完成",
           payload: { failedSources, generatedTopicCount: generatedTopics.length, restrictedCount },
           finished_at: new Date().toISOString(),
@@ -266,7 +326,7 @@ export async function refreshHotTopicsAndPersist() {
         failedSources,
         restrictedCount,
         generatedTopicCount: generatedTopics.length,
-        insertedCount: items.length,
+        insertedCount: persistedItems.length,
         message: "",
       };
     }
@@ -295,7 +355,7 @@ export async function refreshHotTopicsAndPersist() {
     jobId = job.id;
 
     await Promise.all(
-      items.map((item) => {
+      persistedItems.map((item) => {
         const rawPayload = item.raw == null ? undefined : item.raw as Prisma.InputJsonValue;
 
         return prisma.hotTopic.upsert({
@@ -340,7 +400,7 @@ export async function refreshHotTopicsAndPersist() {
       data: {
         status: "success",
         source: "all",
-        insertedCount: items.length,
+        insertedCount: persistedItems.length,
         message: "热点抓取、入库并生成选题完成",
         payload: { failedSources, generatedTopicCount: generatedTopics.length, restrictedCount },
         finishedAt: new Date(),
@@ -358,7 +418,7 @@ export async function refreshHotTopicsAndPersist() {
       failedSources,
       restrictedCount,
       generatedTopicCount: generatedTopics.length,
-      insertedCount: items.length,
+      insertedCount: persistedItems.length,
       message: "",
     };
   } catch (error) {
