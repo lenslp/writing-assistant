@@ -20,6 +20,13 @@ const typeColors: Record<string, string> = {
   行业型: "bg-purple-50 text-purple-600",
 };
 
+const heatRank: Record<string, number> = {
+  极高: 4,
+  高: 3,
+  中高: 2,
+  中: 1,
+};
+
 export function TopicCenter() {
   const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("全部");
   const [activeDomain, setActiveDomain] = useState("全部");
@@ -38,11 +45,13 @@ export function TopicCenter() {
 
   const filtered = useMemo(
     () =>
-      topics.filter((topic) => {
-        const matchesType = activeTab === "全部" ? true : topic.type === activeTab;
-        const matchesDomain = activeDomain === "全部" ? true : topic.domain === activeDomain;
-        return matchesType && matchesDomain;
-      }),
+      [...topics]
+        .filter((topic) => {
+          const matchesType = activeTab === "全部" ? true : topic.type === activeTab;
+          const matchesDomain = activeDomain === "全部" ? true : topic.domain === activeDomain;
+          return matchesType && matchesDomain;
+        })
+        .sort((left, right) => right.fit - left.fit || (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0)),
     [activeDomain, activeTab, topics],
   );
   const domainTabs = useMemo(() => ["全部", ...Array.from(new Set(topics.map((topic) => topic.domain)))], [topics]);
