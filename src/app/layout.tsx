@@ -5,8 +5,8 @@ import { Toaster } from "./components/ui/sonner";
 import { AppStoreProvider } from "./providers/app-store";
 
 export const metadata: Metadata = {
-  title: "公众号写作助手",
-  description: "基于 Figma Make 设计还原的公众号写作助手后台。",
+  title: "写作助手",
+  description: "基于 Figma Make 设计还原的写作助手后台。",
 };
 
 export default function RootLayout({

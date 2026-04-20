@@ -563,7 +563,13 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
     headingTextColor: "rgba(0,0,0,0.9)",
     paragraphColor: "#4a4a4a",
     quoteBackground: "#f3f4f6",
+    quoteTextColor: "rgba(0,0,0,0.58)",
+    quoteBorderColor: primary,
     highlightBackground: "#f8fafc",
+    goldenBackground: "#f6f7f9",
+    goldenBorderColor: primary,
+    goldenTextColor: "#1f2937",
+    goldenTextAlign: "left" as const,
     summaryBackground: "#f8fafc",
     summaryBorder: `1px solid ${primary}22`,
     summaryColor: "#4a4a4a",
@@ -574,7 +580,11 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
       ...base,
       headingTextColor: "#2c3e50",
       paragraphColor: "#555555",
+      quoteTextColor: "#6b5f55",
       highlightBackground: "#fff7ed",
+      goldenBackground: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+      goldenBorderColor: "#fb923c",
+      goldenTextColor: "#7c4a03",
       summaryBackground: "#fff7ed",
       summaryBorder: "1px solid #fed7aa",
       summaryColor: "#4b5563",
@@ -587,7 +597,11 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
       headingMode: "underline" as const,
       headingTextColor: "#1e3a5f",
       paragraphColor: "#475569",
+      quoteTextColor: "#486274",
       highlightBackground: "#f0fdfa",
+      goldenBackground: "linear-gradient(135deg, #eef9ff, #dff6ff)",
+      goldenBorderColor: "#38bdf8",
+      goldenTextColor: "#0f4c5f",
       summaryBackground: "#eff6ff",
       summaryBorder: "1px solid #bfdbfe",
       summaryColor: "#33536b",
@@ -601,7 +615,12 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
       headingTextColor: "#3d3d3d",
       paragraphColor: "#555555",
       quoteBackground: "#fffafb",
+      quoteTextColor: "#7a6b70",
       highlightBackground: "#fff1f2",
+      goldenBackground: "linear-gradient(135deg, #fff6f8, #fff1f2)",
+      goldenBorderColor: "#ec4899",
+      goldenTextColor: "#7a284d",
+      goldenTextAlign: "center" as const,
       summaryBackground: "#fffafc",
       summaryBorder: "1px solid #fbcfe8",
       summaryColor: "#666666",
@@ -615,6 +634,9 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
       headingTextColor: "#1a1a1a",
       paragraphColor: "#333333",
       highlightBackground: "#fff9e6",
+      goldenBackground: "linear-gradient(135deg, #fffef0, #fff7cc)",
+      goldenBorderColor: "#eab308",
+      goldenTextColor: "#5f4600",
       summaryBackground: "#fff9e6",
       summaryBorder: "2px dashed #fcd34d",
       summaryColor: "#333333",
@@ -626,7 +648,11 @@ function getWechatDomainStyle(domain: ArticleDomain, primary: string, accent: st
       ...base,
       paragraphColor: "#333333",
       quoteBackground: "#f8fafc",
+      quoteTextColor: "#4b5563",
       highlightBackground: "#eff6ff",
+      goldenBackground: "linear-gradient(135deg, #f8fbff, #e8f1ff)",
+      goldenBorderColor: "#3b82f6",
+      goldenTextColor: "#1e3a8a",
       summaryBackground: "#1e293b",
       summaryBorder: "1px solid #334155",
       summaryColor: "#e2e8f0",
@@ -683,7 +709,7 @@ function renderWechatArticleHtml(title: string, summary: string, blocks: DraftBl
 
     if (block.type === "quote") {
       sections.push(
-        `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-radius:12px;color:rgba(0,0,0,0.6);font-size:15px;line-height:1.8;"><p style="margin:0;">${renderInlineTextWithStyle(block.content, { autoHighlight: true, highlightStyle, quoteColor: primary })}</p></blockquote>`,
+        `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-left:4px solid ${domainStyle.quoteBorderColor};border-radius:0 12px 12px 0;color:${domainStyle.quoteTextColor};font-size:15px;line-height:1.8;"><p style="margin:0;">${renderInlineTextWithStyle(block.content, { autoHighlight: true, highlightStyle, quoteColor: primary })}</p></blockquote>`,
       );
       return;
     }
@@ -720,7 +746,7 @@ function renderWechatArticleHtml(title: string, summary: string, blocks: DraftBl
 
     if (block.type === "golden") {
       sections.push(
-        `<div style="margin:24px 0;padding:16px 18px;border-radius:6px;background:#f6f7f9;border-left:3px solid ${primary};color:#1f2937;font-weight:600;line-height:1.85;">${renderInlineTextWithStyle(block.content, { autoHighlight: true, highlightStyle, quoteColor: primary })}</div>`,
+        `<div style="margin:24px 0;padding:16px 18px;border-radius:10px;background:${domainStyle.goldenBackground};border-left:3px solid ${domainStyle.goldenBorderColor};color:${domainStyle.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineTextWithStyle(block.content, { autoHighlight: true, highlightStyle, quoteColor: primary })}</div>`,
       );
       return;
     }

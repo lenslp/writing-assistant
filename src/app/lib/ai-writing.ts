@@ -39,7 +39,7 @@ const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_MODEL = "qwen3.5-plus";
 const DEFAULT_FAST_MODEL = "qwen-turbo";
 const MODEL_REQUEST_MAX_RETRIES = 1;
-const MAX_TITLE_LENGTH = 64;
+const MAX_TITLE_LENGTH = 30;
 const MAX_SUMMARY_LENGTH = 120;
 const SOURCE_CONTEXT_SUMMARY_LIMIT = 140;
 const SOURCE_CONTEXT_PLANNING_CONTENT_LIMIT = 900;
@@ -83,6 +83,7 @@ const AI_TITLE_BANNED_PATTERNS = [
   /一文看懂|带你看懂|快速看懂|深度拆解|深度解读|全面解析|完整解读|全景观察/i,
   /底层逻辑|方法论|启示录|终极答案|最终答案|完全指南/i,
   /真正拉开差距的|值得所有人|建议所有人|请务必|一定要看/i,
+  /真正值得看的是什么|很多人可能都看反了|最该关注什么|背后更大的变化是/i,
 ] as const;
 const TITLE_PLATFORM_NOISE_PATTERNS = [
   /^(围绕|关于)?\s*(知乎|微博|抖音|百度|头条|今日头条)\s*(热榜|热搜)?[，、：:\-｜|]?\s*/i,
@@ -553,22 +554,24 @@ function scoreTitleNaturalness(title: string) {
   let score = 0;
   const length = title.replace(/\s+/g, "").length;
 
-  if (length >= 12 && length <= 24) score += 3;
-  else if (length >= 9 && length <= 28) score += 1;
+  if (length >= 12 && length <= 22) score += 4;
+  else if (length >= 9 && length <= 26) score += 2;
+  else if (length <= MAX_TITLE_LENGTH) score += 0;
   else score -= 1;
 
   if (!/[：:｜|]/.test(title)) score += 1;
   if (/[？?]$/.test(title)) score += 1;
   if (/普通人|打工人|家长|创作者|用户/.test(title)) score += 1;
-  if (/很多人|别再|不是.+而是|最该关注|说明了/.test(title)) score += 1;
+  if (/别只盯着|如果只把|真正会变的是|更该关心|更容易看漏/.test(title)) score += 1;
 
   AI_TITLE_BANNED_PATTERNS.forEach((pattern) => {
     if (pattern.test(title)) score -= 4;
   });
 
   if (/逻辑|方法|趋势拆解|综合观察|专业|深度|启示|信号|变量|真相|密码/.test(title)) score -= 1;
-  if (/背后的|意味着什么|给所有人|值得关注/.test(title)) score -= 1;
+  if (/背后的|意味着什么|给所有人|值得关注|最该关注|看反了/.test(title)) score -= 2;
   if (/^关于|聊聊|说说/.test(title)) score -= 1;
+  if (length > 24) score -= 1;
 
   return score;
 }
@@ -619,6 +622,10 @@ function getTitleCandidateDiversityIssue(titleCandidates: string[], topicTitle: 
     return "标题候选太少，句式不够分散，请重新生成。";
   }
 
+  if (normalized.some((item) => item.replace(/\s+/g, "").length > MAX_TITLE_LENGTH)) {
+    return `标题过长，请控制在 ${MAX_TITLE_LENGTH} 字内。`;
+  }
+
   const archetypeCount = new Set(normalized.map((item) => detectTitleArchetype(item))).size;
   if (archetypeCount < 2) {
     return "标题候选句式过于单一，请重新生成。";
@@ -629,6 +636,13 @@ function getTitleCandidateDiversityIssue(titleCandidates: string[], topicTitle: 
   ).length;
   if (archetypeCount < 3 && repeatedLeadCount >= 4) {
     return "标题候选开头太像一套模板，请重新生成。";
+  }
+
+  const repeatedTailCount = normalized.filter((item) =>
+    /值得看的是什么|看反了|最该关注什么|背后更大的变化是/.test(item),
+  ).length;
+  if (repeatedTailCount >= 2) {
+    return "标题候选尾句太像固定模板，请重新生成。";
   }
 
   return "";
@@ -1077,6 +1091,7 @@ function buildSharedTaskContext(request: {
   domain: string;
   articleType: string;
   targetReader: string;
+  targetWordCount: number;
   tone: string;
 }): string[] {
   const resolvedDomain = resolveArticleDomain(request.domain);
@@ -1093,6 +1108,7 @@ function buildSharedTaskContext(request: {
     `选题理由：${request.topic.reason}`,
     `文章类型：${request.articleType}`,
     `目标读者：${request.targetReader}`,
+    `目标字数：约 ${request.targetWordCount} 字`,
     ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `内容领域：${request.settings.contentAreas.join("、")}`,
@@ -1102,8 +1118,27 @@ function buildSharedTaskContext(request: {
   ];
 }
 
+function normalizeTargetWordCount(targetWordCount: number) {
+  if (!Number.isFinite(targetWordCount)) return 1200;
+  return Math.min(5000, Math.max(300, Math.round(targetWordCount)));
+}
+
+function buildWordCountGuidance(targetWordCount: number) {
+  const normalized = normalizeTargetWordCount(targetWordCount);
+  const min = Math.max(300, Math.round(normalized * 0.85));
+  const max = Math.round(normalized * 1.15);
+
+  return {
+    normalized,
+    min,
+    max,
+    sentence: `正文目标字数约 ${normalized} 字，可上下浮动到 ${min}-${max} 字。`,
+  };
+}
+
 function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
   const { topic, draft, scope } = request;
+  const wordCount = buildWordCountGuidance(request.targetWordCount);
   const sections = [
     `任务：生成适合公众号的${scope === "full" ? "完整文章" : scope === "title" ? "标题候选" : scope === "outline" ? "摘要和大纲" : "正文"}`,
     ...buildSharedTaskContext(request),
@@ -1112,7 +1147,7 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
       ? "要求：以上内容来自热点详情页自动提取，可作为事实和细节参考；请优先信任“热点事实卡片”，再参考详情正文展开。如果提取内容不完整，请基于已知信息写作，不要自行编造。"
       : "",
     scope === "body" || scope === "full"
-      ? "正文建议 1200-1800 字，使用 ## 小标题分节。结构建议：1) 开头用真实场景或冲突切入；2) 中段拆 3-4 个核心判断；3) 末尾给出可执行建议和互动收束。"
+      ? `${wordCount.sentence} 使用 ## 小标题分节。结构建议：1) 开头用真实场景或冲突切入；2) 中段拆 3-4 个核心判断；3) 末尾给出可执行建议和互动收束。`
       : "",
     draft?.title ? `当前标题：${draft.title}` : "",
     draft?.summary ? `当前摘要：${draft.summary}` : "",
@@ -1121,7 +1156,9 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
     '请只返回 JSON，格式必须是：{"title":"","titleCandidates":[],"selectedAngle":"","summary":"","outline":[],"body":""}',
     "titleCandidates 输出 5 个标题，避免标题党，但要有点击欲和明确价值感。",
     `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
+    "优先把标题控制在 12-24 字之间，宁可短一点，也不要拖成长句。",
     "标题里不要出现“知乎、微博、抖音、百度、今日头条、热搜、热榜”这类平台词，除非平台名本身就是事件主体的一部分。",
+    "不要把 5 个标题写成同一个母句换尾巴，也不要重复使用“真正值得看的是什么 / 很多人都看反了 / 最该关注什么 / 背后更大的变化是”这类套话。",
     "5 个标题必须尽量分散句式，至少覆盖问题型、判断型、反差纠偏型、人群/场景型、趋势后果型中的 4 类。",
     `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像导读，不像摘要报告。`,
     "大纲输出 5-7 条，每条都是可直接当小标题的短句。",
@@ -1147,6 +1184,7 @@ function buildPlanningSystemPrompt(tone: string) {
 
 function buildPlanningUserPrompt(request: AIWriteGenerateRequest) {
   const { draft } = request;
+  const wordCount = buildWordCountGuidance(request.targetWordCount);
 
   return [
     "任务：为一篇公众号文章生成标题、摘要和写作结构。",
@@ -1156,10 +1194,12 @@ function buildPlanningUserPrompt(request: AIWriteGenerateRequest) {
       ? "要求：优先把“热点事实卡片”里的信息写进标题、摘要和大纲，再用详情页正文补背景，不要脱离原始热点自行脑补。"
       : "",
     `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
+    "优先把标题控制在 12-24 字之间，不要写成解释句或超长复句。",
     "标题里不要出现“知乎、微博、抖音、百度、今日头条、热搜、热榜”这类平台词，除非平台名本身就是事件主体的一部分。",
+    "不要重复使用“真正值得看的是什么 / 很多人都看反了 / 最该关注什么 / 背后更大的变化是”这类固定尾句。",
     "请给出 5 个句式明显不同的标题候选，至少覆盖问题型、判断型、反差型、人群/场景型、趋势型中的 4 类。",
     `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像导读。`,
-    "大纲输出 5-7 条，每一条都要像真正的小标题，能支撑正文展开。",
+    `大纲输出 5-7 条，每一条都要像真正的小标题，能支撑一篇约 ${wordCount.normalized} 字的正文展开。`,
     draft?.title ? `当前标题参考：${draft.title}` : "",
     draft?.summary ? `当前摘要参考：${draft.summary}` : "",
     draft?.outline?.length ? `当前大纲参考：${draft.outline.join(" | ")}` : "",
@@ -1189,6 +1229,7 @@ function buildDraftingUserPrompt(
   const tonePrompt = buildTonePromptSections(request.tone);
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
+  const wordCount = buildWordCountGuidance(request.targetWordCount);
 
   return [
     "任务：基于既定标题和结构，写出完整公众号正文。",
@@ -1208,7 +1249,7 @@ function buildDraftingUserPrompt(
     `摘要：${plan.summary}`,
     `写作角度：${plan.selectedAngle}`,
     `大纲：${plan.outline.join(" | ")}`,
-    "正文建议 1200-1800 字，使用 ## 小标题分节。",
+    `${wordCount.sentence} 使用 ## 小标题分节。`,
     "正文至少要回答 4 个层次中的 3 个：这件事为什么发生、真正变化在哪里、对谁影响最大、接下来会出现什么后果。",
     "文中至少写出一个容易被忽略的代价、门槛或风险，不要只写机会和表面热度。",
     "结尾给出 2-3 条可执行建议，并自然收束到互动 CTA。",
@@ -1379,6 +1420,7 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
     base.titleCandidates,
     request.topic.title,
   );
+  assertTitleCandidateDiversity(titleCandidates, request.topic.title);
   const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
@@ -1437,6 +1479,7 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
     base.titleCandidates,
     request.topic.title,
   );
+  assertTitleCandidateDiversity(titleCandidates, request.topic.title);
   const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
@@ -1468,6 +1511,7 @@ function mergeBodyWithPlan(
     plan.titleCandidates,
     topic.title,
   );
+  assertTitleCandidateDiversity(titleCandidates, topic.title);
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, plan.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, plan.body));
 
@@ -1485,16 +1529,60 @@ function mergeBodyWithPlan(
   };
 }
 
+function tryReuseExistingPlan(request: AIWriteGenerateRequest) {
+  if (!request.draft) return null;
+
+  const base = createBaseResult(request.topic, request.settings, request.draft);
+  const summary = polishSummaryText(request.draft.summary ?? "");
+  const outline = polishOutlineItems(request.draft.outline ?? []);
+
+  if (!summary || !outline.length) {
+    return null;
+  }
+
+  try {
+    assertOutlineDiversity(outline);
+    assertGeneratedPlanningQuality(summary, outline);
+    assertResultConsistency(request.topic, { summary, outline, body: "" });
+  } catch {
+    return null;
+  }
+
+  const titleCandidates = resolveSafeTitleCandidates(
+    normalizeStringList(request.draft.titleCandidates, base.titleCandidates),
+    base.titleCandidates,
+    request.topic.title,
+  );
+
+  return {
+    title: selectPrimaryTitle(
+      normalizeText(request.draft.title, titleCandidates[0] || base.title),
+      titleCandidates,
+      base.title,
+    ),
+    titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(base.titleCandidates),
+    selectedAngle: normalizeSelectedAngle(request.draft.selectedAngle, base.selectedAngle),
+    summary,
+    outline,
+    body: request.draft.body?.trim() ?? "",
+  } satisfies AIArticlePlan;
+}
+
 export async function generateWechatArticle(request: AIWriteGenerateRequest) {
   if (request.scope === "body" || request.scope === "full") {
-    const planningResponse = await callCompatibleModel({
-      systemPrompt: buildPlanningSystemPrompt(request.tone),
-      userPrompt: buildPlanningUserPrompt(request),
-      temperature: 0.72,
-      task: "outline",
-    });
+    const reusedPlan = tryReuseExistingPlan(request);
+    const planningResponse = reusedPlan
+      ? null
+      : await callCompatibleModel({
+          systemPrompt: buildPlanningSystemPrompt(request.tone),
+          userPrompt: buildPlanningUserPrompt(request),
+          temperature: 0.72,
+          task: "outline",
+        });
 
-    const plan = mergePlanningResult(request, planningResponse.content);
+    const plan = reusedPlan
+      ? reusedPlan
+      : mergePlanningResult(request, planningResponse ? planningResponse.content : "");
 
     const draftingResponse = await callCompatibleModel({
       systemPrompt: buildDraftingSystemPrompt(request.tone),
@@ -1505,7 +1593,7 @@ export async function generateWechatArticle(request: AIWriteGenerateRequest) {
 
     return {
       provider: draftingResponse.config.provider,
-      model: `${planningResponse.model} -> ${draftingResponse.model}`,
+      model: planningResponse ? `${planningResponse.model} -> ${draftingResponse.model}` : draftingResponse.model,
       result: mergeBodyWithPlan(draftingResponse.content, plan, request.topic, request.draft?.body?.trim() ?? ""),
     };
   }

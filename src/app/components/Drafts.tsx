@@ -10,8 +10,8 @@ import { formatDraftTime, type DraftStatus } from "../lib/app-data";
 import { domainConfigs } from "../lib/content-domains";
 import { useAppStore } from "../providers/app-store";
 
-const statusTabs: Array<"全部" | DraftStatus> = ["全部", "待生成", "待修改", "审核中", "已发布"];
-const statusOrder: DraftStatus[] = ["待生成", "待修改", "审核中", "已发布"];
+const statusTabs: Array<"全部" | DraftStatus> = ["全部", "待生成", "待修改", "已发布"];
+const statusOrder: DraftStatus[] = ["待生成", "待修改", "已发布"];
 
 const statusStyles: Record<DraftStatus, { bg: string; dot: string }> = {
   待生成: { bg: "bg-blue-50 text-blue-600", dot: "bg-blue-500" },
@@ -21,7 +21,7 @@ const statusStyles: Record<DraftStatus, { bg: string; dot: string }> = {
 };
 
 export function Drafts() {
-  const { drafts, updateDraftStatus, submitDraftReview, deleteDraft } = useAppStore();
+  const { drafts, updateDraftStatus, deleteDraft } = useAppStore();
   const [activeStatus, setActiveStatus] = useState<(typeof statusTabs)[number]>("全部");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [keyword, setKeyword] = useState("");
@@ -30,7 +30,11 @@ export function Drafts() {
 
   const filtered = useMemo(() => {
     return drafts
-      .filter((draft) => (activeStatus === "全部" ? true : draft.status === activeStatus))
+      .filter((draft) => {
+        if (activeStatus === "全部") return true;
+        if (activeStatus === "待修改") return draft.status === "待修改" || draft.status === "审核中";
+        return draft.status === activeStatus;
+      })
       .filter((draft) =>
         keyword
           ? draft.title.includes(keyword) || draft.topic.includes(keyword) || draft.tags.some((tag) => tag.includes(keyword))
@@ -44,24 +48,21 @@ export function Drafts() {
   }, [activeStatus, drafts, keyword, sortMode]);
 
   const moveToNextStatus = (draftId: string, currentStatus: DraftStatus) => {
-    if (currentStatus === "审核中") {
-      setNotice("审核中的稿件请到排版页完成发布");
+    if (currentStatus === "已发布") {
+      setNotice("当前草稿已是最终状态");
       window.setTimeout(() => setNotice(""), 1800);
       return;
     }
 
     const currentIndex = statusOrder.indexOf(currentStatus);
-    const nextStatus = statusOrder[Math.min(currentIndex + 1, statusOrder.indexOf("审核中"))];
+    const normalizedCurrentIndex = currentIndex === -1 ? statusOrder.indexOf("待修改") : currentIndex;
+    const nextStatus = statusOrder[Math.min(normalizedCurrentIndex + 1, statusOrder.length - 1)];
     if (nextStatus === currentStatus) {
       setNotice("当前草稿已是最终状态");
       window.setTimeout(() => setNotice(""), 1500);
       return;
     }
-    if (nextStatus === "审核中") {
-      submitDraftReview(draftId);
-    } else {
-      updateDraftStatus(draftId, nextStatus);
-    }
+    updateDraftStatus(draftId, nextStatus);
     setNotice(`已流转到「${nextStatus}」`);
     window.setTimeout(() => setNotice(""), 1500);
   };

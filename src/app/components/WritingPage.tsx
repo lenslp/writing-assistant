@@ -4,9 +4,9 @@ import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Type, ListTree, FileText, RefreshCw, Maximize2, Minimize2,
-  Palette, ChevronDown, Flame, Eye, BookOpen, Quote, Sparkles,
+  Palette, ChevronDown, Flame, Eye, Quote, Sparkles,
   Bold, Italic, Underline, AlignLeft, List, Save,
-  LoaderCircle, CheckCircle2, Send, Pause,
+  LoaderCircle, CheckCircle2, Pause,
 } from "lucide-react";
 import { createBody, createFormattingForDomain, createOutline, createSummary, createTitleCandidates, type Draft } from "../lib/app-data";
 import {
@@ -189,12 +189,12 @@ export function WritingPage() {
   const [saveNotice, setSaveNotice] = useState("");
   const [articleType, setArticleType] = useState("观点文");
   const [targetReader, setTargetReader] = useState(settings.readerJobTraits);
+  const [targetWordCount, setTargetWordCount] = useState(1200);
   const [selectedTone, setSelectedTone] = useState(defaultTone);
   const [generationError, setGenerationError] = useState("");
   const [pendingAction, setPendingAction] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [aiStatus, setAiStatus] = useState("");
   const [activeGenerationTask, setActiveGenerationTask] = useState<AIWriteScope | AITransformAction | null>(null);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationNow, setGenerationNow] = useState(Date.now());
@@ -333,6 +333,40 @@ export function WritingPage() {
       body: result.body,
       status: nextStatus,
     });
+  }
+
+  async function requestAiGeneration(
+    scope: AIWriteScope,
+    targetDraft: Draft,
+    signal: AbortSignal,
+    draftSnapshot?: DraftWritingSnapshot,
+  ) {
+    const response = await fetch("/api/ai/write", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      signal,
+      body: JSON.stringify({
+        mode: "generate",
+        scope,
+        topic: topicForWriting,
+        settings,
+        domain: selectedDomain,
+        articleType,
+        targetReader,
+        targetWordCount,
+        tone: selectedTone,
+        draft: draftSnapshot ?? buildDraftSnapshot(targetDraft),
+      }),
+    });
+
+    const payload = (await response.json()) as AIWriteResponse;
+    if (!response.ok || !payload.result) {
+      throw new Error(payload.message || "AI 写作暂时不可用");
+    }
+
+    return payload;
   }
 
   function buildGenerationSuccessNotice(
@@ -538,32 +572,40 @@ export function WritingPage() {
     requestAbortControllerRef.current = controller;
 
     try {
-      const response = await fetch("/api/ai/write", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          mode: "generate",
-          scope,
-          topic: topicForWriting,
-          settings,
+      let payload: AIWriteResponse;
+      let generatedResult: AIWriteResult;
+
+      if (scope === "body" || scope === "full") {
+        setPendingAction("AI 正在规划摘要和大纲");
+
+        const planningPayload = await requestAiGeneration("outline", targetDraft, controller.signal);
+        const planningResult = planningPayload.result;
+
+        if (!planningResult) {
+          throw new Error(planningPayload.message || "AI 未返回可用结构稿");
+        }
+
+        syncAiResult(targetDraft, planningResult);
+
+        const plannedDraftSnapshot: DraftWritingSnapshot = {
+          ...buildDraftSnapshot(targetDraft),
           domain: selectedDomain,
-          articleType,
-          targetReader,
-          tone: selectedTone,
-          draft: buildDraftSnapshot(targetDraft),
-        }),
-      });
+          title: planningResult.title,
+          titleCandidates: planningResult.titleCandidates,
+          selectedAngle: planningResult.selectedAngle,
+          summary: planningResult.summary,
+          outline: planningResult.outline,
+          body: planningResult.body,
+        };
 
-      const payload = (await response.json()) as AIWriteResponse;
-      if (!response.ok || !payload.result) {
-        throw new Error(payload.message || "AI 写作暂时不可用");
+        setPendingAction(scope === "full" ? generationLabels.full : generationLabels.body);
+        payload = await requestAiGeneration(scope, targetDraft, controller.signal, plannedDraftSnapshot);
+        generatedResult = payload.result as AIWriteResult;
+      } else {
+        payload = await requestAiGeneration(scope, targetDraft, controller.signal);
+        generatedResult = payload.result as AIWriteResult;
       }
-      const generatedResult = payload.result;
 
-      setAiStatus(`${payload.provider} · ${payload.model}`);
       syncAiResult(targetDraft, generatedResult);
       const baseNotice = buildGenerationSuccessNotice(scope, label, false);
       setSaveNotice(baseNotice);
@@ -628,6 +670,7 @@ export function WritingPage() {
           domain: selectedDomain,
           articleType,
           targetReader,
+          targetWordCount,
           tone: selectedTone,
           draft: buildDraftSnapshot(targetDraft),
           body,
@@ -644,7 +687,6 @@ export function WritingPage() {
         ? `${body.slice(0, selectionStart)}${payload.transformedText}${body.slice(selectionEnd)}`
         : payload.transformedText;
 
-      setAiStatus(`${payload.provider} · ${payload.model}`);
       setBody(nextBody);
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
@@ -707,33 +749,6 @@ export function WritingPage() {
 
     router.push(`/format-editor?draftId=${targetDraft.id}`);
   };
-
-  const handleSubmitReview = () => {
-    const targetDraft = currentDraft ?? ensureDraft("body");
-    if (!targetDraft) return;
-
-    updateDraft(targetDraft.id, {
-      domain: selectedDomain,
-      title: selectedTitle,
-      summary,
-      outline,
-      body,
-      formatting: targetDraft.domain === selectedDomain ? targetDraft.formatting : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
-      status: "审核中",
-    });
-
-    setSaveNotice("已提交审核");
-    window.setTimeout(() => setSaveNotice(""), 2000);
-    router.push(`/review-center?draftId=${targetDraft.id}`);
-  };
-
-  const workflowStatus = currentDraft?.status ?? "待生成";
-  const workflowHint =
-    workflowStatus === "已发布"
-      ? "这篇文章已经发布，如需复用可继续微调后重新排版。"
-      : workflowStatus === "审核中"
-        ? "当前草稿已经进入审核阶段，下一步建议直接去排版页完成发布。"
-        : "建议先一键成文或补全正文，再提交审核进入发布流程。";
 
   const applyToolbarAction = (mode: "bold" | "italic" | "underline" | "heading" | "list" | "quote") => {
     const textarea = bodyTextareaRef.current;
@@ -957,14 +972,6 @@ export function WritingPage() {
         >
           <Palette className="w-3.5 h-3.5" /> 自动排版
         </button>
-        <button
-          onClick={handleSubmitReview}
-          disabled={isGenerating}
-          className="flex items-center gap-1.5 bg-purple-600 text-white px-3.5 py-1.5 rounded-lg text-[12px] hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
-          style={{ fontWeight: 500 }}
-        >
-          <Send className="w-3.5 h-3.5" /> 提交审核
-        </button>
       </div>
 
       {generationError ? (
@@ -1059,18 +1066,6 @@ export function WritingPage() {
           <div>
             <div className="text-[13px] mb-2" style={{ fontWeight: 600 }}>写作参数</div>
             <div className="space-y-3">
-              <div
-                className="rounded-xl px-3 py-2"
-                style={{
-                  border: `1px solid ${activeDomainTheme.border}`,
-                  background: `linear-gradient(135deg, ${activeDomainTheme.soft}, #ffffff)`,
-                }}
-              >
-                <div className="text-[11px]" style={{ fontWeight: 600, color: activeDomainTheme.text }}>
-                  当前领域提示：{activeDomainConfig.icon} {selectedDomain}
-                </div>
-                <p className="mt-1 text-[11px] leading-5 text-gray-600">{activeDomainConfig.promptHint}</p>
-              </div>
               <div>
                 <label className="text-[12px] text-gray-500 mb-1 block">文章类型</label>
                 <div className="relative">
@@ -1085,6 +1080,22 @@ export function WritingPage() {
               <div>
                 <label className="text-[12px] text-gray-500 mb-1 block">目标读者</label>
                 <input value={targetReader} onChange={(event) => setTargetReader(event.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300" />
+              </div>
+              <div>
+                <label className="text-[12px] text-gray-500 mb-1 block">目标字数</label>
+                <input
+                  type="number"
+                  min={300}
+                  max={5000}
+                  step={100}
+                  value={targetWordCount}
+                  onChange={(event) => {
+                    const parsed = Number.parseInt(event.target.value, 10);
+                    setTargetWordCount(Number.isFinite(parsed) ? parsed : 1200);
+                  }}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300"
+                />
+                <p className="mt-1 text-[11px] text-gray-400">AI 会按这个长度规划大纲和正文。</p>
               </div>
               <div>
                 <label className="text-[12px] text-gray-500 mb-1 block">风格语气</label>
@@ -1108,26 +1119,6 @@ export function WritingPage() {
                     当前风格：{activeTonePreset.label}
                   </div>
                   <p className="mt-1 text-[12px] leading-5 text-gray-600">{activeTonePreset.description}</p>
-                </div>
-              </div>
-              <div className="border-t border-gray-100 pt-4">
-                <div className="text-[13px] mb-2" style={{ fontWeight: 600 }}>选题信息</div>
-                <div className="bg-blue-50/50 rounded-lg p-3">
-                  <div className="text-[13px]" style={{ fontWeight: 500 }}>{activeTopic.title}</div>
-                  <div className="text-[11px] text-gray-500 mt-1">领域：{selectedDomain} · 角度：{activeTopic.angles[0]}</div>
-                  <div className="flex items-center gap-1 mt-2 flex-wrap">
-                    {activeTopic.tags.map((tag) => (
-                      <span key={tag} className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{tag}</span>
-                    ))}
-                    <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">热度{activeTopic.heat}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="border-t border-gray-100 pt-4">
-                <div className="text-[13px] mb-2" style={{ fontWeight: 600 }}>AI 写作状态</div>
-                <div className="bg-amber-50/70 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-1">
-                  <p>{aiStatus ? `当前模型：${aiStatus}` : "尚未发起 AI 写作请求"}</p>
-                  <p>生成失败时，请到设置页检查模型配置，并使用“测试模型”确认接口可用。</p>
                 </div>
               </div>
             </div>
@@ -1386,9 +1377,16 @@ export function WritingPage() {
               <span className="text-[13px]" style={{ fontWeight: 600 }}>热点摘要</span>
             </div>
             <div className="bg-orange-50/50 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-2">
+              <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>{activeTopic.title}</div>
               <p>{activeTopic.source}</p>
               <p>热度等级：{activeTopic.heat}，匹配度 {activeTopic.fit}%</p>
+              <p>领域：{selectedDomain} · 核心角度：{activeTopic.angles[0]}</p>
               <p>推荐理由：{activeTopic.reason}</p>
+              <div className="flex items-center gap-1 pt-1 flex-wrap">
+                {activeTopic.tags.map((tag) => (
+                  <span key={tag} className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">{tag}</span>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1406,65 +1404,6 @@ export function WritingPage() {
             </div>
           </div>
 
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="w-4 h-4 text-blue-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>账号画像</span>
-            </div>
-            <div className="bg-blue-50/50 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-2">
-              <p>账号：{settings.accountName}</p>
-              <p>定位：{settings.accountPosition}</p>
-              <p>推荐语气：{settings.toneKeywords.slice(0, 3).join("、")}</p>
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>流程进度</span>
-            </div>
-            <div className="rounded-lg border border-gray-100 bg-gray-50/80 p-3 text-[12px] text-gray-600 space-y-3">
-              <div className="flex items-center justify-between">
-                <span>当前状态</span>
-                <span className={`rounded-full px-2 py-0.5 ${
-                  workflowStatus === "已发布"
-                    ? "bg-green-50 text-green-600"
-                    : workflowStatus === "审核中"
-                      ? "bg-purple-50 text-purple-600"
-                      : workflowStatus === "待修改"
-                        ? "bg-amber-50 text-amber-600"
-                        : "bg-blue-50 text-blue-600"
-                }`} style={{ fontWeight: 600 }}>
-                  {workflowStatus}
-                </span>
-              </div>
-              <p className="leading-6">{workflowHint}</p>
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={handleSaveDraft}
-                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
-                  style={{ fontWeight: 500 }}
-                >
-                  1. 保存当前草稿
-                </button>
-                <button
-                  onClick={handleSubmitReview}
-                  disabled={isGenerating}
-                  className="w-full rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-left text-[12px] text-purple-700 hover:bg-purple-100 disabled:opacity-60"
-                  style={{ fontWeight: 500 }}
-                >
-                  2. 提交审核
-                </button>
-                <button
-                  onClick={handleOpenFormatEditor}
-                  className="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-[12px] text-emerald-700 hover:bg-emerald-100"
-                  style={{ fontWeight: 500 }}
-                >
-                  3. 去排版发布
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

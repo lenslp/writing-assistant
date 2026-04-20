@@ -151,20 +151,39 @@ export function createFormattingForDomain(domain: ArticleDomain, fallbackTemplat
 }
 
 export function createTitleCandidates(topic: TopicSuggestion, settings: AppSettings) {
+  const subject = topic.title.replace(/\s+/g, " ").trim();
+  const primaryAngle = topic.angles[0]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || subject;
+  const secondaryAngle = topic.angles[1]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || primaryAngle;
   const tone = settings.toneKeywords[0] ?? "朋友式表达";
-  const focus = topic.angles[0]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || topic.title;
   const readerLabel =
-    /家长|学生|老师/.test(topic.title + topic.tags.join(" ")) ? "家长和学生" :
-      /创作|写作|流量|增长|运营/.test(topic.title + topic.tags.join(" ")) ? "做内容的人" :
+    /家长|学生|老师/.test(subject + topic.tags.join(" ")) ? "家长和学生" :
+      /创作|写作|流量|增长|运营/.test(subject + topic.tags.join(" ")) ? "做内容的人" :
         "普通人";
 
-  return [
-    topic.title,
-    `${topic.title}，真正值得看的是什么`,
-    `关于${topic.title}，很多人可能都看反了`,
-    `这波${topic.title}，${readerLabel}最该关注什么`,
-    `${tone}一点看，${topic.title}背后更大的变化是 ${focus}`,
+  const trimCandidate = (text: string) =>
+    text
+      .replace(/\s+/g, " ")
+      .replace(/[，,]{2,}/g, "，")
+      .replace(/[？?]{2,}/g, "？")
+      .replace(/[！!]{2,}/g, "！")
+      .replace(/[，。、；：:!?！？\s]+$/g, "")
+      .trim()
+      .slice(0, 30)
+      .replace(/[，。、；：:!?！？\s]+$/g, "")
+      .trim();
+
+  const rawCandidates = [
+    subject,
+    `别只盯着${subject}，更该看的其实是${primaryAngle}`,
+    `${readerLabel}为什么更该关心${primaryAngle}？`,
+    `${subject}之后，真正会变的是谁的日子`,
+    `如果只把${subject}当热闹看，后面更容易看漏`,
+    `${tone}一点说，${primaryAngle}才是关键`,
+    `${subject}闹上来以后，哪些风险开始变具体`,
+    `比起${subject}本身，更值得聊的是${secondaryAngle}`,
   ];
+
+  return Array.from(new Set(rawCandidates.map(trimCandidate).filter(Boolean))).slice(0, 5);
 }
 
 export function createOutline(topic: TopicSuggestion) {

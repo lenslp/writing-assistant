@@ -491,24 +491,6 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
-          <div className="text-[12px] text-gray-400">当前热点</div>
-          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{items.length}</div>
-          <div className="text-[12px] text-gray-500">本轮可用条目</div>
-        </div>
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
-          <div className="text-[12px] text-gray-400">科技领域</div>
-          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{techTopicCount}</div>
-          <div className="text-[12px] text-gray-500">自动识别后的归类</div>
-        </div>
-        <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
-          <div className="text-[12px] text-gray-400">屏蔽条目</div>
-          <div className="mt-1 text-[22px] text-gray-900" style={{ fontWeight: 600 }}>{restrictedCount}</div>
-          <div className="text-[12px] text-gray-500">{dataSource === "database" ? "优先使用缓存库" : "当前为实时抓取"}</div>
-        </div>
-      </div>
-
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
         {isRefreshing ? (

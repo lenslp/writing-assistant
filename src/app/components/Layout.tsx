@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Flame, BarChart3, Lightbulb, FileText, Settings,
-  Search, Plus, PenTool, Palette, CheckCheck, Send
+  Search, Plus, PenTool, Palette, CheckCheck
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { domainConfigs } from "../lib/content-domains";
@@ -18,7 +18,6 @@ const navItems = [
   { to: "/writing", icon: PenTool, label: "写作生成" },
   { to: "/format-editor", icon: Palette, label: "排版编辑" },
   { to: "/drafts", icon: FileText, label: "草稿箱" },
-  { to: "/review-center", icon: Send, label: "审核中心" },
   { to: "/published", icon: CheckCheck, label: "发布管理" },
   { to: "/settings", icon: Settings, label: "设置" },
 ];
@@ -84,7 +83,7 @@ export function Layout({ children }: LayoutProps) {
       <aside className="w-[220px] min-w-[220px] bg-white border-r border-border flex flex-col">
         <div className="h-14 flex items-center px-5 border-b border-border">
           <PenTool className="w-5 h-5 text-blue-600 mr-2" />
-          <span className="text-[15px] tracking-tight" style={{ fontWeight: 600 }}>公众号写作助手</span>
+          <span className="text-[15px] tracking-tight" style={{ fontWeight: 600 }}>写作助手</span>
         </div>
         <nav className="flex-1 py-3 px-3 space-y-0.5 overflow-y-auto">
           {navItems.map(({ to, icon: Icon, label }) => (

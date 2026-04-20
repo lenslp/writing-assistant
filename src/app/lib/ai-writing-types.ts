@@ -40,6 +40,7 @@ export type AIWriteGenerateRequest = {
   domain: ArticleDomain;
   articleType: string;
   targetReader: string;
+  targetWordCount: number;
   tone: string;
   draft?: DraftWritingSnapshot | null;
   sourceContext?: HotTopicSourceContext | null;
@@ -53,6 +54,7 @@ export type AIWriteTransformRequest = {
   domain: ArticleDomain;
   articleType: string;
   targetReader: string;
+  targetWordCount: number;
   tone: string;
   draft?: DraftWritingSnapshot | null;
   body: string;

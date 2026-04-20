@@ -16,6 +16,7 @@ import {
   formatDraftTime,
   templates,
   type Draft,
+  type DraftStatus,
   type DraftFormatting,
 } from "../lib/app-data";
 import { buildAutoImageCaption, buildAutoImagePrompt, buildAutoImageSearchQuery, buildImageSnippet, shouldPreferRealImage } from "../lib/article-auto-image";
@@ -37,6 +38,13 @@ const moduleTools = [
   { icon: Sparkles, label: "金句卡片" },
   { icon: Heart, label: "CTA" },
 ] as const;
+
+const draftStatusStyles: Record<DraftStatus, { chip: string; dot: string }> = {
+  待生成: { chip: "bg-blue-50 text-blue-600", dot: "bg-blue-500" },
+  待修改: { chip: "bg-amber-50 text-amber-600", dot: "bg-amber-500" },
+  审核中: { chip: "bg-purple-50 text-purple-600", dot: "bg-purple-500" },
+  已发布: { chip: "bg-green-50 text-green-600", dot: "bg-green-500" },
+};
 
 type ContentBlock =
   | { type: "heading"; content: string }
@@ -817,7 +825,7 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
 export function FormatEditor() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { drafts, settings, getDraftById, updateDraft, submitDraftReview, returnDraftToEditing, publishDraft } = useAppStore();
+  const { drafts, settings, getDraftById, updateDraft, publishDraft } = useAppStore();
   const latestDraft = useMemo(
     () => [...drafts].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0],
     [drafts],
@@ -1000,6 +1008,7 @@ export function FormatEditor() {
   const articleDate = currentDraft ? formatDraftTime(currentDraft.updatedAt).split(" ")[0] : formatDraftTime(new Date().toISOString()).split(" ")[0];
   const isWechatChannel = publishChannel === "公众号";
   const articleDomain = currentDraft?.domain ?? "科技";
+  const domainMeta = domainConfigs[articleDomain];
   const readingMinutes = Math.max(3, Math.ceil(body.replace(/\s+/g, "").length / 350));
   const bodyWords = body.replace(/\s+/g, "").length;
   const normalizedTitle = title.trim();
@@ -1042,6 +1051,7 @@ export function FormatEditor() {
         JSON.stringify(currentDraft.formatting) !== JSON.stringify(formatting)
       ),
   );
+  const currentDraftStatusStyle = draftStatusStyles[currentDraft.status];
 
   const openImagePanel = () => {
     setIsImagePanelOpen(true);
@@ -1530,35 +1540,6 @@ export function FormatEditor() {
     }
   };
 
-  const handleSubmitReview = () => {
-    if (!currentDraft) return;
-    setIsToolbarActionOpen(false);
-    submitDraftReview(currentDraft.id, {
-      title,
-      summary,
-      body,
-      formatting,
-      publishedChannel: publishChannel,
-    });
-    setNotice("已提交审核");
-    window.setTimeout(() => setNotice(""), 2000);
-    router.push(`/review-center?draftId=${currentDraft.id}`);
-  };
-
-  const handleReturnToEditing = () => {
-    if (!currentDraft) return;
-    setIsToolbarActionOpen(false);
-    returnDraftToEditing(currentDraft.id, {
-      title,
-      summary,
-      body,
-      formatting,
-      publishedChannel: publishChannel,
-    });
-    setNotice("已退回待修改");
-    window.setTimeout(() => setNotice(""), 2000);
-  };
-
   const handleBackToWriting = () => {
     if (!currentDraft) return;
     setIsToolbarActionOpen(false);
@@ -1650,7 +1631,7 @@ export function FormatEditor() {
               className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-[12px] text-white hover:bg-slate-800"
               style={{ fontWeight: 500 }}
             >
-              流程操作 <ChevronDown className="h-3.5 w-3.5" />
+              发布操作 <ChevronDown className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -1723,30 +1704,12 @@ export function FormatEditor() {
             left: toolbarActionMenuPosition.left,
           }}
         >
-          {currentDraft.status !== "已发布" ? (
-            <button
-              type="button"
-              onClick={handleSubmitReview}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
-            >
-              <Send className="h-3.5 w-3.5" /> 提交审核
-            </button>
-          ) : null}
-          {currentDraft.status === "审核中" ? (
-            <button
-              type="button"
-              onClick={handleReturnToEditing}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
-            >
-              <RefreshCcw className="h-3.5 w-3.5" /> 退回修改
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={handlePublish}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
           >
-            <Save className="h-3.5 w-3.5" /> {currentDraft.status === "审核中" ? "审核通过并发布" : "直接发布"}
+            <Save className="h-3.5 w-3.5" /> 直接发布
           </button>
           <button
             type="button"
@@ -2747,41 +2710,65 @@ export function FormatEditor() {
             <>
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>当前草稿</div>
-            <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-white to-slate-50 p-4 space-y-3 shadow-[0_12px_36px_rgba(15,23,42,0.04)]">
-              <div className="text-[13px]" style={{ fontWeight: 600 }}>{title || currentDraft.title}</div>
-              <div className="flex items-center gap-2">
-                <span
-                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px]"
-                  style={{
-                    background: `linear-gradient(135deg, ${activeScheme.primary}, ${activeScheme.accent})`,
-                    color: "#ffffff",
-                    fontWeight: 700,
-                  }}
-                >
-                  <span>{domainConfigs[articleDomain].icon}</span>
-                  {articleDomain}
-                </span>
-                <span className="text-[11px] text-gray-500">{domainConfigs[articleDomain].description}</span>
+            <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+              <div
+                className="border-b border-slate-100 px-4 py-4"
+                style={{ background: `linear-gradient(135deg, ${activeScheme.primary}10, ${activeScheme.accent}08 60%, #ffffff)` }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px]"
+                        style={{
+                          background: `linear-gradient(135deg, ${activeScheme.primary}, ${activeScheme.accent})`,
+                          color: "#ffffff",
+                          fontWeight: 700,
+                        }}
+                      >
+                        <span>{domainMeta.icon}</span>
+                        {articleDomain}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] ${currentDraftStatusStyle.chip}`} style={{ fontWeight: 600 }}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${currentDraftStatusStyle.dot}`} />
+                        {currentDraft.status}
+                      </span>
+                    </div>
+                    <div className="text-[15px] leading-6 text-slate-900" style={{ fontWeight: 700 }}>
+                      {title || currentDraft.title}
+                    </div>
+                    <div className="text-[12px] leading-5 text-slate-500">
+                      {domainMeta.description}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/70 bg-white/85 px-3 py-2 text-right shadow-sm backdrop-blur">
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">更新</div>
+                    <div className="mt-1 text-[12px] text-slate-700" style={{ fontWeight: 600 }}>
+                      {articleDate}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div className="rounded-xl bg-white px-3 py-2">
-                  <div className="text-[10px] text-gray-400">字数</div>
-                  <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{bodyWords}</div>
-                </div>
-                <div className="rounded-xl bg-white px-3 py-2">
-                  <div className="text-[10px] text-gray-400">领域</div>
-                  <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{articleDomain}</div>
-                </div>
-                <div className="rounded-xl bg-white px-3 py-2">
-                  <div className="text-[10px] text-gray-400">状态</div>
-                  <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{currentDraft.status}</div>
-                </div>
-                <div className="rounded-xl bg-white px-3 py-2">
-                  <div className="text-[10px] text-gray-400">阅读</div>
-                  <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{readingMinutes} 分钟</div>
-                </div>
+
+              <div className="grid grid-cols-2 gap-px bg-slate-100">
+                {[
+                  { label: "字数", value: bodyWords.toLocaleString(), hint: "正文统计" },
+                  { label: "预估阅读", value: `${readingMinutes} 分钟`, hint: "公众号口径" },
+                  { label: "结构段落", value: String(previewBlocks.length), hint: "当前卡片数" },
+                  { label: "重点模块", value: String(estimatedCards), hint: "金句 / 引用 / 高亮" },
+                ].map((item) => (
+                  <div key={item.label} className="bg-white px-4 py-3">
+                    <div className="text-[11px] text-slate-400">{item.label}</div>
+                    <div className="mt-1 text-[16px] text-slate-900" style={{ fontWeight: 700 }}>{item.value}</div>
+                    <div className="mt-1 text-[11px] text-slate-500">{item.hint}</div>
+                  </div>
+                ))}
               </div>
-              <div className="text-[12px] text-gray-500">最后更新 {formatDraftTime(currentDraft.updatedAt)}</div>
+
+              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-slate-500">
+                <span>最后更新 {formatDraftTime(currentDraft.updatedAt)}</span>
+                <span>{isDirty ? "有未保存修改" : "内容已同步"}</span>
+              </div>
             </div>
           </div>
 

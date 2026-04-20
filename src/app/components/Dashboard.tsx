@@ -17,7 +17,6 @@ import { useAppStore } from "../providers/app-store";
 const statusColors: Record<string, string> = {
   待修改: "bg-amber-50 text-amber-600",
   待生成: "bg-blue-50 text-blue-600",
-  审核中: "bg-purple-50 text-purple-600",
   已发布: "bg-green-50 text-green-600",
 };
 const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
@@ -430,8 +429,8 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
             <div className="p-4 space-y-3">
               {[
                 "先在热点中心抓取真实热点，再筛选适合账号定位的选题。",
-                "对实时热点优先走“热点 → 选题 → 写作 → 审核 → 排版”的完整流程。",
-                `当前还有 ${needsFormatting} 篇草稿待排版，建议优先处理待修改和审核中的文章`,
+                "对实时热点优先走“热点 → 选题 → 写作 → 排版 → 发布”的流程。",
+                `当前还有 ${needsFormatting} 篇草稿待排版，建议优先处理待修改中的文章`,
               ].map((tip) => (
                 <div key={tip} className="flex items-start gap-2.5 text-[12.5px] text-gray-600 leading-relaxed">
                   <ArrowUpRight className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
@@ -439,12 +438,6 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                 </div>
               ))}
               <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={() => router.push("/review-center")}
-                  className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-50"
-                >
-                  去审核中心
-                </button>
                 <button
                   onClick={() => router.push("/published")}
                   className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700"

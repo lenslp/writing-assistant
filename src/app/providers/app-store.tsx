@@ -33,10 +33,35 @@ const DRAFTS_KEY = "wechat-writer:drafts";
 const TOPIC_KEY = "wechat-writer:selected-topic";
 const CUSTOM_TOPICS_KEY = "wechat-writer:custom-topics";
 
+type StoredTopicSuggestion = Pick<
+  TopicSuggestion,
+  "id" | "title" | "domain" | "heat" | "fit" | "reason" | "angles" | "source" | "type" | "tags"
+>;
+
 function getBrowserStorage() {
   if (typeof window === "undefined") return null;
   const storage = window.localStorage;
   return storage && typeof storage.getItem === "function" && typeof storage.setItem === "function" ? storage : null;
+}
+
+function isQuotaExceededError(error: unknown) {
+  return error instanceof DOMException &&
+    (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22 || error.code === 1014);
+}
+
+function trySetStorageItem(storage: Storage, key: string, value: string) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      console.warn(`Skipped persisting ${key} because browser storage quota was exceeded.`);
+      return false;
+    }
+
+    console.error(`Failed to persist ${key}:`, error);
+    return false;
+  }
 }
 
 type GenerateScope = "title" | "outline" | "body";
@@ -101,6 +126,45 @@ function normalizeTopic(topic: TopicSuggestion): TopicSuggestion {
     ...topic,
     domain: topic.domain && storedDomain !== "科技" ? storedDomain : inferredDomain,
   };
+}
+
+function compactTopicForStorage(topic: TopicSuggestion): StoredTopicSuggestion {
+  const normalizedTopic = normalizeTopic(topic);
+
+  return {
+    ...normalizedTopic,
+    reason: normalizedTopic.reason.trim().slice(0, 240),
+    angles: normalizedTopic.angles
+      .map((angle) => angle.trim())
+      .filter(Boolean)
+      .slice(0, 3),
+    tags: normalizedTopic.tags
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .slice(0, 6),
+  };
+}
+
+function persistCustomTopics(storage: Storage, topics: TopicSuggestion[]) {
+  const compactTopics = dedupeTopics(topics).map(compactTopicForStorage);
+  const candidates = [
+    compactTopics,
+    compactTopics.slice(0, 20),
+    compactTopics.slice(0, 10),
+    compactTopics.slice(0, 5),
+  ];
+
+  for (const candidate of candidates) {
+    if (trySetStorageItem(storage, CUSTOM_TOPICS_KEY, JSON.stringify(candidate))) {
+      return;
+    }
+  }
+
+  try {
+    storage.removeItem(CUSTOM_TOPICS_KEY);
+  } catch (error) {
+    console.error(`Failed to clear ${CUSTOM_TOPICS_KEY}:`, error);
+  }
 }
 
 function dedupeTopics(items: TopicSuggestion[]) {
@@ -352,25 +416,25 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const storage = getBrowserStorage();
     if (!storage) return;
-    storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    trySetStorageItem(storage, SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
   useEffect(() => {
     const storage = getBrowserStorage();
     if (!storage) return;
-    storage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    trySetStorageItem(storage, DRAFTS_KEY, JSON.stringify(drafts));
   }, [drafts]);
 
   useEffect(() => {
     const storage = getBrowserStorage();
     if (!storage) return;
-    storage.setItem(CUSTOM_TOPICS_KEY, JSON.stringify(customTopics));
+    persistCustomTopics(storage, customTopics);
   }, [customTopics]);
 
   useEffect(() => {
     const storage = getBrowserStorage();
     if (!storage) return;
-    storage.setItem(TOPIC_KEY, JSON.stringify(selectedTopicId));
+    trySetStorageItem(storage, TOPIC_KEY, JSON.stringify(selectedTopicId));
   }, [selectedTopicId]);
 
   const allTopics = useMemo(() => dedupeTopics([...customTopics, ...recommendedTopics]), [customTopics]);
