@@ -1052,6 +1052,30 @@ export function FormatEditor() {
       ),
   );
   const currentDraftStatusStyle = draftStatusStyles[currentDraft.status];
+  const currentDraftPreview =
+    summary.trim() ||
+    body
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ||
+    domainMeta.description;
+  const currentDraftMetrics = [
+    { label: "字数", value: bodyWords.toLocaleString(), hint: "正文" },
+    { label: "阅读", value: `${readingMinutes} 分钟`, hint: "预估" },
+    { label: "章节", value: String(Math.max(headingCount, body.trim() ? 1 : 0)), hint: "小标题" },
+    { label: "重点", value: String(estimatedCards), hint: "高亮卡片" },
+  ] as const;
+  const draftSyncBadge = isDirty
+    ? {
+        label: "待保存",
+        description: "当前内容有改动",
+        className: "border-amber-200 bg-amber-50 text-amber-700",
+      }
+    : {
+        label: "已同步",
+        description: "草稿内容已落盘",
+        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
 
   const openImagePanel = () => {
     setIsImagePanelOpen(true);
@@ -2497,7 +2521,7 @@ export function FormatEditor() {
         </div>
 
         <div
-          className={`bg-white border-l border-gray-100 overflow-y-auto p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[320px] min-w-[320px]"} space-y-5`}
+          className={`bg-white border-l border-gray-100 overflow-y-auto p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[352px] min-w-[352px] xl:w-[368px] xl:min-w-[368px]"} space-y-5`}
         >
           {isImagePanelOpen ? (
             <>
@@ -2710,64 +2734,64 @@ export function FormatEditor() {
             <>
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>当前草稿</div>
-            <div className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
-              <div
-                className="border-b border-slate-100 px-4 py-4"
-                style={{ background: `linear-gradient(135deg, ${activeScheme.primary}10, ${activeScheme.accent}08 60%, #ffffff)` }}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px]"
-                        style={{
-                          background: `linear-gradient(135deg, ${activeScheme.primary}, ${activeScheme.accent})`,
-                          color: "#ffffff",
-                          fontWeight: 700,
-                        }}
-                      >
-                        <span>{domainMeta.icon}</span>
-                        {articleDomain}
-                      </span>
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] ${currentDraftStatusStyle.chip}`} style={{ fontWeight: 600 }}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${currentDraftStatusStyle.dot}`} />
-                        {currentDraft.status}
-                      </span>
-                    </div>
-                    <div className="text-[15px] leading-6 text-slate-900" style={{ fontWeight: 700 }}>
-                      {title || currentDraft.title}
-                    </div>
-                    <div className="text-[12px] leading-5 text-slate-500">
-                      {domainMeta.description}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-white/70 bg-white/85 px-3 py-2 text-right shadow-sm backdrop-blur">
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-slate-400">更新</div>
-                    <div className="mt-1 text-[12px] text-slate-700" style={{ fontWeight: 600 }}>
-                      {articleDate}
-                    </div>
+            <div className="rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
+              <div className="space-y-4 px-4 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] whitespace-nowrap"
+                    style={{
+                      background: `linear-gradient(135deg, ${activeScheme.primary}, ${activeScheme.accent})`,
+                      color: "#ffffff",
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>{domainMeta.icon}</span>
+                    {articleDomain}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] whitespace-nowrap ${currentDraftStatusStyle.chip}`} style={{ fontWeight: 600 }}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${currentDraftStatusStyle.dot}`} />
+                    {currentDraft.status}
+                  </span>
+                  <span
+                    className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] whitespace-nowrap ${draftSyncBadge.className}`}
+                    style={{ fontWeight: 600 }}
+                  >
+                    {draftSyncBadge.label}
+                  </span>
+                </div>
+
+                <div className="text-[16px] leading-7 text-slate-900" style={{ fontWeight: 700 }}>
+                  {title || currentDraft.title}
+                </div>
+
+                <div className="flex items-center justify-between text-[12px] text-slate-500">
+                  <span>{draftSyncBadge.description}</span>
+                  <span className="whitespace-nowrap">更新于 {articleDate}</span>
+                </div>
+
+                <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                  <div className="line-clamp-3 text-[12px] leading-6 text-slate-600">
+                    {currentDraftPreview}
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-px bg-slate-100">
-                {[
-                  { label: "字数", value: bodyWords.toLocaleString(), hint: "正文统计" },
-                  { label: "预估阅读", value: `${readingMinutes} 分钟`, hint: "公众号口径" },
-                  { label: "结构段落", value: String(previewBlocks.length), hint: "当前卡片数" },
-                  { label: "重点模块", value: String(estimatedCards), hint: "金句 / 引用 / 高亮" },
-                ].map((item) => (
-                  <div key={item.label} className="bg-white px-4 py-3">
-                    <div className="text-[11px] text-slate-400">{item.label}</div>
-                    <div className="mt-1 text-[16px] text-slate-900" style={{ fontWeight: 700 }}>{item.value}</div>
-                    <div className="mt-1 text-[11px] text-slate-500">{item.hint}</div>
+              <div className="grid grid-cols-2 gap-2 border-t border-slate-100 px-4 py-4">
+                {currentDraftMetrics.map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-slate-200/80 bg-white px-3 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[11px] text-slate-400">{item.label}</div>
+                      <div className="text-[11px] text-slate-400">{item.hint}</div>
+                    </div>
+                    <div className="mt-2 text-[16px] text-slate-900" style={{ fontWeight: 700 }}>
+                      {item.value}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <div className="flex items-center justify-between px-4 py-3 text-[12px] text-slate-500">
-                <span>最后更新 {formatDraftTime(currentDraft.updatedAt)}</span>
-                <span>{isDirty ? "有未保存修改" : "内容已同步"}</span>
+              <div className="border-t border-slate-100 px-4 py-3 text-[12px] leading-6 text-slate-500">
+                {domainMeta.description}
               </div>
             </div>
           </div>
