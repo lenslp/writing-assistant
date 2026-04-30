@@ -12,6 +12,7 @@ export type HotTopicItem = {
   tags: string[];
   url?: string;
   summary?: string;
+  sourcePublishedAt?: string;
   fetchedAt: string;
 };
 
@@ -32,6 +33,93 @@ export function formatFetchedTime(iso: string) {
   }
 
   return `${Math.max(1, minutes)} 分钟前`;
+}
+
+function readRecordValue(input: unknown, path: string[]) {
+  let current = input;
+
+  for (const segment of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
+}
+
+function normalizeTimestamp(value: unknown): string | undefined {
+  if (value == null || value === "") return undefined;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const timestamp = value > 1_000_000_000_000 ? value : value * 1000;
+    const date = new Date(timestamp);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+
+    if (/^\d{10,13}$/.test(trimmed)) {
+      return normalizeTimestamp(Number.parseInt(trimmed, 10));
+    }
+
+    const date = new Date(trimmed);
+    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+  }
+
+  return undefined;
+}
+
+export function inferHotTopicSourcePublishedAt(source: string, raw?: unknown) {
+  const sourceSpecificPaths: Record<string, string[][]> = {
+    知乎: [["target", "created"], ["created"]],
+    抖音: [["event_time"]],
+    百度: [["event_time"]],
+    今日头条: [["event_time"], ["publish_time"], ["publishTime"]],
+    微博: [["created_at"], ["createdAt"]],
+  };
+
+  const genericPaths = [
+    ["published"],
+    ["updated"],
+    ["pubDate"],
+    ["published_at"],
+    ["publishedAt"],
+    ["updated_at"],
+    ["updatedAt"],
+    ["date"],
+  ];
+
+  const candidatePaths = [...(sourceSpecificPaths[source] ?? []), ...genericPaths];
+
+  for (const path of candidatePaths) {
+    const normalized = normalizeTimestamp(readRecordValue(raw, path));
+    if (normalized) return normalized;
+  }
+
+  return undefined;
+}
+
+export function buildHotTopicTimeLabel(input: {
+  fetchedAt: string;
+  source: string;
+  sourcePublishedAt?: string;
+  raw?: unknown;
+}) {
+  const sourcePublishedAt =
+    normalizeTimestamp(input.sourcePublishedAt) ?? inferHotTopicSourcePublishedAt(input.source, input.raw);
+
+  if (sourcePublishedAt) {
+    return formatFetchedTime(sourcePublishedAt);
+  }
+
+  const fetchedAt = normalizeTimestamp(input.fetchedAt);
+  if (!fetchedAt) return "刚刚";
+
+  return `抓取于 ${formatFetchedTime(fetchedAt)}`;
 }
 
 export function normalizeTrend(score: number) {

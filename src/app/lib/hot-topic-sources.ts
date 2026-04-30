@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import * as cheerio from "cheerio";
-import { normalizeTrend, pickBalancedHotTopics, type HotTopicItem } from "./hot-topics";
+import {
+  inferHotTopicSourcePublishedAt,
+  normalizeTrend,
+  pickBalancedHotTopics,
+  type HotTopicItem,
+} from "./hot-topics";
 import { filterRestrictedTopics } from "./content-policy";
 
 type ScrapedHotTopic = Omit<HotTopicItem, "time"> & {
@@ -180,6 +185,7 @@ function buildTitleDedupKey(item: ScrapedHotTopic) {
 function withBatchFetchedAt(items: ScrapedHotTopic[], fetchedAt = new Date().toISOString()) {
   return items.map((item) => ({
     ...item,
+    sourcePublishedAt: item.sourcePublishedAt ?? inferHotTopicSourcePublishedAt(item.source, item.raw),
     fetchedAt,
   }));
 }
@@ -244,6 +250,8 @@ function buildTxqqFallbackMapper(
         tags: [baseTagMap[source]],
         url: targetUrl,
         summary: summary || `来自${baseTagMap[source]}`,
+        sourcePublishedAt:
+          inferHotTopicSourcePublishedAt(source, item),
         fetchedAt: new Date().toISOString(),
         raw: item,
       } satisfies ScrapedHotTopic;
@@ -517,12 +525,13 @@ function mapZhihuOfficialRows(rows: ZhihuOfficialPayload["data"]) {
         sourceType: "official-api",
         heat: buildNormalizedHeat(item.detail_text, 8000 - index * 210),
         trend: normalizeTrend(44 - index),
-        tags: ["知乎热榜"],
-        url,
-        summary: String(question?.excerpt ?? "").trim() || "来自知乎热榜",
-        fetchedAt: question?.created ? new Date(question.created * 1000).toISOString() : new Date().toISOString(),
-        raw: item,
-      } satisfies ScrapedHotTopic;
+      tags: ["知乎热榜"],
+      url,
+      summary: String(question?.excerpt ?? "").trim() || "来自知乎热榜",
+      sourcePublishedAt: question?.created ? new Date(question.created * 1000).toISOString() : undefined,
+      fetchedAt: new Date().toISOString(),
+      raw: item,
+    } satisfies ScrapedHotTopic;
     })
     .filter((item) => item.title);
 }
@@ -591,7 +600,8 @@ async function scrapeDouyinHotFromApi(): Promise<ScrapedHotTopic[]> {
         tags: ["抖音热榜"],
         url,
         summary: "来自抖音热榜",
-        fetchedAt: item.event_time ? new Date(item.event_time * 1000).toISOString() : new Date().toISOString(),
+        sourcePublishedAt: item.event_time ? new Date(item.event_time * 1000).toISOString() : undefined,
+        fetchedAt: new Date().toISOString(),
         raw: item,
       } satisfies ScrapedHotTopic;
     })
@@ -646,7 +656,8 @@ async function scrapeDouyinHotFromOfficialApi(): Promise<ScrapedHotTopic[]> {
         tags: ["抖音热榜"],
         url: sentenceId ? `https://www.douyin.com/hot/${sentenceId}` : `https://www.douyin.com/search/${encodeURIComponent(title)}`,
         summary: "来自抖音热榜",
-        fetchedAt: item.event_time ? new Date(item.event_time * 1000).toISOString() : new Date().toISOString(),
+        sourcePublishedAt: item.event_time ? new Date(item.event_time * 1000).toISOString() : undefined,
+        fetchedAt: new Date().toISOString(),
         raw: item,
       } satisfies ScrapedHotTopic;
     })
@@ -749,6 +760,7 @@ async function scrapeRssFeed(source: string, sourceUrl: string, defaultTags: str
         tags,
         url: link,
         summary: description.slice(0, 120),
+        sourcePublishedAt: inferHotTopicSourcePublishedAt(source, item),
         fetchedAt: new Date().toISOString(),
         raw: item,
       } satisfies ScrapedHotTopic;
@@ -794,7 +806,8 @@ async function scrapeRssFeed(source: string, sourceUrl: string, defaultTags: str
       tags: tags.length ? tags : defaultTags,
       url: link,
       summary: summary.slice(0, 120),
-      fetchedAt: String(item.published ?? item.updated ?? new Date().toISOString()),
+      sourcePublishedAt: inferHotTopicSourcePublishedAt(source, item),
+      fetchedAt: new Date().toISOString(),
       raw: item,
     } satisfies ScrapedHotTopic;
   }).filter((item) => item.title);

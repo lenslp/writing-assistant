@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { Dashboard } from "./components/Dashboard";
 import { HOT_TOPICS_CACHE_TAG, getHotTopicsSnapshot } from "./lib/hot-topic-refresh";
-import { formatFetchedTime } from "./lib/hot-topics";
+import { buildHotTopicTimeLabel } from "./lib/hot-topics";
 
 const getDashboardHotTopics = unstable_cache(
   async () => {
@@ -9,7 +9,7 @@ const getDashboardHotTopics = unstable_cache(
       const payload = await getHotTopicsSnapshot(150);
       return payload.items.map((item) => ({
         ...item,
-        time: "time" in item ? item.time : formatFetchedTime(item.fetchedAt),
+        time: "time" in item ? item.time : buildHotTopicTimeLabel(item),
       }));
     } catch (error) {
       console.error("Failed to preload dashboard hot topics:", error);

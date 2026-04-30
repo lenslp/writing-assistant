@@ -1,9 +1,9 @@
 import type { TopicSuggestion } from "./app-data";
 import { detectArticleDomain } from "./content-domains";
-import { formatFetchedTime, normalizeTrend, type HotTopicItem } from "./hot-topics";
+import { buildHotTopicTimeLabel, normalizeTrend, type HotTopicItem } from "./hot-topics";
 import { buildTopicSuggestionId } from "./topic-utils";
 
-type HotTopicLike = Pick<HotTopicItem, "id" | "title" | "source" | "sourceType" | "heat" | "tags" | "fetchedAt"> & {
+type HotTopicLike = Pick<HotTopicItem, "id" | "title" | "source" | "sourceType" | "heat" | "tags" | "fetchedAt" | "sourcePublishedAt"> & {
   summary?: string | null;
   url?: string | null;
   trend?: string;
@@ -492,7 +492,11 @@ function buildMethods(item: HotTopicLike, angle: string) {
 
 export function buildArticleAnalysisFromHotTopic(item: HotTopicLike): ArticleAnalysisItem {
   const trend = resolveTrend(item);
-  const time = formatFetchedTime(toIsoString(item.fetchedAt));
+  const time = buildHotTopicTimeLabel({
+    fetchedAt: toIsoString(item.fetchedAt),
+    source: item.source,
+    sourcePublishedAt: item.sourcePublishedAt,
+  });
   const domain = detectArticleDomain(item.title, item.tags, item.source);
   const angle = deriveAnglesFromSignals({
     title: item.title,

@@ -4,7 +4,7 @@ import { getSupabaseAdmin } from "./supabase-admin";
 import type { TopicSuggestion } from "./app-data";
 import { detectArticleDomain, resolveArticleDomain } from "./content-domains";
 import { filterRestrictedTopics } from "./content-policy";
-import { formatFetchedTime, normalizeTrend, pickBalancedHotTopics, type HotTopicItem } from "./hot-topics";
+import { buildHotTopicTimeLabel, inferHotTopicSourcePublishedAt, normalizeTrend, pickBalancedHotTopics, type HotTopicItem } from "./hot-topics";
 import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
 
 function readPersistedDomain(raw: unknown) {
@@ -28,6 +28,7 @@ export function mapHotTopicRecord(item: {
 }) {
   const fetchedAt = item.fetchedAt instanceof Date ? item.fetchedAt : new Date(item.fetchedAt);
   const domain = readPersistedDomain(item.raw) ?? detectArticleDomain(item.title, item.tags ?? [], item.source, item.summary ?? "");
+  const sourcePublishedAt = inferHotTopicSourcePublishedAt(item.source, item.raw);
 
   return {
     id: item.id,
@@ -37,10 +38,16 @@ export function mapHotTopicRecord(item: {
     domain,
     heat: item.heat,
     trend: normalizeTrend(item.trendScore),
-    time: formatFetchedTime(fetchedAt.toISOString()),
+    time: buildHotTopicTimeLabel({
+      fetchedAt: fetchedAt.toISOString(),
+      source: item.source,
+      sourcePublishedAt,
+      raw: item.raw,
+    }),
     tags: item.tags,
     url: item.url ?? undefined,
     summary: item.summary ?? undefined,
+    sourcePublishedAt,
     fetchedAt: fetchedAt.toISOString(),
   } satisfies HotTopicItem;
 }

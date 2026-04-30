@@ -1,6 +1,6 @@
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
-import { formatFetchedTime } from "../../../lib/hot-topics";
+import { buildHotTopicTimeLabel } from "../../../lib/hot-topics";
 import {
   ARTICLE_ANALYSIS_CACHE_TAG,
   HOT_TOPICS_CACHE_TAG,
@@ -26,7 +26,7 @@ export async function POST() {
           restrictedCount: result.restrictedCount,
           items: result.items.slice(0, 360).map((item) => ({
             ...item,
-            time: formatFetchedTime(item.fetchedAt),
+            time: buildHotTopicTimeLabel(item),
           })),
           failedSources: result.failedSources,
         },

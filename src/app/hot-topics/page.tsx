@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { HotTopics } from "../components/HotTopics";
 import { HOT_TOPICS_CACHE_TAG, getHotTopicsSnapshot } from "../lib/hot-topic-refresh";
-import { formatFetchedTime } from "../lib/hot-topics";
+import { buildHotTopicTimeLabel } from "../lib/hot-topics";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ const getInitialHotTopics = unstable_cache(
     return {
       items: payload.items.map((item) => ({
         ...item,
-        time: "time" in item ? item.time : formatFetchedTime(item.fetchedAt),
+        time: "time" in item ? item.time : buildHotTopicTimeLabel(item),
       })),
       source: payload.source,
       restrictedCount: payload.restrictedCount,
