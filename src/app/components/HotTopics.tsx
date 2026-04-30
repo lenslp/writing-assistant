@@ -10,12 +10,12 @@ import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { useAppStore } from "../providers/app-store";
 import { type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
-import { articleDomains, detectArticleDomain, type ArticleDomain } from "../lib/content-domains";
+import { articleDomains, type ArticleDomain } from "../lib/content-domains";
 import { Skeleton } from "./ui/skeleton";
 
 const trendData = Array.from({ length: 12 }, (_, i) => ({ v: Math.random() * 100 + 20 }));
 const loadingStages = ["连接热点源", "聚合平台数据", "整理可写选题"];
-const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache";
+const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache:v2";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
@@ -70,6 +70,14 @@ function writeHotTopicsCache(payload: Omit<HotTopicsCachePayload, "cachedAt">) {
   } catch {
     // ignore cache write errors
   }
+}
+
+function getNewestFetchedAt(items: HotTopicItem[]) {
+  return items.reduce((latest, item) => {
+    const timestamp = new Date(item.fetchedAt).getTime();
+    if (Number.isNaN(timestamp)) return latest;
+    return Math.max(latest, timestamp);
+  }, 0);
 }
 
 function formatFailedSourceWarning(failedSources: unknown, baseMessage = "") {
@@ -229,6 +237,9 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
     const cachedPayload = readHotTopicsCache();
     const hasFreshCache = Boolean(cachedPayload && Date.now() - cachedPayload.cachedAt <= HOT_TOPICS_CACHE_TTL_MS);
     const hasInitialData = Boolean(initialData?.items?.length);
+    const initialFetchedAt = getNewestFetchedAt(initialData?.items ?? []);
+    const cachedFetchedAt = getNewestFetchedAt(cachedPayload?.items ?? []);
+    const shouldUseCachedPayload = Boolean(cachedPayload && cachedFetchedAt > initialFetchedAt);
 
     if (hasInitialData) {
       writeHotTopicsCache({
@@ -238,7 +249,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       });
     }
 
-    if (cachedPayload) {
+    if (shouldUseCachedPayload && cachedPayload) {
       setItems(cachedPayload.items);
       setDataSource(cachedPayload.source);
       setRestrictedCount(cachedPayload.restrictedCount);
@@ -280,7 +291,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       return;
     }
 
-    void loadItems(Boolean(cachedPayload || hasInitialData));
+    void loadItems(Boolean((shouldUseCachedPayload && cachedPayload) || hasInitialData));
   }, [initialData]);
 
   const topicDomainMap = useMemo(
@@ -288,7 +299,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       new Map(
         items.map((topic) => [
           topic.id,
-          detectArticleDomain(topic.title, topic.tags, topic.source, topic.summary ?? ""),
+          topic.domain ?? "其他",
         ]),
       ),
     [items],

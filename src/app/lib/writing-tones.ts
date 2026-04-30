@@ -99,3 +99,34 @@ export function buildWritingToneOptions(customTones: string[]) {
 
   return Array.from(new Set(merged));
 }
+
+function findToneOptionByPresetId(presetId: string, availableTones: string[]) {
+  const matchedOption = availableTones.find((tone) => resolveWritingTone(tone).id === presetId);
+  if (matchedOption) return matchedOption;
+
+  return writingTonePresets.find((preset) => preset.id === presetId)?.label ?? null;
+}
+
+export function recommendToneForArticleType(articleType: string, availableTones: string[]) {
+  const normalized = articleType.replace(/\s+/g, "");
+  let preferredPresetIds: string[] = ["friendly", "professional"];
+
+  if (/观点|评论|观察|舆论/.test(normalized)) {
+    preferredPresetIds = ["sharp", "professional", "friendly"];
+  } else if (/方法|指南|攻略|清单|路线|购车|增长|操盘/.test(normalized)) {
+    preferredPresetIds = ["growth", "friendly", "professional"];
+  } else if (/故事|共鸣|关系|体验|生活/.test(normalized)) {
+    preferredPresetIds = ["emotional", "friendly", "professional"];
+  } else if (/解读|分析|趋势|复盘|评测|对比|盘点|人物|作品/.test(normalized)) {
+    preferredPresetIds = ["professional", "sharp", "friendly"];
+  }
+
+  for (const presetId of preferredPresetIds) {
+    const matchedTone = findToneOptionByPresetId(presetId, availableTones);
+    if (matchedTone) {
+      return matchedTone;
+    }
+  }
+
+  return availableTones[0] ?? writingTonePresets[0].label;
+}

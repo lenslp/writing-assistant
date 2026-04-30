@@ -4,7 +4,28 @@ import { readAIProviderConfig } from "../../../lib/app-config-db";
 
 export const dynamic = "force-dynamic";
 
+function detectProviderProtocol(baseUrl: string) {
+  return baseUrl.includes("anthropic") ? "anthropic" as const : "openai" as const;
+}
+
 function extractMessageContent(payload: unknown) {
+  const anthropicContent = payload && typeof payload === "object" && "content" in payload
+    ? (payload as { content?: unknown }).content
+    : null;
+
+  if (Array.isArray(anthropicContent)) {
+    const text = anthropicContent
+      .map((item) => {
+        if (!item || typeof item !== "object") return "";
+        if ("type" in item && item.type !== "text") return "";
+        return "text" in item && typeof item.text === "string" ? item.text : "";
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
   const choices = payload && typeof payload === "object" && "choices" in payload
     ? (payload as { choices?: unknown }).choices
     : null;
@@ -41,7 +62,7 @@ function classifyModelError(status: number, message: string) {
   }
 
   if (status === 400 || /unsupported|invalid request|schema|parameter/i.test(message)) {
-    return "接口格式不兼容，请确认中转服务支持 OpenAI chat/completions。";
+    return "接口格式不兼容，请确认当前服务支持所选协议。";
   }
 
   return message || "模型连接测试失败。";
@@ -51,6 +72,7 @@ export async function POST() {
   const config = await getAIProviderConfig();
   const summary = await readAIProviderConfig();
   const model = summary.fastModel || summary.model || summary.longformModel || "qwen-turbo";
+  const protocol = detectProviderProtocol(config.baseUrl);
 
   if (!config.configured) {
     return NextResponse.json(
@@ -65,22 +87,40 @@ export async function POST() {
   }
 
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(protocol === "anthropic" ? `${config.baseUrl}/messages` : `${config.baseUrl}/chat/completions`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: protocol === "anthropic"
+        ? {
+            "Content-Type": "application/json",
+            "x-api-key": config.apiKey,
+            "anthropic-version": "2023-06-01",
+          }
+        : {
+            Authorization: `Bearer ${config.apiKey}`,
+            "Content-Type": "application/json",
+          },
       signal: AbortSignal.timeout(20000),
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 24,
-        messages: [
-          { role: "system", content: "你只用于测试接口连通性。" },
-          { role: "user", content: "请回复：连接成功" },
-        ],
-      }),
+      body: JSON.stringify(
+        protocol === "anthropic"
+          ? {
+              model,
+              temperature: 0,
+              max_tokens: 32,
+              system: "你只用于测试接口连通性。",
+              messages: [
+                { role: "user", content: "请回复：连接成功" },
+              ],
+            }
+          : {
+              model,
+              temperature: 0,
+              max_tokens: 24,
+              messages: [
+                { role: "system", content: "你只用于测试接口连通性。" },
+                { role: "user", content: "请回复：连接成功" },
+              ],
+            },
+      ),
     });
     const payload = await response.json().catch(() => null);
     const content = extractMessageContent(payload);
@@ -105,7 +145,7 @@ export async function POST() {
           ok: false,
           provider: config.provider,
           model,
-          message: "模型接口返回为空，请检查中转服务兼容性。",
+          message: protocol === "anthropic" ? "Anthropic 接口返回为空，请检查模型权限或响应格式。" : "模型接口返回为空，请检查中转服务兼容性。",
         },
         { status: 400 },
       );

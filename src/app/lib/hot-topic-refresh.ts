@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { buildTopicSuggestionFromHotTopic } from "./article-analysis";
+import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
 import { hasPersistenceBackend } from "./persistence";
 import { readHotTopicRefreshMeta, readHotTopics } from "./hot-topic-db";
 import { scrapeHotTopics } from "./hot-topic-sources";
@@ -230,7 +231,21 @@ export async function refreshHotTopicsAndPersist() {
   const batchFetchedAt = new Date(startedAt);
   const { items, failedSources, restrictedCount } = await scrapeHotTopics();
   const persistedItems = dedupeHotTopicsForPersistence(items);
-  const generatedTopics = items.slice(0, 24).map((item) => buildTopicSuggestionFromHotTopic(item));
+  const generatedTopics = await Promise.all(
+    items.slice(0, 24).map(async (item) => {
+      const resolved = await resolveDomainWithAIAssist({
+        title: item.title,
+        tags: item.tags,
+        source: item.source,
+        summary: item.summary ?? "",
+      });
+
+      return buildTopicSuggestionFromHotTopic({
+        ...item,
+        domain: resolved.domain,
+      });
+    }),
+  );
 
   if (!hasPersistenceBackend()) {
     return {

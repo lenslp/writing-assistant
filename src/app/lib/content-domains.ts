@@ -1,6 +1,17 @@
 export const articleDomains = ["科技", "教育", "旅游", "情感", "社会", "汽车", "体育", "娱乐", "财经", "文化", "其他"] as const;
 
 export type ArticleDomain = (typeof articleDomains)[number];
+export type DomainConfidence = "high" | "medium" | "low";
+export type DomainDetectionResult = {
+  domain: ArticleDomain;
+  ruleDomain: ArticleDomain;
+  confidence: DomainConfidence;
+  shouldUseAiAssist: boolean;
+  contentLead: number;
+  totalLead: number;
+  hasStrongTitleEvidence: boolean;
+  directDomain: ArticleDomain | null;
+};
 
 export type DomainConfig = {
   label: ArticleDomain;
@@ -20,7 +31,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     description: "适合科技趋势、AI、产品更新、商业影响类内容。",
     template: "科技蓝",
     colorScheme: "默认蓝",
-    aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "火箭", "卫星"],
+    aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "卫星"],
     writingFocus: ["趋势判断", "产品解读", "用户价值", "行业影响"],
     promptHint: "重点写技术变化、产品能力、行业影响和普通读者该怎么理解。",
   },
@@ -127,13 +138,36 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
 };
 
 const sourceDomainHints: Array<{ pattern: RegExp; domain: ArticleDomain; score: number }> = [
-  { pattern: /(36氪|爱范儿|少数派|机器之心|量子位|雷峰网|虎嗅|openai|anthropic|github)/i, domain: "科技", score: 5 },
-  { pattern: /(懂车帝|汽车之家|易车|太平洋汽车|一汽大众|比亚迪|特斯拉|理想汽车|蔚来|小鹏)/i, domain: "汽车", score: 5 },
-  { pattern: /(马蜂窝|携程|飞猪|同程|去哪儿)/i, domain: "旅游", score: 5 },
-  { pattern: /(新华社|央视|人民日报|澎湃|界面|红星|新京报|中新网)/i, domain: "社会", score: 5 },
-  { pattern: /(懂球帝|虎扑|直播吧|体坛|新浪体育|腾讯体育)/i, domain: "体育", score: 5 },
-  { pattern: /(豆瓣|猫眼|淘票票|时光网|微博娱乐|新浪娱乐)/i, domain: "娱乐", score: 5 },
-  { pattern: /(财新|第一财经|证券时报|经济观察报|界面新闻|华尔街见闻)/i, domain: "财经", score: 5 },
+  { pattern: /(36氪|爱范儿|机器之心|量子位|雷峰网|虎嗅|openai|anthropic|github)/i, domain: "科技", score: 3 },
+  { pattern: /(少数派)/i, domain: "科技", score: 1 },
+  { pattern: /(懂车帝|汽车之家|易车|太平洋汽车|一汽大众|比亚迪|特斯拉|理想汽车|蔚来|小鹏)/i, domain: "汽车", score: 3 },
+  { pattern: /(马蜂窝|携程|飞猪|同程|去哪儿)/i, domain: "旅游", score: 3 },
+  { pattern: /(新华社|央视|人民日报|澎湃|界面|红星|新京报|中新网)/i, domain: "社会", score: 3 },
+  { pattern: /(懂球帝|虎扑|直播吧|体坛|新浪体育|腾讯体育)/i, domain: "体育", score: 3 },
+  { pattern: /(豆瓣|猫眼|淘票票|时光网|微博娱乐|新浪娱乐)/i, domain: "娱乐", score: 3 },
+  { pattern: /(财新|第一财经|证券时报|经济观察报|界面新闻|华尔街见闻)/i, domain: "财经", score: 3 },
+];
+
+const titleIntentHints: Array<{ pattern: RegExp; domain: ArticleDomain; score: number }> = [
+  { pattern: /(入学资格|高校|博士|升学|校园|高二|清华|留校)/i, domain: "教育", score: 6 },
+  { pattern: /(古镇|灵隐寺|旅行|出游|五一.*(出游|旅行|古镇|浪漫)|过一天是什么体验|看望孙子|民宿|飞猪|堵在路上|老君山|挑山工)/i, domain: "旅游", score: 6 },
+  { pattern: /(我妈养我|思虑过重|自救|鼓励|自卑|交朋友|好带的娃|陪伴|相处|人生|晚饭不吃|复胖|午休|口角后|讲和)/i, domain: "情感", score: 6 },
+  { pattern: /(质疑|误输|遇难|身体不适|虚开.*发票|被拘|不实|查案|严查|取消支付|刑案|被抓获|碰瓷|禁烟令|工作文件|二手烟|唇腭裂|网络空间|奋进力量|老人.*三轮车|监控拍下|今起实施|择机公布访华日期|没英国你们在说法语)/i, domain: "社会", score: 7 },
+  { pattern: /(问界|智界|理想|蔚来|小鹏|比亚迪|特斯拉|交付速度|m6|乐道 l80|领克 900|空客|航司.*空客)/i, domain: "汽车", score: 7 },
+  { pattern: /(\d+[:：]\d+|tko|止步\d+强|世乒赛|复出|马龙|许昕|阿森纳|马竞|赵心童|村超|kpl|罗唐|里夫斯|禁赛风波|詹姆斯|苏超|火箭.*詹姆斯)/i, domain: "体育", score: 7 },
+  { pattern: /(跑男|五哈|开始推理吧|影帝|影后|新歌|粉丝|女团|男团|合照|综艺|艺人|偶遇|影节|大赏|行程安排|回归|隐婚生子|手势舞|主持|回复唐嫣|吓出汗|首发博|演技大赏|乐华艺人|黄晓明|关晓彤|赵露思|陈哲远|肖战|杨幂|朱珠|王玉雯|吴宣仪|李小冉|贺峻霖|造型|阵容|进组|妻旅|虞书欣|白鹿|密逃8|穿普拉达的女王|vlog品类主理人|独家访谈)/i, domain: "娱乐", score: 7 },
+  { pattern: /(股票|a股|股王|利率|金饰价格|金价|楼市|彩票|加仓|楼市调控|购买决策|美联储|利率不变|供应商|泡泡玛特|成交额|航司|净买入|交付速度刺激购买决策)/i, domain: "财经", score: 7 },
+  { pattern: /(微信.*工具|工作软件|空间站|歼15|生产线|军机|射程之内|苹果.*生产线|高通|共享内存|win 本|macbook pro|一加 ace|steam 手柄|联通魔方|前额叶|外骨骼机器)/i, domain: "科技", score: 7 },
+  { pattern: /(洗护指南|穿搭|极简|禅意|显贵|风格|不p图|耳边的风|月季的浪漫|转场挑战|手势舞|bonbonbon|回床演绎挑战|蒜薹噩梦|深藏不露|换头像的频率|虾吃大赛|阿房宫|方言歌曲|抗战剧|老式水果|奢侈品|闪光职人|带火一座城|月季的浪漫|灵隐寺|奢侈品)/i, domain: "文化", score: 6 },
+];
+
+const sourceTagDomainHints: Array<{ sourcePattern: RegExp; tagPattern: RegExp; domain: ArticleDomain; score: number }> = [
+  { sourcePattern: /(微博|抖音|百度|知乎|今日头条|头条)/i, tagPattern: /(热搜|热榜)/i, domain: "社会", score: 1 },
+  { sourcePattern: /(36氪)/i, tagPattern: /(商业)/i, domain: "财经", score: 4 },
+  { sourcePattern: /(36氪|爱范儿)/i, tagPattern: /(科技)/i, domain: "科技", score: 4 },
+  { sourcePattern: /(爱范儿)/i, tagPattern: /(董车会|乐道|领克|汽车)/i, domain: "汽车", score: 6 },
+  { sourcePattern: /(少数派)/i, tagPattern: /(效率|工具)/i, domain: "文化", score: 4 },
+  { sourcePattern: /(知乎)/i, tagPattern: /(知乎热榜)/i, domain: "社会", score: 1 },
 ];
 
 const domainKeywordRules: Record<
@@ -146,10 +180,10 @@ const domainKeywordRules: Record<
   }
 > = {
   科技: {
-    strong: ["ai", "gpt", "openai", "claude", "agent", "大模型", "人工智能", "芯片", "算力", "开源", "模型", "机器人", "航天", "火箭", "卫星", "飞行汽车", "激光雷达"],
+    strong: ["ai", "gpt", "openai", "claude", "agent", "大模型", "人工智能", "芯片", "算力", "开源", "机器人", "航天", "卫星", "飞行汽车", "激光雷达"],
     medium: ["科技", "互联网", "数码", "手机", "电脑", "应用", "软件", "系统", "云计算", "产品", "发布会", "苹果", "华为", "小米", "硬核科技", "清洁能源", "消博会"],
-    weak: ["平台", "工具", "公司", "效率", "升级", "版本", "智能化", "科技赋能"],
-    patterns: [/(发布|上线|更新|首发|开源).{0,8}(模型|系统|应用|芯片|平台)/i, /(航天|火箭|卫星|机器人|硬核科技|消博会|清洁能源)/i],
+    weak: ["公司", "升级", "版本", "智能化", "科技赋能"],
+    patterns: [/(发布|上线|更新|首发|开源).{0,8}(大模型|模型|系统|应用|芯片|平台)/i, /(航天|火箭发射|卫星|机器人|硬核科技|消博会|清洁能源|星舰|spacex)/i],
   },
   教育: {
     strong: ["教育", "学习", "考试", "升学", "老师", "学生", "课程", "课堂", "作业", "高考", "考研", "中考", "幼儿园", "小学", "初中", "高中", "大学"],
@@ -173,7 +207,7 @@ const domainKeywordRules: Record<
     strong: ["社会", "民生", "新闻", "事件", "调查", "警方", "通报", "曝光", "舆论", "事故", "现场", "维权", "治理", "案件", "求职", "租房", "消费", "退款", "平台", "法院", "法律", "遗产", "遗嘱", "继承", "数据造假"],
     medium: ["女子", "男子", "老人", "孩子", "家长", "学校", "医院", "司机", "乘客", "网友", "社区", "物业", "商家", "客服", "打工人", "上班", "招聘", "门店", "开业", "停售", "评论员", "春耕", "文化", "金像奖"],
     weak: ["关注", "热议", "讨论", "提醒", "争议", "画面", "经历", "背后", "回应", "观众", "热搜", "后续"],
-    patterns: [/(通报|回应|曝光|调查|事件|事故|警方|民生|热议|争议|退款|维权|求职|租房|消费者|法院|法律|遗嘱|遗产|继承|开业|停售|数据造假|春耕|评论员|金像奖)/i],
+    patterns: [/(通报|回应|曝光|调查|事件|事故|警方|民生|退款|维权|求职|租房|消费者|法院|法律|遗嘱|遗产|继承|开业|停售|数据造假|春耕|评论员|金像奖)/i],
   },
   汽车: {
     strong: ["汽车", "新能源", "suv", "轿车", "试驾", "评测", "续航", "揽巡", "比亚迪", "特斯拉", "理想", "蔚来", "小鹏", "大众", "奔驰", "宝马", "奥迪", "机车", "摩托"],
@@ -183,9 +217,9 @@ const domainKeywordRules: Record<
   },
   体育: {
     strong: ["体育", "赛事", "比赛", "夺冠", "冠军", "联赛", "季后赛", "足球", "篮球", "电竞", "选手", "战队", "运动员", "世锦赛", "奥运", "世界杯"],
-    medium: ["比分", "赛场", "球员", "教练", "俱乐部", "主场", "客场", "决赛", "半决赛", "正赛", "回合", "丁俊晖", "斯诺克"],
+    medium: ["比分", "赛场", "球员", "教练", "俱乐部", "主场", "客场", "决赛", "半决赛", "正赛", "回合", "丁俊晖", "斯诺克", "nba", "cba", "湖人", "勇士", "快船", "掘金", "雷霆", "骑士", "雄鹿"],
     weak: ["迎战", "晋级", "出局", "纪录", "排名", "荷兰站", "第7", "第七"],
-    patterns: [/(比赛|夺冠|冠军|联赛|季后赛|足球|篮球|电竞|战队|选手|运动员|世锦赛|斯诺克|丁俊晖)/i],
+    patterns: [/(比赛|夺冠|冠军|联赛|季后赛|足球|篮球|电竞|战队|选手|运动员|世锦赛|斯诺克|丁俊晖|nba|cba|湖人|勇士)/i, /(火箭).{0,8}(湖人|勇士|快船|掘金|雷霆|骑士|雄鹿|vs|队|主场|客场|季后赛|常规赛)/i],
   },
   娱乐: {
     strong: ["娱乐", "明星", "演员", "歌手", "演唱会", "综艺", "电影", "电视剧", "剧集", "票房", "金像奖", "奥斯卡", "红毯", "塌房"],
@@ -219,6 +253,83 @@ function countKeywordHits(text: string, keywords: string[], scorePerHit: number)
   }, 0);
 }
 
+function scoreTitleIntentHints(text: string, domain: ArticleDomain) {
+  return titleIntentHints.reduce((sum, hint) => {
+    if (hint.domain !== domain) return sum;
+    return sum + (hint.pattern.test(text) ? hint.score : 0);
+  }, 0);
+}
+
+function scoreSourceTagHints(sourceText: string, tagsText: string, domain: ArticleDomain) {
+  return sourceTagDomainHints.reduce((sum, hint) => {
+    if (hint.domain !== domain) return sum;
+    if (!hint.sourcePattern.test(sourceText)) return sum;
+    return sum + (hint.tagPattern.test(tagsText) ? hint.score : 0);
+  }, 0);
+}
+
+function isGenericHotTopicSummary(summaryText: string) {
+  if (!summaryText.trim()) return true;
+  return /^(来自.+(热搜|热榜)|#欢迎关注|查看全文)/i.test(summaryText.trim());
+}
+
+function getTagFieldWeight(sourceText: string) {
+  if (/(36氪|爱范儿|少数派)/i.test(sourceText)) return 1.1;
+  if (/(知乎|百度|今日头条|头条)/i.test(sourceText)) return 0.8;
+  return 0.75;
+}
+
+function getSummaryFieldWeight(sourceText: string, summaryText: string) {
+  if (isGenericHotTopicSummary(summaryText)) return 0;
+  if (/(百度|今日头条|头条)/i.test(sourceText)) return 0.95;
+  if (/(36氪|爱范儿|少数派)/i.test(sourceText)) return 0.85;
+  if (/(知乎)/i.test(sourceText)) return 0.75;
+  return 0.45;
+}
+
+function normalizeDomainText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function scoreRuleHits(
+  text: string,
+  rule: (typeof domainKeywordRules)[ArticleDomain],
+  fieldWeight: number,
+) {
+  const strongHits = countKeywordHits(text, rule.strong, 1);
+  const mediumHits = countKeywordHits(text, rule.medium, 1);
+  const weakHits = Math.min(countKeywordHits(text, rule.weak, 1), 2);
+  const patternHits = (rule.patterns ?? []).reduce((sum, pattern) => sum + (pattern.test(text) ? 1 : 0), 0);
+
+  const rawScore = strongHits * 5 + mediumHits * 3 + weakHits + patternHits * 6;
+  return {
+    score: rawScore * fieldWeight,
+    strongHits,
+    mediumHits,
+    weakHits,
+    patternHits,
+  };
+}
+
+function detectDomainByDisambiguation(text: string): ArticleDomain | null {
+  if (
+    /(火箭).{0,8}(湖人|勇士|快船|掘金|雷霆|骑士|雄鹿|vs|队|主场|客场|季后赛|常规赛)/i.test(text) ||
+    /(湖人|勇士|快船|掘金|雷霆|骑士|雄鹿).{0,8}(火箭)/i.test(text)
+  ) {
+    return "体育";
+  }
+
+  if (/(乐高|积木|手办|装饰画)/i.test(text) && !/(ai|大模型|人工智能|模型发布|开源模型)/i.test(text)) {
+    return "文化";
+  }
+
+  if (/(中年危机|婚姻危机|人生思考|关于.+思考)/i.test(text)) {
+    return "情感";
+  }
+
+  return null;
+}
+
 export function resolveArticleDomain(input?: string | null): ArticleDomain {
   const normalized = input?.trim().toLowerCase();
   if (!normalized) return "其他";
@@ -243,62 +354,175 @@ export function resolveArticleDomain(input?: string | null): ArticleDomain {
   return "其他";
 }
 
-export function detectArticleDomain(title: string, tags: string[] = [], source = "", summary = ""): ArticleDomain {
-  const text = `${title} ${tags.join(" ")} ${source} ${summary}`.toLowerCase();
-  const scores = new Map<ArticleDomain, number>(articleDomains.map((domain) => [domain, 0]));
+export function detectArticleDomainWithSignals(title: string, tags: string[] = [], source = "", summary = ""): DomainDetectionResult {
+  const titleText = normalizeDomainText(title);
+  const tagsText = normalizeDomainText(tags.join(" "));
+  const sourceText = normalizeDomainText(source);
+  const summaryText = normalizeDomainText(summary);
+  const fullText = `${titleText} ${tagsText} ${sourceText} ${summaryText}`.trim();
+  const directDomain = detectDomainByDisambiguation(fullText);
+  if (directDomain) {
+    return {
+      domain: directDomain,
+      ruleDomain: directDomain,
+      confidence: "high",
+      shouldUseAiAssist: false,
+      contentLead: 99,
+      totalLead: 99,
+      hasStrongTitleEvidence: true,
+      directDomain,
+    };
+  }
+
+  const scores = new Map<
+    ArticleDomain,
+    {
+      total: number;
+      content: number;
+      source: number;
+      titleStrongHits: number;
+      titlePatternHits: number;
+      titleIntentScore: number;
+    }
+  >(articleDomains.map((domain) => [domain, { total: 0, content: 0, source: 0, titleStrongHits: 0, titlePatternHits: 0, titleIntentScore: 0 }]));
 
   for (const domain of articleDomains) {
     const config = domainConfigs[domain];
     const rule = domainKeywordRules[domain];
+    const tagsFieldWeight = getTagFieldWeight(sourceText);
+    const summaryFieldWeight = getSummaryFieldWeight(sourceText, summaryText);
+    const titleScore = scoreRuleHits(titleText, rule, 1);
+    const tagsScore = scoreRuleHits(tagsText, rule, tagsFieldWeight);
+    const summaryScore = scoreRuleHits(summaryText, rule, summaryFieldWeight);
+    const tagAliasScore = countKeywordHits(tagsText, config.aliases, 2) * tagsFieldWeight;
+    const titleIntentScore = scoreTitleIntentHints(titleText, domain);
+    const sourceTagScore = scoreSourceTagHints(sourceText, tagsText, domain);
+    const contentScore = titleScore.score + tagsScore.score + summaryScore.score + tagAliasScore + titleIntentScore + sourceTagScore;
 
-    let score = scores.get(domain) ?? 0;
-    score += countKeywordHits(text, config.aliases, 2);
-    score += countKeywordHits(text, rule.strong, 5);
-    score += countKeywordHits(text, rule.medium, 3);
-    score += countKeywordHits(text, rule.weak, 1);
-    score += (rule.patterns ?? []).reduce((sum, pattern) => sum + (pattern.test(text) ? 6 : 0), 0);
+    let sourceScore = 0;
 
     for (const hint of sourceDomainHints) {
-      if (hint.domain === domain && hint.pattern.test(text)) {
-        score += hint.score;
+      if (hint.domain === domain && hint.pattern.test(sourceText)) {
+        sourceScore += hint.score;
       }
     }
 
-    scores.set(domain, score);
+    scores.set(domain, {
+      total: contentScore + sourceScore,
+      content: contentScore,
+      source: sourceScore,
+      titleStrongHits: titleScore.strongHits,
+      titlePatternHits: titleScore.patternHits,
+      titleIntentScore,
+    });
   }
 
-  let best: { domain: ArticleDomain; score: number } = { domain: "其他", score: -1 };
-  let secondBestScore = -1;
+  let best: { domain: ArticleDomain; total: number; content: number; source: number; titleStrongHits: number; titlePatternHits: number; titleIntentScore: number } = {
+    domain: "其他",
+    total: -1,
+    content: -1,
+    source: 0,
+    titleStrongHits: 0,
+    titlePatternHits: 0,
+    titleIntentScore: 0,
+  };
+  let secondBest: typeof best = {
+    domain: "其他",
+    total: -1,
+    content: -1,
+    source: 0,
+    titleStrongHits: 0,
+    titlePatternHits: 0,
+    titleIntentScore: 0,
+  };
+
   for (const domain of articleDomains) {
-    const score = scores.get(domain) ?? 0;
-    if (score > best.score) {
-      secondBestScore = best.score;
-      best = { domain, score };
-    } else if (score > secondBestScore) {
-      secondBestScore = score;
+    const score = scores.get(domain) ?? { total: 0, content: 0, source: 0, titleStrongHits: 0, titlePatternHits: 0, titleIntentScore: 0 };
+    if (
+      score.content > best.content ||
+      (score.content === best.content && score.total > best.total)
+    ) {
+      secondBest = best;
+      best = { domain, ...score };
+    } else if (
+      score.content > secondBest.content ||
+      (score.content === secondBest.content && score.total > secondBest.total)
+    ) {
+      secondBest = { domain, ...score };
     }
   }
 
-  if (best.domain !== "其他" && best.score >= 5 && (best.score - secondBestScore >= 2 || best.score >= 8)) {
-    return best.domain;
+  const hasStrongTitleEvidence = best.titleStrongHits > 0 || best.titlePatternHits > 0 || best.titleIntentScore >= 6;
+  const contentLead = best.content - secondBest.content;
+  const totalLead = best.total - secondBest.total;
+
+  let ruleDomain: ArticleDomain = "其他";
+
+  if (
+    best.domain !== "其他" &&
+    best.content >= 8 &&
+    (contentLead >= 2 || best.content >= 11 || hasStrongTitleEvidence)
+  ) {
+    ruleDomain = best.domain;
+  }
+  else if (
+    best.domain !== "其他" &&
+    best.content >= 5 &&
+    hasStrongTitleEvidence &&
+    (contentLead >= 1.5 || totalLead >= 2)
+  ) {
+    ruleDomain = best.domain;
+  }
+  else if (best.domain !== "其他" && best.content >= 6 && totalLead >= 2) {
+    ruleDomain = best.domain;
+  }
+  else if (
+    best.domain !== "其他" &&
+    /微博|抖音|百度|知乎|今日头条|头条/.test(sourceText) &&
+    best.content >= 4 &&
+    (contentLead >= 1 || totalLead >= 1)
+  ) {
+    ruleDomain = best.domain;
+  }
+  else if (best.domain !== "其他" && best.source >= 3 && secondBest.content < 4) {
+    ruleDomain = best.domain;
   }
 
-  if (/36氪|爱范儿|少数派/.test(source)) return "科技";
-  if (/懂车帝|汽车之家|易车/.test(source)) return "汽车";
-  if (/马蜂窝|携程|飞猪|同程|去哪儿/.test(source)) return "旅游";
+  let confidence: DomainConfidence = "low";
 
-  if (/微博|抖音|头条|百度|知乎/.test(source)) {
-    if (/(高考|考研|中考|老师|学生|课程|备考|学习|家长|升学)/.test(text)) return "教育";
-    if (/(汽车|新车|上市|试驾|比亚迪|特斯拉|理想|蔚来|小鹏|机车|摩托|车手|正赛|荷兰站)/.test(text)) return "汽车";
-    if (/(比赛|夺冠|冠军|联赛|季后赛|足球|篮球|电竞|战队|选手|运动员|世锦赛|斯诺克|丁俊晖|迎战)/.test(text)) return "体育";
-    if (/(演唱会|明星|演员|歌手|综艺|电影|电视剧|票房|金像奖|奥斯卡|红毯|官宣|塌房|剧组)/.test(text)) return "娱乐";
-    if (/(融资|投资|估值|募资|并购|上市|股价|财报|营收|利润|负债|破产|开业|停售|暂停销售|消费|门店|零食店)/.test(text)) return "财经";
-    if (/(文化|艺术|历史|文学|阅读|博物馆|非遗|城市漫步|照片|影像|审美|年度杰出文化影响力人物)/.test(text)) return "文化";
-    if (/(恋爱|婚姻|离婚|分手|家庭|夫妻|伴侣|情绪|爸妈|爱你)/.test(text)) return "情感";
-    if (/(旅游|旅行|酒店|民宿|景点|出行|文旅|旅居|城市漫步|沿海|小城)/.test(text)) return "旅游";
-    if (/(ai|人工智能|机器人|航天|火箭|卫星|硬核科技|消博会|清洁能源)/.test(text)) return "科技";
-    if (/(事件|通报|警方|曝光|调查|热议|案件|求职|租房|平台|退款|法院|法律|遗产|遗嘱|继承|数据造假|春耕|评论员)/.test(text)) return "社会";
+  if (
+    ruleDomain !== "其他" &&
+    (
+      directDomain !== null ||
+      (best.content >= 8 && (contentLead >= 2 || hasStrongTitleEvidence)) ||
+      (best.content >= 11 && totalLead >= 3)
+    )
+  ) {
+    confidence = "high";
+  } else if (
+    ruleDomain !== "其他" &&
+    (
+      (best.content >= 6 && totalLead >= 2) ||
+      (best.content >= 5 && hasStrongTitleEvidence)
+    )
+  ) {
+    confidence = "medium";
   }
 
-  return "其他";
+  const shouldUseAiAssist = confidence === "low" || ruleDomain === "其他";
+
+  return {
+    domain: ruleDomain,
+    ruleDomain,
+    confidence,
+    shouldUseAiAssist,
+    contentLead,
+    totalLead,
+    hasStrongTitleEvidence,
+    directDomain,
+  };
+}
+
+export function detectArticleDomain(title: string, tags: string[] = [], source = "", summary = ""): ArticleDomain {
+  return detectArticleDomainWithSignals(title, tags, source, summary).domain;
 }

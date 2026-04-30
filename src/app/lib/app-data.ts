@@ -168,9 +168,24 @@ export function createTitleCandidates(topic: TopicSuggestion, settings: AppSetti
       .replace(/[！!]{2,}/g, "！")
       .replace(/[，。、；：:!?！？\s]+$/g, "")
       .trim()
-      .slice(0, 30)
       .replace(/[，。、；：:!?！？\s]+$/g, "")
       .trim();
+  const shortenCandidate = (text: string) => {
+    const normalized = trimCandidate(text);
+    if (normalized.replace(/\s+/g, "").length <= 30) {
+      return normalized;
+    }
+
+    return normalized
+      .replace(/，更该看的其实是/g, "，更该看")
+      .replace(/为什么更该关心/g, "为何更该关心")
+      .replace(/真正会变的是谁的日子/g, "真正会变的是什么")
+      .replace(/后面更容易看漏/g, "更容易看漏")
+      .replace(/一点说，/g, "说，")
+      .replace(/哪些风险开始变具体/g, "哪些风险变具体")
+      .replace(/比起(.+)本身，更值得聊的是(.+)/, "比起$1，更值得聊的是$2")
+      .trim();
+  };
 
   const rawCandidates = [
     subject,
@@ -183,7 +198,7 @@ export function createTitleCandidates(topic: TopicSuggestion, settings: AppSetti
     `比起${subject}本身，更值得聊的是${secondaryAngle}`,
   ];
 
-  return Array.from(new Set(rawCandidates.map(trimCandidate).filter(Boolean))).slice(0, 5);
+  return Array.from(new Set(rawCandidates.map(shortenCandidate).filter(Boolean))).slice(0, 5);
 }
 
 export function createOutline(topic: TopicSuggestion) {

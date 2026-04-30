@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { formatDraftTime } from "../lib/app-data";
-import { articleDomains, detectArticleDomain, domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
 import { type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicIdentityKey } from "../lib/topic-utils";
 import { useAppStore } from "../providers/app-store";
@@ -111,7 +111,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     () =>
       resolvedDashboardHotTopics.map((topic) => ({
         ...topic,
-        domain: detectArticleDomain(topic.title, topic.tags, topic.source, topic.summary ?? ""),
+        domain: topic.domain ?? "其他",
         tags: topic.tags.slice(0, 2),
       })),
     [resolvedDashboardHotTopics],

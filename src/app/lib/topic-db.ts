@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { hasDatabaseUrl } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
@@ -6,6 +7,7 @@ import { deriveTopicAngles, deriveTopicReason } from "./article-analysis";
 import { detectArticleDomain, resolveArticleDomain } from "./content-domains";
 import { assertTopicAllowed, filterRestrictedTopics } from "./content-policy";
 import { buildTopicIdentityKey } from "./topic-utils";
+import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
 
 type TopicRecord = {
   id: string;
@@ -268,12 +270,98 @@ function rebuildTopicWithCurrentRules(topic: TopicSuggestion): TopicSuggestion {
   };
 }
 
+async function rebuildTopicWithAssistedDomain(topic: TopicSuggestion): Promise<TopicSuggestion> {
+  const resolved = await resolveDomainWithAIAssist({
+    title: topic.title,
+    tags: topic.tags,
+    source: topic.source,
+    summary: topic.reason,
+  });
+  const domain = resolved.domain;
+
+  return {
+    ...topic,
+    domain,
+    reason: deriveTopicReason({
+      title: topic.title,
+      source: topic.source,
+      domain,
+      summary: topic.reason,
+    }),
+    angles: deriveTopicAngles({
+      title: topic.title,
+      tags: topic.tags,
+      source: topic.source,
+      domain,
+    }),
+  };
+}
+
+async function persistHotTopicDomain(topic: TopicSuggestion) {
+  const sourceName = topic.source.split("·")[0]?.trim() || topic.source.trim();
+
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data: existingRows, error: queryError } = await supabase
+      .from("hot_topics")
+      .select("id,raw")
+      .eq("title", topic.title)
+      .eq("source", sourceName)
+      .order("fetched_at", { ascending: false })
+      .limit(4);
+
+    if (queryError) throw queryError;
+
+    for (const row of existingRows ?? []) {
+      const raw = row.raw && typeof row.raw === "object" && !Array.isArray(row.raw)
+        ? row.raw as Record<string, unknown>
+        : {};
+      const { error: updateError } = await supabase
+        .from("hot_topics")
+        .update({
+          raw: {
+            ...raw,
+            domain: topic.domain,
+          },
+        })
+        .eq("id", row.id);
+
+      if (updateError) throw updateError;
+    }
+
+    return;
+  }
+
+  const rows = await prisma.hotTopic.findMany({
+    where: {
+      title: topic.title,
+      source: sourceName,
+    },
+    orderBy: [{ fetchedAt: "desc" }],
+    take: 4,
+    select: {
+      id: true,
+      raw: true,
+    },
+  });
+
+  await Promise.all(rows.map((row) => prisma.hotTopic.update({
+    where: { id: row.id },
+    data: {
+      raw: {
+        ...(row.raw && typeof row.raw === "object" && !Array.isArray(row.raw) ? row.raw as Prisma.JsonObject : {}),
+        domain: topic.domain,
+      } as Prisma.InputJsonValue,
+    },
+  })));
+}
+
 export async function reclassifyTopicRecords() {
   const topics = await readTopics();
   let updatedCount = 0;
 
   for (const topic of topics) {
-    const nextTopic = rebuildTopicWithCurrentRules(topic);
+    const nextTopic = await rebuildTopicWithAssistedDomain(topic);
     const changed =
       nextTopic.domain !== topic.domain ||
       nextTopic.reason !== topic.reason ||
@@ -282,6 +370,9 @@ export async function reclassifyTopicRecords() {
     if (!changed) continue;
 
     await upsertTopicRecord(nextTopic);
+    await persistHotTopicDomain(nextTopic).catch((error) => {
+      console.error("Failed to persist hot topic domain:", error);
+    });
     updatedCount += 1;
   }
 

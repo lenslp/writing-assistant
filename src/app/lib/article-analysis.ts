@@ -8,6 +8,7 @@ type HotTopicLike = Pick<HotTopicItem, "id" | "title" | "source" | "sourceType" 
   url?: string | null;
   trend?: string;
   trendScore?: number;
+  domain?: TopicSuggestion["domain"];
 };
 
 export type ArticleAnalysisItem = {
@@ -48,6 +49,8 @@ export type ArticleAnalysisItem = {
     methods: string[];
   };
 };
+
+type HotTopicCategory = TopicSuggestion["domain"];
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -392,7 +395,8 @@ function buildTopicHeatLabel(heat: number): TopicSuggestion["heat"] {
 
 export function buildTopicSuggestionFromHotTopic(item: HotTopicLike): TopicSuggestion {
   const primaryTag = derivePrimaryTag(item);
-  const domain = detectArticleDomain(item.title, item.tags, item.source);
+  const preferredDomain = item.domain;
+  const domain = preferredDomain ?? detectArticleDomain(item.title, item.tags, item.source, item.summary ?? "");
   const angles = deriveAnglesFromSignals({
     title: item.title,
     tags: item.tags,

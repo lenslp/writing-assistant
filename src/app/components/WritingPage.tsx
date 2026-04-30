@@ -6,9 +6,9 @@ import {
   Type, ListTree, FileText, RefreshCw, Maximize2, Minimize2,
   Palette, ChevronDown, Flame, Eye, Quote, Sparkles,
   Bold, Italic, Underline, AlignLeft, List, Save,
-  LoaderCircle, CheckCircle2, Pause,
+  LoaderCircle, Pause,
 } from "lucide-react";
-import { createBody, createFormattingForDomain, createOutline, createSummary, createTitleCandidates, type Draft } from "../lib/app-data";
+import { createBody, createFormattingForDomain, createOutline, createSummary, type Draft } from "../lib/app-data";
 import {
   buildAutoImageCaption,
   buildAutoImagePrompt,
@@ -26,7 +26,7 @@ import type {
   DraftWritingSnapshot,
 } from "../lib/ai-writing-types";
 import { domainConfigs, resolveArticleDomain } from "../lib/content-domains";
-import { buildWritingToneOptions, resolveWritingTone } from "../lib/writing-tones";
+import { buildWritingToneOptions, recommendToneForArticleType, resolveWritingTone } from "../lib/writing-tones";
 import { useAppStore } from "../providers/app-store";
 
 const generationLabels: Record<AIWriteScope, string> = {
@@ -140,6 +140,7 @@ export function WritingPage() {
   const requestAbortControllerRef = useRef<AbortController | null>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   const autosaveInitializedRef = useRef(false);
+  const toneAutoManagedRef = useRef(true);
 
   const { drafts, topics, selectedTopic, settings, selectTopic, generateDraftFromTopic, getDraftById, updateDraft } = useAppStore();
 
@@ -166,28 +167,22 @@ export function WritingPage() {
   );
   const activeDomainConfig = useMemo(() => domainConfigs[selectedDomain], [selectedDomain]);
 
-  const fallbackTitleCandidates = useMemo(
-    () => {
-      if (!topicForWriting) return [];
-      return createTitleCandidates(topicForWriting, settings);
-    },
-    [settings, topicForWriting],
-  );
   const fallbackOutline = useMemo(() => (topicForWriting ? createOutline(topicForWriting) : []), [topicForWriting]);
   const fallbackSummary = useMemo(() => (topicForWriting ? createSummary(topicForWriting, settings) : ""), [settings, topicForWriting]);
   const fallbackBody = useMemo(() => (topicForWriting ? createBody(topicForWriting, settings) : ""), [settings, topicForWriting]);
   const toneOptions = useMemo(() => buildWritingToneOptions(settings.toneKeywords).slice(0, 6), [settings.toneKeywords]);
+  const [articleType, setArticleType] = useState("观点文");
   const defaultTone = useMemo(
-    () => toneOptions.find((tone) => resolveWritingTone(tone).id === "friendly") ?? toneOptions[0] ?? "朋友式表达",
+    () => recommendToneForArticleType("观点文", toneOptions),
     [toneOptions],
   );
+  const recommendedTone = useMemo(() => recommendToneForArticleType(articleType, toneOptions), [articleType, toneOptions]);
 
-  const [selectedTitle, setSelectedTitle] = useState(currentDraft?.title ?? fallbackTitleCandidates[0] ?? "");
+  const [selectedTitle, setSelectedTitle] = useState(currentDraft?.title ?? "");
   const [summary, setSummary] = useState(currentDraft?.summary ?? fallbackSummary);
   const [outline, setOutline] = useState<string[]>(currentDraft?.outline ?? fallbackOutline);
   const [body, setBody] = useState(currentDraft?.body ?? fallbackBody);
   const [saveNotice, setSaveNotice] = useState("");
-  const [articleType, setArticleType] = useState("观点文");
   const [targetReader, setTargetReader] = useState(settings.readerJobTraits);
   const [targetWordCount, setTargetWordCount] = useState(1200);
   const [selectedTone, setSelectedTone] = useState(defaultTone);
@@ -202,7 +197,7 @@ export function WritingPage() {
   const activeDomainTheme = useMemo(() => domainUiThemes[selectedDomain], [selectedDomain]);
   const articleTypeOptions = useMemo(() => domainArticleTypeOptions[selectedDomain], [selectedDomain]);
 
-  const titleCandidates = currentDraft?.titleCandidates ?? fallbackTitleCandidates;
+  const titleCandidates = currentDraft?.titleCandidates ?? [];
 
   useEffect(() => {
     if (topicId) {
@@ -219,16 +214,17 @@ export function WritingPage() {
   }, [currentDraft, draftId, router, topicId]);
 
   useEffect(() => {
-    setSelectedTitle(currentDraft?.title ?? fallbackTitleCandidates[0] ?? "");
+    setSelectedTitle(currentDraft?.title ?? "");
     setSummary(currentDraft?.summary ?? fallbackSummary);
     setOutline(currentDraft?.outline ?? fallbackOutline);
     setBody(currentDraft?.body ?? fallbackBody);
     setSelectedDomain(defaultDomain);
-  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary, fallbackTitleCandidates]);
+  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary]);
 
   useEffect(() => {
     setTargetReader(settings.readerJobTraits);
     setSelectedTone(defaultTone);
+    toneAutoManagedRef.current = true;
   }, [defaultTone, settings.readerJobTraits]);
 
   useEffect(() => {
@@ -236,6 +232,15 @@ export function WritingPage() {
       setArticleType(articleTypeOptions[0]);
     }
   }, [articleType, articleTypeOptions]);
+
+  useEffect(() => {
+    if (!toneOptions.length) return;
+
+    if (toneAutoManagedRef.current || !toneOptions.includes(selectedTone)) {
+      setSelectedTone(recommendedTone);
+      toneAutoManagedRef.current = true;
+    }
+  }, [recommendedTone, selectedTone, toneOptions]);
 
   useEffect(() => {
     if (!autogenKey) {
@@ -268,18 +273,24 @@ export function WritingPage() {
     };
   }, []);
 
-  const activeGenerationMeta = activeGenerationTask ? generationStageMap[activeGenerationTask] : null;
   const generationElapsedSeconds =
     isGenerating && generationStartedAt ? Math.max(1, Math.floor((generationNow - generationStartedAt) / 1000)) : 0;
-  const activeStageIndex = activeGenerationMeta
-    ? Math.min(activeGenerationMeta.steps.length - 1, Math.floor(generationElapsedSeconds / 5))
-    : 0;
-  const isBodyGenerationTask =
-    activeGenerationTask === "body" ||
-    activeGenerationTask === "full" ||
-    activeGenerationTask === "rewrite" ||
-    activeGenerationTask === "expand" ||
-    activeGenerationTask === "shorten";
+  const isTitleGenerating =
+    isGenerating &&
+    (activeGenerationTask === "title" || activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
+  const hasGeneratedTitles = titleCandidates.length > 0;
+  const isSummaryGenerating =
+    isGenerating &&
+    (activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
+  const hasGeneratedSummary = Boolean(summary.trim());
+  const isOutlineGenerating =
+    isGenerating &&
+    (activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
+  const hasGeneratedOutline = outline.some((item) => item.trim());
+  const isBodyDraftGenerating =
+    isGenerating &&
+    (activeGenerationTask === "body" || activeGenerationTask === "full");
+  const hasGeneratedBody = Boolean(body.trim());
 
   function buildDraftSnapshot(draft: Draft): DraftWritingSnapshot {
     const useLocalState = currentDraft?.id === draft.id;
@@ -980,87 +991,6 @@ export function WritingPage() {
         </div>
       ) : null}
 
-      {isGenerating && activeGenerationMeta ? (
-        <div className="border-b border-amber-100 bg-gradient-to-r from-amber-50 via-white to-orange-50 px-4 py-4">
-          <div className="rounded-2xl border border-amber-100/80 bg-white/90 px-4 py-4 shadow-sm backdrop-blur">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-[260px] flex-1">
-                <div className="flex items-center gap-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-                  <div className={`flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br ${activeGenerationMeta.accent} text-white shadow-sm`}>
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  </div>
-                  <div>
-                    <p>{pendingAction || activeGenerationMeta.title}</p>
-                    <p className="mt-0.5 text-[11px] text-gray-500" style={{ fontWeight: 400 }}>
-                      已运行 {generationElapsedSeconds} 秒
-                      {activeGenerationTask === "body" || activeGenerationTask === "full" ? " · 长文生成通常会稍慢一些" : ""}
-                    </p>
-                  </div>
-                </div>
-                <p className="mt-3 max-w-3xl text-[12px] leading-6 text-gray-600">
-                  {activeGenerationMeta.hint}
-                </p>
-              </div>
-              <div className="min-w-[200px] rounded-2xl border border-gray-100 bg-gray-50/80 px-3 py-3">
-                <div className="flex items-center justify-between text-[11px] text-gray-500">
-                  <span>执行阶段</span>
-                  <span>{activeStageIndex + 1}/{activeGenerationMeta.steps.length}</span>
-                </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
-                  <div
-                    className={`h-full rounded-full bg-gradient-to-r ${activeGenerationMeta.accent} transition-all duration-500`}
-                    style={{ width: `${((activeStageIndex + 1) / activeGenerationMeta.steps.length) * 100}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-2 md:grid-cols-3">
-              {activeGenerationMeta.steps.map((step, index) => {
-                const isDone = index < activeStageIndex;
-                const isCurrent = index === activeStageIndex;
-
-                return (
-                  <div
-                    key={step}
-                    className={`rounded-2xl border px-3 py-3 transition-colors ${
-                      isCurrent
-                        ? "border-amber-200 bg-amber-50"
-                        : isDone
-                          ? "border-emerald-200 bg-emerald-50"
-                          : "border-gray-100 bg-gray-50"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {isDone ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                      ) : (
-                        <div className={`flex h-4 w-4 items-center justify-center rounded-full border text-[10px] ${
-                          isCurrent ? "border-amber-400 text-amber-600" : "border-gray-300 text-gray-400"
-                        }`}>
-                          {index + 1}
-                        </div>
-                      )}
-                      <span
-                        className={`text-[12px] ${
-                          isCurrent ? "text-gray-900" : isDone ? "text-emerald-700" : "text-gray-500"
-                        }`}
-                        style={{ fontWeight: isCurrent || isDone ? 600 : 500 }}
-                      >
-                        {step}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-[11px] leading-5 text-gray-500">
-                      {isCurrent ? "当前正在执行这一阶段，请稍等片刻。" : isDone ? "这一阶段已经完成。" : "完成前一阶段后会继续推进。"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       <div className="flex flex-1 overflow-hidden">
         <div className="w-[260px] min-w-[260px] bg-white border-r border-gray-100 overflow-y-auto p-4 space-y-5">
           <div>
@@ -1103,7 +1033,10 @@ export function WritingPage() {
                   {toneOptions.map((tone) => (
                     <button
                       key={tone}
-                      onClick={() => setSelectedTone(tone)}
+                      onClick={() => {
+                        setSelectedTone(tone);
+                        toneAutoManagedRef.current = tone === recommendedTone;
+                      }}
                       className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
                         selectedTone === tone ? "bg-blue-50 border-blue-200 text-blue-600" : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
                       }`}
@@ -1119,6 +1052,11 @@ export function WritingPage() {
                     当前风格：{activeTonePreset.label}
                   </div>
                   <p className="mt-1 text-[12px] leading-5 text-gray-600">{activeTonePreset.description}</p>
+                  {selectedTone === recommendedTone ? (
+                    <p className="mt-1 text-[11px] text-blue-500">已按当前文章类型自动匹配推荐风格。</p>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-gray-400">当前是手动选择风格，未跟随文章类型自动切换。</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1130,7 +1068,7 @@ export function WritingPage() {
             <div className="pointer-events-none sticky top-0 z-10 px-4 pt-4">
               <div className="mx-auto flex max-w-[720px] items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/75 px-4 py-3 shadow-sm backdrop-blur">
                 <div className="flex items-center gap-3">
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${activeGenerationMeta?.accent ?? "from-blue-500 to-cyan-500"} text-white`}>
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white">
                     <LoaderCircle className="h-4 w-4 animate-spin" />
                   </div>
                   <div>
@@ -1138,7 +1076,7 @@ export function WritingPage() {
                       {pendingAction || "AI 正在处理中"}
                     </p>
                     <p className="text-[11px] text-gray-500">
-                      {activeGenerationMeta?.steps[activeStageIndex] ?? "正在生成结果"} · 请尽量不要重复点击
+                      正在生成结果 · 请尽量不要重复点击
                     </p>
                   </div>
                 </div>
@@ -1168,20 +1106,41 @@ export function WritingPage() {
                 </button>
               </div>
               <div className="space-y-2">
-                {titleCandidates.map((title) => (
-                  <button
-                    key={title}
-                    onClick={() => setSelectedTitle(title)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-left ${
-                      selectedTitle === title ? "bg-blue-50 border border-blue-200" : "bg-gray-50 border border-transparent hover:bg-gray-100"
-                    }`}
-                  >
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${selectedTitle === title ? "border-blue-600" : "border-gray-300"}`}>
-                      {selectedTitle === title && <div className="w-2.5 h-2.5 rounded-full bg-blue-600" />}
+                {isTitleGenerating && !hasGeneratedTitles ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-[12px] text-blue-600">
+                      标题生成中，正在根据选题和结构生成候选标题…
                     </div>
-                    <span className="text-[13px]" style={{ fontWeight: selectedTitle === title ? 600 : 400 }}>{title}</span>
-                  </button>
-                ))}
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div key={index} className="flex items-start gap-3 rounded-lg bg-gray-50 px-3 py-3">
+                        <div className="mt-0.5 h-5 w-5 flex-shrink-0 rounded-full border-2 border-gray-200 bg-white" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-4 w-[88%] animate-pulse rounded bg-gray-200" />
+                          <div className="h-4 w-[64%] animate-pulse rounded bg-gray-100" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : hasGeneratedTitles ? (
+                  titleCandidates.map((title) => (
+                    <button
+                      key={title}
+                      onClick={() => setSelectedTitle(title)}
+                      className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-left ${
+                        selectedTitle === title ? "bg-blue-50 border border-blue-200" : "bg-gray-50 border border-transparent hover:bg-gray-100"
+                      }`}
+                    >
+                      <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${selectedTitle === title ? "border-blue-600" : "border-gray-300"}`}>
+                        {selectedTitle === title && <div className="w-2.5 h-2.5 rounded-full bg-blue-600" />}
+                      </div>
+                      <span className="flex-1 whitespace-normal break-words text-[13px] leading-6" style={{ fontWeight: selectedTitle === title ? 600 : 400 }}>{title}</span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-[12px] text-gray-500">
+                    还没有生成标题，点击“生成标题”或“一键生成全文”后会在这里显示 AI 标题候选。
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1193,11 +1152,26 @@ export function WritingPage() {
                 <Sparkles className="w-4 h-4" style={{ color: activeDomainTheme.accent }} />
                 <span className="text-[13px]" style={{ fontWeight: 600 }}>摘要</span>
               </div>
-              <textarea
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-                className="w-full min-h-28 text-[13px] text-gray-700 leading-relaxed bg-gray-50 rounded-lg p-3 border border-gray-100 outline-none focus:border-blue-200"
-              />
+              {isSummaryGenerating && !hasGeneratedSummary ? (
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-3 text-[12px] text-violet-600">
+                    摘要生成中，正在提炼这篇文章的导语和核心判断…
+                  </div>
+                  <div className="rounded-lg bg-gray-50 px-3 py-3">
+                    <div className="space-y-2">
+                      <div className="h-4 w-[92%] animate-pulse rounded bg-gray-200" />
+                      <div className="h-4 w-[84%] animate-pulse rounded bg-gray-100" />
+                      <div className="h-4 w-[68%] animate-pulse rounded bg-gray-200" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <textarea
+                  value={summary}
+                  onChange={(event) => setSummary(event.target.value)}
+                  className="w-full min-h-28 text-[13px] text-gray-700 leading-relaxed bg-gray-50 rounded-lg p-3 border border-gray-100 outline-none focus:border-blue-200"
+                />
+              )}
             </div>
 
             <div
@@ -1219,33 +1193,45 @@ export function WritingPage() {
                 </button>
               </div>
               <div className="space-y-2">
-                {outline.map((item, index) => (
-                  <input
-                    key={`${index}-${item}`}
-                    value={item}
-                    onChange={(event) =>
-                      setOutline((currentOutline) =>
-                        currentOutline.map((outlineItem, itemIndex) => (itemIndex === index ? event.target.value : outlineItem)),
-                      )
-                    }
-                    className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-[13px] text-gray-700 outline-none focus:border-blue-200"
-                  />
-                ))}
+                {isOutlineGenerating && !hasGeneratedOutline ? (
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-3 text-[12px] text-sky-600">
+                      大纲生成中，正在组织文章结构和段落节奏…
+                    </div>
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <div key={index} className="rounded-lg bg-gray-50 px-3 py-3">
+                        <div className={`h-4 animate-pulse rounded bg-gray-200 ${index % 2 === 0 ? "w-[82%]" : "w-[68%]"}`} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  outline.map((item, index) => (
+                    <input
+                      key={`${index}-${item}`}
+                      value={item}
+                      onChange={(event) =>
+                        setOutline((currentOutline) =>
+                          currentOutline.map((outlineItem, itemIndex) => (itemIndex === index ? event.target.value : outlineItem)),
+                        )
+                      }
+                      className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-[13px] text-gray-700 outline-none focus:border-blue-200"
+                    />
+                  ))
+                )}
               </div>
             </div>
 
             <div
-              className={`bg-white rounded-xl border p-5 transition-all ${isBodyGenerationTask ? "shadow-[0_16px_40px_rgba(15,23,42,0.06)]" : ""}`}
+              className="bg-white rounded-xl border p-5 transition-opacity"
               style={{
                 borderColor: activeDomainTheme.border,
-                boxShadow: isBodyGenerationTask ? `0 16px 40px color-mix(in srgb, ${activeDomainTheme.primary} 10%, transparent)` : undefined,
               }}
             >
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <FileText className="w-4 h-4 text-green-500" />
                   <span className="text-[13px]" style={{ fontWeight: 600 }}>正文草稿</span>
-                  {isBodyGenerationTask ? (
+                  {isBodyDraftGenerating ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">
                       <LoaderCircle className="h-3 w-3 animate-spin" />
                       生成中
@@ -1287,85 +1273,35 @@ export function WritingPage() {
                   </button>
                 </div>
               </div>
-              <div className="relative">
-                {isBodyGenerationTask ? (
-                  <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-[20px] bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(255,255,255,0.72)_18%,rgba(248,250,252,0.84)_100%)] backdrop-blur-[2px]">
-                    <div className="absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.12),transparent_68%)]" />
-                    <div className="flex h-full flex-col gap-5 p-5">
-                      <div className="mx-auto w-full max-w-[560px] rounded-2xl border border-emerald-100/90 bg-white/92 px-4 py-3 shadow-[0_14px_34px_rgba(16,185,129,0.10)]">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 text-white shadow-sm">
-                              <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[13px] text-gray-900" style={{ fontWeight: 700 }}>
-                                  {pendingAction || activeGenerationMeta?.title || "AI 正在处理中"}
-                                </span>
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
-                                  第 {activeStageIndex + 1} 阶段
-                                </span>
-                              </div>
-                              <p className="mt-1 text-[11px] leading-5 text-gray-500">
-                                {activeGenerationMeta?.steps[activeStageIndex] ?? "正在组织正文内容"} · 已运行 {generationElapsedSeconds} 秒
-                              </p>
-                            </div>
-                          </div>
-                          <div className="hidden text-right sm:block">
-                            <div className="text-[10px] uppercase tracking-[0.18em] text-gray-400">Body Drafting</div>
-                            <div className="mt-1 text-[12px] text-gray-600" style={{ fontWeight: 600 }}>
-                              请稍候
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-emerald-50">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 transition-all duration-700"
-                            style={{ width: `${((activeStageIndex + 1) / (activeGenerationMeta?.steps.length ?? 3)) * 100}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex-1 rounded-[20px] border border-white/80 bg-white/38 px-5 py-6 shadow-inner">
-                        <div className="space-y-4">
-                          {[0, 1, 2, 3, 4].map((item) => (
-                            <div key={item} className="space-y-2.5">
-                              <div
-                                className={`h-4 animate-pulse rounded-full bg-gradient-to-r from-slate-200/90 via-slate-100 to-slate-200/80 ${
-                                  item === 0 ? "w-[92%]" : item === 1 ? "w-[78%]" : item === 2 ? "w-[96%]" : item === 3 ? "w-[71%]" : "w-[83%]"
-                                }`}
-                              />
-                              <div
-                                className={`h-4 animate-pulse rounded-full bg-gradient-to-r from-slate-200/70 via-slate-100 to-slate-200/60 ${
-                                  item % 2 === 0 ? "w-[86%]" : "w-[64%]"
-                                }`}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-6 flex items-center justify-between rounded-2xl border border-slate-200/70 bg-white/70 px-4 py-3">
-                          <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                            生成完成后将自动回填到正文编辑器
-                          </div>
-                          <div className="text-[11px] text-slate-400">
-                            建议暂时不要切换页面
-                          </div>
-                        </div>
-                      </div>
+              {isBodyDraftGenerating && !hasGeneratedBody ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-3 text-[12px] text-emerald-600">
+                    正文生成中，正在组织正文内容和段落细节…
+                  </div>
+                  <div className="rounded-lg bg-gray-50 px-4 py-4">
+                    <div className="space-y-3">
+                      {[
+                        "w-[92%]",
+                        "w-[84%]",
+                        "w-[76%]",
+                        "w-[88%]",
+                        "w-[69%]",
+                        "w-[94%]",
+                        "w-[81%]",
+                      ].map((widthClass, index) => (
+                        <div key={index} className={`h-4 animate-pulse rounded bg-gray-200 ${widthClass}`} />
+                      ))}
                     </div>
                   </div>
-                ) : null}
+                </div>
+              ) : (
                 <textarea
                   ref={bodyTextareaRef}
                   value={body}
                   onChange={(event) => setBody(event.target.value)}
-                  className={`w-full min-h-[420px] text-[14px] leading-relaxed text-gray-800 border-none outline-none resize-none transition-opacity ${
-                    isBodyGenerationTask ? "opacity-30" : "opacity-100"
-                  }`}
+                  className="w-full min-h-[420px] text-[14px] leading-relaxed text-gray-800 border-none outline-none resize-none transition-opacity"
                 />
-              </div>
+              )}
             </div>
           </div>
         </div>

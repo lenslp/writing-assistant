@@ -177,6 +177,13 @@ function buildTitleDedupKey(item: ScrapedHotTopic) {
   return `${item.source}:${normalizeTitle(item.title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "")}`;
 }
 
+function withBatchFetchedAt(items: ScrapedHotTopic[], fetchedAt = new Date().toISOString()) {
+  return items.map((item) => ({
+    ...item,
+    fetchedAt,
+  }));
+}
+
 async function trySequentialFetchers<T>(fetchers: Array<() => Promise<T>>) {
   let lastError: unknown = null;
 
@@ -833,6 +840,7 @@ async function scrapeTwitterHotFromRssBridge(): Promise<ScrapedHotTopic[]> {
 }
 
 export async function scrapeHotTopics() {
+  const batchFetchedAt = new Date().toISOString();
   const sourceFetchers: SourceFetcher[] = [
     { source: "微博", fetch: scrapeWeiboHotFromApi },
     { source: "抖音", fetch: scrapeDouyinHot },
@@ -858,7 +866,9 @@ export async function scrapeHotTopics() {
     })),
   );
 
-  const successItems = settled.flatMap((result) => (result.status === "fulfilled" ? result.value.items : []));
+  const successItems = settled.flatMap((result) =>
+    result.status === "fulfilled" ? withBatchFetchedAt(result.value.items, batchFetchedAt) : [],
+  );
   const failedSources = settled.flatMap((result, index) => {
     if (result.status === "fulfilled") return [];
 

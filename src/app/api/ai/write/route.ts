@@ -120,6 +120,7 @@ export async function POST(request: Request) {
         provider: result.provider,
         model: result.model,
         result: result.result,
+        wordCountStatus: result.wordCountStatus,
         sourceContextUsed: Boolean(sourceContext?.content),
       });
     }

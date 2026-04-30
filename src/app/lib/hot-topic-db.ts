@@ -2,8 +2,16 @@ import { prisma } from "./prisma";
 import { hasDatabaseUrl } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
 import type { TopicSuggestion } from "./app-data";
+import { detectArticleDomain, resolveArticleDomain } from "./content-domains";
 import { filterRestrictedTopics } from "./content-policy";
 import { formatFetchedTime, normalizeTrend, pickBalancedHotTopics, type HotTopicItem } from "./hot-topics";
+import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
+
+function readPersistedDomain(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const domain = "domain" in raw && typeof raw.domain === "string" ? raw.domain.trim() : "";
+  return domain ? resolveArticleDomain(domain) : null;
+}
 
 export function mapHotTopicRecord(item: {
   id: string;
@@ -15,15 +23,18 @@ export function mapHotTopicRecord(item: {
   tags: string[];
   url: string | null;
   summary: string | null;
+  raw?: unknown;
   fetchedAt: Date | string;
 }) {
   const fetchedAt = item.fetchedAt instanceof Date ? item.fetchedAt : new Date(item.fetchedAt);
+  const domain = readPersistedDomain(item.raw) ?? detectArticleDomain(item.title, item.tags ?? [], item.source, item.summary ?? "");
 
   return {
     id: item.id,
     title: item.title,
     source: item.source,
     sourceType: item.sourceType,
+    domain,
     heat: item.heat,
     trend: normalizeTrend(item.trendScore),
     time: formatFetchedTime(fetchedAt.toISOString()),
@@ -65,13 +76,14 @@ export async function readHotTopics(limit: number) {
       tags: string[];
       url: string | null;
       summary: string | null;
+      raw?: unknown;
       fetched_at: string;
     }> = [];
 
     if (latestBatchStartAt) {
       const { data, error } = await supabase
         .from("hot_topics")
-        .select("id,title,source,source_type,heat,trend_score,tags,url,summary,fetched_at")
+        .select("id,title,source,source_type,heat,trend_score,tags,url,summary,raw,fetched_at")
         .gte("fetched_at", latestBatchStartAt.toISOString())
         .order("fetched_at", { ascending: false })
         .order("heat", { ascending: false })
@@ -84,7 +96,7 @@ export async function readHotTopics(limit: number) {
     if (!items.length) {
       const { data, error } = await supabase
         .from("hot_topics")
-        .select("id,title,source,source_type,heat,trend_score,tags,url,summary,fetched_at")
+        .select("id,title,source,source_type,heat,trend_score,tags,url,summary,raw,fetched_at")
         .order("heat", { ascending: false })
         .order("fetched_at", { ascending: false })
         .limit(fallbackTake);
@@ -103,6 +115,7 @@ export async function readHotTopics(limit: number) {
       tags: item.tags ?? [],
       url: item.url,
       summary: item.summary,
+      raw: item.raw,
       fetchedAt: item.fetched_at,
     }));
     const { allowed } = filterRestrictedTopics(mappedItems);
@@ -326,4 +339,135 @@ export async function readLatestHotTopicForTopic(topic: Pick<TopicSuggestion, "t
   });
 
   return fallbackMatch ? mapHotTopicDetailRecord(fallbackMatch) : null;
+}
+
+export async function reclassifyHotTopicRecords(limit = 220) {
+  if (!hasDatabaseUrl()) {
+    const supabase = getSupabaseAdmin();
+    const { data: latestJobs, error: latestJobError } = await supabase
+      .from("fetch_jobs")
+      .select("created_at,finished_at")
+      .eq("job_type", "hot-topics-refresh")
+      .eq("status", "success")
+      .order("finished_at", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (latestJobError) throw latestJobError;
+    const latestSuccessJob = latestJobs?.[0];
+    const latestBatchStartAt = latestSuccessJob
+      ? new Date(new Date(latestSuccessJob.created_at).getTime() - 60 * 1000)
+      : null;
+
+    const query = supabase
+      .from("hot_topics")
+      .select("id,title,source,tags,summary,raw,heat,fetched_at")
+      .order("fetched_at", { ascending: false })
+      .order("heat", { ascending: false })
+      .limit(limit);
+
+    const { data, error } = latestBatchStartAt
+      ? await query.gte("fetched_at", latestBatchStartAt.toISOString())
+      : await query;
+
+    if (error) throw error;
+
+    let updatedCount = 0;
+    for (const row of data ?? []) {
+      const next = await resolveDomainWithAIAssist({
+        title: row.title,
+        tags: row.tags ?? [],
+        source: row.source,
+        summary: row.summary ?? "",
+      });
+      const currentDomain = readPersistedDomain(row.raw) ?? detectArticleDomain(row.title, row.tags ?? [], row.source, row.summary ?? "");
+      if (currentDomain === next.domain) continue;
+
+      const baseRaw = row.raw && typeof row.raw === "object" && !Array.isArray(row.raw)
+        ? row.raw as Record<string, unknown>
+        : {};
+      const { error: updateError } = await supabase
+        .from("hot_topics")
+        .update({
+          raw: {
+            ...baseRaw,
+            domain: next.domain,
+          },
+        })
+        .eq("id", row.id);
+
+      if (updateError) throw updateError;
+      updatedCount += 1;
+    }
+
+    return {
+      total: (data ?? []).length,
+      updatedCount,
+    };
+  }
+
+  const latestSuccessJob = await prisma.fetchJob.findFirst({
+    where: {
+      jobType: "hot-topics-refresh",
+      status: "success",
+    },
+    orderBy: [{ finishedAt: "desc" }, { createdAt: "desc" }],
+    select: { createdAt: true },
+  });
+
+  const latestBatchStartAt = latestSuccessJob
+    ? new Date(latestSuccessJob.createdAt.getTime() - 60 * 1000)
+    : null;
+
+  const rows = await prisma.hotTopic.findMany({
+    where: latestBatchStartAt
+      ? {
+          fetchedAt: {
+            gte: latestBatchStartAt,
+          },
+        }
+      : undefined,
+    orderBy: [{ fetchedAt: "desc" }, { heat: "desc" }],
+    take: limit,
+    select: {
+      id: true,
+      title: true,
+      source: true,
+      tags: true,
+      summary: true,
+      raw: true,
+    },
+  });
+
+  let updatedCount = 0;
+  for (const row of rows) {
+    const next = await resolveDomainWithAIAssist({
+      title: row.title,
+      tags: row.tags ?? [],
+      source: row.source,
+      summary: row.summary ?? "",
+    });
+    const currentDomain = readPersistedDomain(row.raw) ?? detectArticleDomain(row.title, row.tags ?? [], row.source, row.summary ?? "");
+    if (currentDomain === next.domain) continue;
+
+    const baseRaw = row.raw && typeof row.raw === "object" && !Array.isArray(row.raw)
+      ? row.raw as Record<string, unknown>
+      : {};
+
+    await prisma.hotTopic.update({
+      where: { id: row.id },
+      data: {
+        raw: {
+          ...baseRaw,
+          domain: next.domain,
+        },
+      },
+    });
+    updatedCount += 1;
+  }
+
+  return {
+    total: rows.length,
+    updatedCount,
+  };
 }

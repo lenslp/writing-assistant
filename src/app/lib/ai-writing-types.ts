@@ -73,11 +73,21 @@ export type AIWriteResult = {
   body: string;
 };
 
+export type AIWriteWordCountStatus = {
+  actual: number;
+  min: number;
+  max: number;
+  target: number;
+  adjusted: boolean;
+  inRange: boolean;
+};
+
 export type AIWriteResponse = {
   configured: boolean;
   provider: string;
   model: string;
   result?: AIWriteResult;
+  wordCountStatus?: AIWriteWordCountStatus;
   transformedText?: string;
   message?: string;
 };

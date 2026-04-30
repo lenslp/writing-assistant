@@ -15,7 +15,6 @@ import {
   createFormattingForDomain,
   createOutline,
   createSummary,
-  createTitleCandidates,
   defaultDrafts,
   defaultSettings,
   recommendedTopics,
@@ -238,7 +237,6 @@ function isLegacySeedDraft(draft: Draft) {
 }
 
 function createDraft(topic: TopicSuggestion, settings: AppSettings, scope: GenerateScope): Draft {
-  const titleCandidates = createTitleCandidates(topic, settings);
   const outline = createOutline(topic);
   const summary = createSummary(topic, settings);
   const body = scope === "body" ? createBody(topic, settings) : "";
@@ -247,8 +245,8 @@ function createDraft(topic: TopicSuggestion, settings: AppSettings, scope: Gener
   return {
     id: `draft-${topic.id}`,
     domain: topic.domain,
-    title: titleCandidates[0],
-    titleCandidates,
+    title: "",
+    titleCandidates: [],
     selectedAngle: topic.angles[0],
     status: hasBody ? "待修改" : "待生成",
     updatedAt: new Date().toISOString(),
@@ -506,8 +504,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const nextDraft: Draft = existingDraft
           ? {
               ...existingDraft,
-              titleCandidates: baseDraft.titleCandidates,
-              title: scope === "title" ? baseDraft.titleCandidates[0] : existingDraft.title || baseDraft.title,
+              titleCandidates: existingDraft.titleCandidates,
+              title: existingDraft.title,
               summary: scope === "title" ? existingDraft.summary : baseDraft.summary,
               outline: scope === "outline" || scope === "body" ? baseDraft.outline : existingDraft.outline,
               body: scope === "body" ? baseDraft.body : existingDraft.body,

@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { defaultSettings } from "../lib/app-data";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
 import { useAppStore } from "../providers/app-store";
 
@@ -104,48 +105,28 @@ const emptyAIImageProviderForm: AIImageProviderForm = {
 
 const aiProviderPresets = [
   {
-    name: "Claude",
-    baseUrl: "https://api.anthropic.com/v1",
-    model: "claude-sonnet-4-6",
-    fastModel: "claude-3-5-haiku-latest",
-    longformModel: "claude-sonnet-4-6",
-  },
-  {
-    name: "通义千问",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen3.5-plus",
-    fastModel: "qwen-turbo",
-    longformModel: "qwen3.5-plus",
-  },
-  {
-    name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
-    fastModel: "deepseek-chat",
-    longformModel: "deepseek-chat",
-  },
-  {
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    model: "openai/gpt-4o-mini",
-    fastModel: "openai/gpt-4o-mini",
-    longformModel: "openai/gpt-4o",
-  },
-  {
-    name: "OpenAI",
+    name: "OpenAI Compatible",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o-mini",
     fastModel: "gpt-4o-mini",
     longformModel: "gpt-4o",
   },
   {
-    name: "中转服务",
-    baseUrl: "https://你的中转域名/v1",
-    model: "gpt-4o-mini",
-    fastModel: "gpt-4o-mini",
-    longformModel: "gpt-4o",
+    name: "Anthropic Native",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-3-5-sonnet-latest",
+    fastModel: "claude-3-5-haiku-latest",
+    longformModel: "claude-3-5-sonnet-latest",
   },
 ] as const;
+
+const aiProviderPresetDetails: Record<
+  (typeof aiProviderPresets)[number]["name"],
+  { hint: string; tag: string }
+> = {
+  "OpenAI Compatible": { hint: "适合标准直连，所有 OpenAI 风格接口都按这套方式接入", tag: "默认" },
+  "Anthropic Native": { hint: "适合 Claude 原生接入，走 Anthropic messages 协议", tag: "原生" },
+};
 
 const settingsSections: Array<{
   id: string;
@@ -172,6 +153,7 @@ export function Settings() {
   const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
   const [selectedWechatAccountId, setSelectedWechatAccountId] = useState<string | null>(null);
   const [wechatForm, setWechatForm] = useState<WechatAccountForm>(emptyWechatAccountForm);
+  const [isWechatDialogOpen, setIsWechatDialogOpen] = useState(false);
   const [wechatLoading, setWechatLoading] = useState(false);
   const [wechatLoaded, setWechatLoaded] = useState(false);
   const [aiProvider, setAIProvider] = useState<AIProviderView | null>(null);
@@ -196,33 +178,103 @@ export function Settings() {
   }, []);
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (isProgrammaticScrollRef.current) return;
+    let frameId = 0;
+    const scrollRoot = document.getElementById("app-scroll-root");
 
-        const visibleEntries = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio);
+    const updateActiveSection = () => {
+      if (isProgrammaticScrollRef.current) return;
 
-        if (visibleEntries[0]?.target.id) {
-          setActiveSectionId(visibleEntries[0].target.id);
+      const activationOffset = 180;
+      let nextActiveSectionId = settingsSections[0]?.id ?? "";
+      const scrollRootTop = scrollRoot?.getBoundingClientRect().top ?? 0;
+
+      settingsSections.forEach((section) => {
+        const element = document.getElementById(section.id);
+        if (!element) return;
+
+        const elementTop = scrollRoot
+          ? element.getBoundingClientRect().top - scrollRootTop
+          : element.getBoundingClientRect().top;
+
+        if (elementTop - activationOffset <= 0) {
+          nextActiveSectionId = section.id;
         }
-      },
-      {
-        rootMargin: "-15% 0px -55% 0px",
-        threshold: [0.2, 0.35, 0.5, 0.75],
-      },
-    );
+      });
 
-    settingsSections.forEach((section) => {
-      const element = document.getElementById(section.id);
-      if (element) observer.observe(element);
-    });
+      setActiveSectionId((current) => (current === nextActiveSectionId ? current : nextActiveSectionId));
+    };
 
-    return () => observer.disconnect();
+    const handleScroll = () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateActiveSection);
+    };
+
+    updateActiveSection();
+    if (scrollRoot) {
+      scrollRoot.addEventListener("scroll", handleScroll, { passive: true });
+    } else {
+      window.addEventListener("scroll", handleScroll, { passive: true });
+    }
+    window.addEventListener("resize", handleScroll);
+
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+      if (scrollRoot) {
+        scrollRoot.removeEventListener("scroll", handleScroll);
+      } else {
+        window.removeEventListener("scroll", handleScroll);
+      }
+      window.removeEventListener("resize", handleScroll);
+    };
   }, []);
 
   const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(settings), [form, settings]);
+  const activeAiProviderPreset = useMemo(
+    () => aiProviderPresets.find((preset) => preset.baseUrl === aiProviderForm.baseUrl) ?? null,
+    [aiProviderForm.baseUrl],
+  );
+  const currentProtocolLabel = useMemo(() => {
+    if (activeAiProviderPreset) return activeAiProviderPreset.name;
+    if (!aiProviderForm.baseUrl.trim()) return "未选择";
+    return aiProviderForm.baseUrl.includes("anthropic") ? "Anthropic Native" : "OpenAI Compatible";
+  }, [activeAiProviderPreset, aiProviderForm.baseUrl]);
+  const aiProviderSourceLabel =
+    aiProvider?.source === "database" ? "页面配置" : aiProvider?.source === "environment" ? "环境变量" : "默认配置";
+  const aiProviderDraftModel = aiProviderForm.longformModel.trim() || aiProviderForm.model.trim() || "未设置";
+  const aiProviderSavedModel = aiProvider?.model?.trim() || "未设置";
+  const aiProviderKeyStatusLabel = aiProvider?.hasApiKey ? "已保存" : "未配置";
+  const aiProviderProtocolHint = currentProtocolLabel === "Anthropic Native"
+    ? "适合 Claude 原生接口"
+    : currentProtocolLabel === "OpenAI Compatible"
+      ? "适合大多数兼容模型服务"
+      : "先选择协议入口";
+  const aiProviderFormHints = useMemo(() => {
+    const hints: string[] = [];
+
+    if (!aiProviderForm.baseUrl.trim()) {
+      hints.push("需要填写可访问的模型接口 Base URL。");
+    } else if (!/\/v1\/?$/.test(aiProviderForm.baseUrl.trim())) {
+      hints.push("Base URL 通常应以 /v1 结尾，避免请求路径拼接错误。");
+    }
+
+    if (!aiProviderForm.fastModel.trim()) {
+      hints.push("快模型未填写时，标题、大纲、改写会回退到默认模型。");
+    }
+
+    if (!aiProviderForm.longformModel.trim()) {
+      hints.push("长文模型未填写时，正文、全文会回退到默认模型。");
+    }
+
+    if (
+      aiProviderForm.fastModel.trim() &&
+      aiProviderForm.model.trim() &&
+      aiProviderForm.fastModel.trim() === aiProviderForm.model.trim()
+    ) {
+      hints.push("快模型与默认模型相同是允许的，但速度收益可能不明显。");
+    }
+
+    return hints;
+  }, [aiProviderForm.baseUrl, aiProviderForm.fastModel, aiProviderForm.longformModel, aiProviderForm.model]);
 
   const updateField = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
     setForm((currentForm) => ({ ...currentForm, [key]: value }));
@@ -512,6 +564,7 @@ export function Settings() {
       contentSourceUrl: account.contentSourceUrl,
       setAsSelected: selectedWechatAccountId === account.id,
     });
+    setIsWechatDialogOpen(true);
   };
 
   const resetWechatForm = () => {
@@ -519,6 +572,16 @@ export function Settings() {
       ...emptyWechatAccountForm,
       setAsSelected: wechatAccounts.length === 0,
     });
+  };
+
+  const openNewWechatAccountDialog = () => {
+    resetWechatForm();
+    setIsWechatDialogOpen(true);
+  };
+
+  const closeWechatAccountDialog = () => {
+    setIsWechatDialogOpen(false);
+    resetWechatForm();
   };
 
   const handleSaveWechatAccount = async () => {
@@ -544,6 +607,7 @@ export function Settings() {
       setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
       setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
       resetWechatForm();
+      setIsWechatDialogOpen(false);
       setNotice("公众号账号已保存");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
@@ -574,6 +638,7 @@ export function Settings() {
       setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
       setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
       if (wechatForm.id === id) {
+        setIsWechatDialogOpen(false);
         resetWechatForm();
       }
       setNotice("公众号账号已删除");
@@ -653,7 +718,7 @@ export function Settings() {
     <div className="mx-auto max-w-[1320px]">
       <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="hidden xl:block">
-          <div className="sticky top-6 overflow-hidden rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f6f9ff_58%,#f9fbff_100%)] shadow-[0_24px_60px_rgba(15,23,42,0.08)]">
+          <div className="sticky top-6 overflow-hidden rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,#ffffff_0%,#f6f9ff_58%,#f9fbff_100%)] shadow-[0_24px_60px_rgba(15,23,42,0.08)] [transform:translateZ(0)] [backface-visibility:hidden] will-change-transform">
             <div className="border-b border-slate-100 px-5 pb-4 pt-5">
               <div className="text-[11px] uppercase tracking-[0.24em] text-blue-500/80">Quick Jump</div>
               <div className="mt-2 text-[18px] text-slate-900" style={{ fontWeight: 700 }}>快速定位</div>
@@ -713,14 +778,7 @@ export function Settings() {
             </div>
             <div className="w-full lg:w-auto">
               <div className="rounded-[24px] border border-slate-200/80 bg-white/90 p-3 shadow-[0_16px_40px_rgba(15,23,42,0.06)] backdrop-blur">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Settings</div>
-                    <div className={`mt-1 text-[13px] ${notice ? "text-green-600" : isDirty ? "text-amber-600" : "text-slate-600"}`} style={{ fontWeight: 600 }}>
-                      {notice || (isDirty ? "有未保存修改" : "当前配置已同步")}
-                    </div>
-                  </div>
-
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={handleRestoreDefaults}
@@ -818,74 +876,187 @@ export function Settings() {
       </Section>
 
       <Section id="ai-writer" title="AI 写作模型">
-        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-[13px] leading-6 text-blue-800">
-          API Key 只保存在服务端配置里。中转服务直接填写它提供的 OpenAI 兼容 Base URL、Key 和模型名；保存后，标题、大纲、正文生成会优先使用这里的模型。
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-6">
-          {aiProviderPresets.map((preset) => (
-            <button
-              key={preset.name}
-              type="button"
-              onClick={() => handleApplyAIProviderPreset(preset)}
-              className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-100"
-              style={{ fontWeight: 500 }}
-            >
-              {preset.name}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Field
-            label="接口地址 Base URL"
-            value={aiProviderForm.baseUrl}
-            onChange={(value) => handleAIProviderFormChange("baseUrl", value)}
-          />
-          <Field
-            label={aiProvider?.hasApiKey ? "API Key（留空则保持不变）" : "API Key"}
-            value={aiProviderForm.apiKey}
-            onChange={(value) => handleAIProviderFormChange("apiKey", value)}
-            type="password"
-          />
-          <Field
-            label="默认写作模型"
-            value={aiProviderForm.model}
-            onChange={(value) => handleAIProviderFormChange("model", value)}
-          />
-          <Field
-            label="快模型（标题 / 大纲 / 改写）"
-            value={aiProviderForm.fastModel}
-            onChange={(value) => handleAIProviderFormChange("fastModel", value)}
-          />
-          <Field
-            label="长文模型（正文 / 全文）"
-            value={aiProviderForm.longformModel}
-            onChange={(value) => handleAIProviderFormChange("longformModel", value)}
-          />
-          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-[12px] leading-6 text-gray-500">
-            <div className="text-gray-900" style={{ fontWeight: 600 }}>当前状态</div>
-            <div>来源：{aiProvider?.source === "database" ? "页面配置" : aiProvider?.source === "environment" ? "环境变量" : "默认配置"}</div>
-            <div>密钥：{aiProvider?.hasApiKey ? "已配置" : "未配置"}</div>
-            <div className="truncate">模型：{aiProvider?.model || aiProviderForm.model || "未设置"}</div>
+        <div className="rounded-[28px] border border-blue-100 bg-[linear-gradient(135deg,#eef5ff_0%,#f8fbff_62%,#ffffff_100%)] px-5 py-4 text-blue-900 shadow-[0_16px_40px_rgba(59,130,246,0.08)]">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="text-[12px] uppercase tracking-[0.18em] text-blue-500/80">Protocol Access</div>
+              <div className="mt-2 text-[18px] text-slate-900" style={{ fontWeight: 700 }}>先选协议，再配模型</div>
+              <div className="mt-1 text-[13px] leading-6 text-slate-600">
+                API Key 只保存在服务端。支持 `OpenAI Compatible` 和 `Anthropic Native` 两类入口，其它模型服务只要兼容其中一种协议也能接入。
+              </div>
+            </div>
+            <div className="grid min-w-[260px] gap-2 sm:grid-cols-2">
+              <div className="rounded-2xl border border-blue-200/70 bg-white/90 px-4 py-3">
+                <div className="text-[11px] text-slate-400">当前协议</div>
+                <div className="mt-1 text-[14px] text-slate-900" style={{ fontWeight: 700 }}>{currentProtocolLabel}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{aiProviderProtocolHint}</div>
+              </div>
+              <div className="rounded-2xl border border-blue-200/70 bg-white/90 px-4 py-3">
+                <div className="text-[11px] text-slate-400">预计生效</div>
+                <div className="mt-1 truncate text-[14px] text-slate-900" style={{ fontWeight: 700 }}>{aiProviderDraftModel}</div>
+                <div className="mt-1 text-[11px] text-slate-500">{activeAiProviderPreset ? "已匹配预设" : "手动配置中"}</div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid gap-4 xl:grid-cols-[0.88fr_1.28fr_0.84fr]">
+          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+            <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Protocol</div>
+            <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>选择协议入口</div>
+            <div className="mt-1 text-[12px] leading-5 text-gray-500">这里只保留两种主流协议模式：`OpenAI Compatible` 和 `Anthropic Native`。如果你的服务兼容其中一种协议，直接按对应入口配置即可。</div>
+
+            <div className="mt-4 space-y-2">
+              {aiProviderPresets.map((preset) => {
+                const isActive = activeAiProviderPreset?.name === preset.name;
+                const meta = aiProviderPresetDetails[preset.name];
+
+                return (
+                  <button
+                    key={preset.name}
+                    type="button"
+                    onClick={() => handleApplyAIProviderPreset(preset)}
+                    className={`w-full rounded-3xl border px-4 py-3.5 text-left transition-all ${
+                      isActive
+                        ? "border-blue-200 bg-blue-50 shadow-[0_14px_30px_rgba(59,130,246,0.10)]"
+                        : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className={`text-[14px] ${isActive ? "text-blue-700" : "text-gray-900"}`} style={{ fontWeight: 700 }}>
+                        {preset.name}
+                      </div>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] ${isActive ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"}`} style={{ fontWeight: 600 }}>
+                        {meta.tag}
+                      </span>
+                    </div>
+                    <div className={`mt-1 text-[12px] leading-5 ${isActive ? "text-blue-600" : "text-gray-500"}`}>
+                      {meta.hint}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-white p-4">
+              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Connection</div>
+              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>连接配置</div>
+              <div className="mt-1 text-[12px] leading-5 text-gray-500">先确认协议入口，再填写 Base URL 和 API Key，最后为不同写作任务分配模型。</div>
+
+              <div className="mt-4 grid gap-3">
+                <Field
+                  label="接口地址 Base URL"
+                  value={aiProviderForm.baseUrl}
+                  onChange={(value) => handleAIProviderFormChange("baseUrl", value)}
+                />
+                <Field
+                  label={aiProvider?.hasApiKey ? "API Key（已配置，留空则不修改）" : "API Key"}
+                  value={aiProviderForm.apiKey}
+                  onChange={(value) => handleAIProviderFormChange("apiKey", value)}
+                  type="password"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-100 bg-white p-4">
+              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Model Roles</div>
+              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>模型分工</div>
+              <div className="mt-1 text-[12px] leading-5 text-gray-500">默认模型负责兜底，快模型偏速度，长文模型偏正文质量。</div>
+
+              <div className="mt-4 grid gap-3">
+                <div>
+                  <Field
+                    label="默认写作模型"
+                    value={aiProviderForm.model}
+                    onChange={(value) => handleAIProviderFormChange("model", value)}
+                  />
+                  <div className="mt-1 text-[11px] text-gray-400">未指定任务时的默认模型，也作为其他模型留空时的回退选项。</div>
+                </div>
+                <div>
+                  <Field
+                    label="快模型（标题 / 大纲 / 改写）"
+                    value={aiProviderForm.fastModel}
+                    onChange={(value) => handleAIProviderFormChange("fastModel", value)}
+                  />
+                  <div className="mt-1 text-[11px] text-gray-400">适合标题灵感、结构规划和局部改写，优先考虑响应速度。</div>
+                </div>
+                <div>
+                  <Field
+                    label="长文模型（正文 / 全文）"
+                    value={aiProviderForm.longformModel}
+                    onChange={(value) => handleAIProviderFormChange("longformModel", value)}
+                  />
+                  <div className="mt-1 text-[11px] text-gray-400">适合正文与全文生成，优先考虑稳定性、信息密度和成稿质量。</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
+              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Runtime</div>
+              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>当前生效状态</div>
+
+              <div className="mt-4 grid gap-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                    <div className="text-[11px] text-gray-400">当前协议</div>
+                    <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{currentProtocolLabel}</div>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                    <div className="text-[11px] text-gray-400">当前来源</div>
+                    <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{aiProviderSourceLabel}</div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
+                  <div className="text-[11px] text-gray-400">保存后预计生效模型</div>
+                  <div className="mt-1 truncate text-[14px] text-gray-900" style={{ fontWeight: 700 }}>{aiProviderDraftModel}</div>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-[12px] leading-6 text-gray-500">
+                  <div><span className="text-gray-400">密钥状态：</span>{aiProviderKeyStatusLabel}</div>
+                  <div className="truncate"><span className="text-gray-400">当前已生效：</span>{aiProviderSavedModel}</div>
+                  <div><span className="text-gray-400">影响范围：</span>标题 / 大纲 / 正文 / 全文</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4">
+              <div className="text-[13px] text-amber-900" style={{ fontWeight: 700 }}>配置建议</div>
+              <div className="mt-2 space-y-2 text-[12px] leading-5 text-amber-900/80">
+                {aiProviderFormHints.length ? (
+                  aiProviderFormHints.map((hint) => (
+                    <div key={hint}>- {hint}</div>
+                  ))
+                ) : (
+                  <>
+                    <div>- 当前配置结构完整，保存后可以直接测试标题、大纲和正文链路。</div>
+                    <div>- 如果你希望成本更稳，可把快模型和默认模型设成同一个轻量模型。</div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
           <button
             type="button"
             onClick={() => void handleSaveAIProviderConfig()}
             disabled={aiProviderLoading}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
-            style={{ fontWeight: 500 }}
+            className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
+            style={{ fontWeight: 600 }}
           >
-            {aiProviderLoading ? "保存中" : "保存模型配置"}
+            {aiProviderLoading ? "保存中" : "保存并生效"}
           </button>
           <button
             type="button"
             onClick={() => void loadAIProviderConfig()}
             disabled={aiProviderLoading}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
             style={{ fontWeight: 500 }}
           >
             重新读取
@@ -894,20 +1065,20 @@ export function Settings() {
             type="button"
             onClick={() => void handleTestAIProviderConfig()}
             disabled={aiProviderLoading || aiProviderTesting}
-            className="rounded-lg border border-blue-200 px-4 py-2 text-[13px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+            className="rounded-xl border border-blue-200 px-4 py-2.5 text-[13px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
             style={{ fontWeight: 500 }}
           >
-            {aiProviderTesting ? "测试中" : "测试模型"}
+            {aiProviderTesting ? "测试中" : "测试连接"}
           </button>
           {aiProvider?.source === "database" ? (
             <button
               type="button"
               onClick={() => void handleDeleteAIProviderConfig()}
               disabled={aiProviderLoading}
-              className="rounded-lg border border-red-100 px-4 py-2 text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-60"
+              className="rounded-xl border border-red-100 px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-60"
               style={{ fontWeight: 500 }}
             >
-              使用环境变量
+              恢复环境变量
             </button>
           ) : null}
         </div>
@@ -980,127 +1151,143 @@ export function Settings() {
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] leading-6 text-emerald-800">
           AppSecret 只会走服务端保存，不会进入浏览器本地草稿和普通设置同步里。
         </div>
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>已配置公众号</div>
-              <button
-                type="button"
-                onClick={resetWechatForm}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
-                style={{ fontWeight: 500 }}
-              >
-                新增账号
-              </button>
-            </div>
-
-            {!wechatAccounts.length && wechatLoaded ? (
-              <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-[13px] text-gray-500">
-                还没有配置公众号账号。添加后就可以在排版页选择并推送到对应草稿箱。
-              </div>
-            ) : null}
-
-            <div className="space-y-3">
-              {wechatAccounts.map((account) => {
-                const isSelected = selectedWechatAccountId === account.id;
-
-                return (
-                  <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-emerald-200 bg-emerald-50/70" : "border-gray-200 bg-white"}`}>
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>{account.name}</span>
-                          {isSelected ? (
-                            <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] text-white">默认</span>
-                          ) : null}
-                        </div>
-                        <div className="mt-1 text-[12px] text-gray-500">AppID：{account.appIdMasked}</div>
-                        <div className="mt-1 text-[12px] text-gray-500">
-                          Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
-                        </div>
-                      </div>
-                      <div className="flex flex-nowrap items-center gap-2 lg:max-w-[46%] lg:justify-end">
-                        {!isSelected ? (
-                          <button
-                            type="button"
-                            onClick={() => void handleSelectWechatAccount(account.id)}
-                            aria-label="设为默认"
-                            title="设为默认"
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-                          >
-                            <Star className="h-4 w-4" />
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => handleEditWechatAccount(account)}
-                          aria-label="编辑"
-                          title="编辑"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteWechatAccount(account.id)}
-                          aria-label="删除"
-                          title="删除"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>已配置公众号</div>
+            <button
+              type="button"
+              onClick={openNewWechatAccountDialog}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
+              style={{ fontWeight: 500 }}
+            >
+              新增账号
+            </button>
           </div>
 
-          <div className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 space-y-3">
-            <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-              {wechatForm.id ? "编辑公众号账号" : "新增公众号账号"}
+          {!wechatAccounts.length && wechatLoaded ? (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-[13px] text-gray-500">
+              还没有配置公众号账号。添加后就可以在排版页选择并推送到对应草稿箱。
             </div>
-            <Field label="账号名称" value={wechatForm.name} onChange={(value) => handleWechatFormChange("name", value)} />
-            <Field label="AppID" value={wechatForm.appId} onChange={(value) => handleWechatFormChange("appId", value)} />
-            <Field
-              label={wechatForm.id ? "AppSecret（留空则保持不变）" : "AppSecret"}
-              value={wechatForm.appSecret}
-              onChange={(value) => handleWechatFormChange("appSecret", value)}
-              type="password"
-            />
-            <Field label="默认作者" value={wechatForm.defaultAuthor} onChange={(value) => handleWechatFormChange("defaultAuthor", value)} />
-            <label className="flex items-center gap-2 text-[12px] text-gray-600">
-              <input
-                type="checkbox"
-                checked={wechatForm.setAsSelected}
-                onChange={(event) => handleWechatFormChange("setAsSelected", event.target.checked)}
+          ) : null}
+
+          <div className="space-y-3">
+            {wechatAccounts.map((account) => {
+              const isSelected = selectedWechatAccountId === account.id;
+
+              return (
+                <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-emerald-200 bg-emerald-50/70" : "border-gray-200 bg-white"}`}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>{account.name}</span>
+                        {isSelected ? (
+                          <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] text-white">默认</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 text-[12px] text-gray-500">AppID：{account.appIdMasked}</div>
+                      <div className="mt-1 text-[12px] text-gray-500">
+                        Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
+                      </div>
+                    </div>
+                    <div className="flex flex-nowrap items-center gap-2 lg:max-w-[46%] lg:justify-end">
+                      {!isSelected ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleSelectWechatAccount(account.id)}
+                          aria-label="设为默认"
+                          title="设为默认"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          <Star className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => handleEditWechatAccount(account)}
+                        aria-label="编辑"
+                        title="编辑"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteWechatAccount(account.id)}
+                        aria-label="删除"
+                        title="删除"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <Dialog
+          open={isWechatDialogOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setIsWechatDialogOpen(true);
+              return;
+            }
+            closeWechatAccountDialog();
+          }}
+        >
+          <DialogContent className="max-w-[560px] rounded-[28px] border border-slate-200 bg-white p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <DialogHeader className="border-b border-slate-100 px-6 py-5">
+              <DialogTitle className="text-[20px] text-slate-900" style={{ fontWeight: 700 }}>
+                {wechatForm.id ? "编辑公众号账号" : "新增公众号账号"}
+              </DialogTitle>
+              <DialogDescription className="mt-1 text-[13px] leading-6 text-slate-500">
+                AppSecret 仅保存在服务端，保存后可在排版页直接选择并推送到对应草稿箱。
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 px-6 py-5">
+              <Field label="账号名称" value={wechatForm.name} onChange={(value) => handleWechatFormChange("name", value)} />
+              <Field label="AppID" value={wechatForm.appId} onChange={(value) => handleWechatFormChange("appId", value)} />
+              <Field
+                label={wechatForm.id ? "AppSecret（留空则保持不变）" : "AppSecret"}
+                value={wechatForm.appSecret}
+                onChange={(value) => handleWechatFormChange("appSecret", value)}
+                type="password"
               />
-              保存后设为默认公众号
-            </label>
-            <div className="flex items-center gap-2">
+              <Field label="默认作者" value={wechatForm.defaultAuthor} onChange={(value) => handleWechatFormChange("defaultAuthor", value)} />
+              <label className="flex items-center gap-2 text-[12px] text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={wechatForm.setAsSelected}
+                  onChange={(event) => handleWechatFormChange("setAsSelected", event.target.checked)}
+                />
+                保存后设为默认公众号
+              </label>
+            </div>
+
+            <DialogFooter className="border-t border-slate-100 px-6 py-4 sm:justify-between">
+              <button
+                type="button"
+                onClick={closeWechatAccountDialog}
+                className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
+                style={{ fontWeight: 500 }}
+              >
+                取消
+              </button>
               <button
                 type="button"
                 onClick={() => void handleSaveWechatAccount()}
                 disabled={wechatLoading}
-                className="rounded-lg bg-emerald-600 px-3 py-2 text-[12px] text-white hover:bg-emerald-700 disabled:bg-emerald-300"
-                style={{ fontWeight: 500 }}
+                className="rounded-xl bg-emerald-600 px-4 py-2.5 text-[13px] text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+                style={{ fontWeight: 600 }}
               >
-                {wechatForm.id ? "保存账号" : "添加账号"}
+                {wechatLoading ? "保存中" : wechatForm.id ? "保存账号" : "添加账号"}
               </button>
-              {wechatForm.id ? (
-                <button
-                  type="button"
-                  onClick={resetWechatForm}
-                  className="rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-600 hover:bg-gray-50"
-                  style={{ fontWeight: 500 }}
-                >
-                  取消编辑
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </Section>
 
       <Section id="content-preferences" title="内容偏好标签">
@@ -1175,6 +1362,7 @@ function TagEditor({
     onChange([...values, trimmedValue]);
     setDraftValue("");
   };
+  const canAddTag = Boolean(draftValue.trim()) && !values.includes(draftValue.trim());
 
   return (
     <div>
@@ -1205,9 +1393,15 @@ function TagEditor({
         <button
           type="button"
           onClick={addTag}
-          className="flex items-center gap-1 border border-dashed border-gray-300 px-2.5 py-2 rounded-full text-[12px] text-gray-400 hover:text-gray-700"
+          disabled={!canAddTag}
+          className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] transition-all ${
+            canAddTag
+              ? "border border-purple-200 bg-purple-50 text-purple-700 hover:border-purple-300 hover:bg-purple-100"
+              : "border border-gray-200 bg-gray-50 text-gray-300"
+          }`}
+          style={{ fontWeight: 600 }}
         >
-          <Plus className="w-3 h-3" /> 添加
+          <Plus className="h-3.5 w-3.5" /> 添加标签
         </button>
       </div>
     </div>

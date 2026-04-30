@@ -1,10 +1,11 @@
-import { detectArticleDomain } from "./content-domains";
+import { detectArticleDomain, type ArticleDomain } from "./content-domains";
 
 export type HotTopicItem = {
   id: string;
   title: string;
   source: string;
   sourceType: string;
+  domain?: ArticleDomain;
   heat: number;
   trend: string;
   time: string;

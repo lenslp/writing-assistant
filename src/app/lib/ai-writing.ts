@@ -34,6 +34,7 @@ type ModelSelection = {
   fallback?: string;
 };
 type RuntimeModelConfig = Partial<AIProviderSecret> | null;
+type ProviderProtocol = "openai" | "anthropic";
 
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_MODEL = "qwen3.5-plus";
@@ -47,6 +48,12 @@ const SOURCE_CONTEXT_DRAFTING_CONTENT_LIMIT = 1400;
 const MIN_GENERATED_BODY_WORDS = 650;
 const MIN_GENERATED_SUMMARY_WORDS = 36;
 const MIN_GENERATED_OUTLINE_ITEMS = 4;
+const TITLE_LENGTH_ADJUSTMENT_MAX_PASSES = 2;
+const BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES = 2;
+const BODY_REGENERATION_MAX_ATTEMPTS = 2;
+const BODY_WORD_COUNT_TOLERANCE_RATIO = 0.02;
+const BODY_WORD_COUNT_TOLERANCE_MIN = 15;
+const BODY_WORD_COUNT_TOLERANCE_MAX = 80;
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((?:data:[^)]+|[^)]+)\)/g;
 const IMAGE_PLACEHOLDER_PATTERN = /\[图片占位[^\]]*]/g;
 const AI_TONE_PREFIX_PATTERNS = [
@@ -220,6 +227,10 @@ function detectProvider(baseUrl: string) {
   return "OpenAI Compatible";
 }
 
+function detectProviderProtocol(baseUrl: string): ProviderProtocol {
+  return baseUrl.includes("anthropic") ? "anthropic" : "openai";
+}
+
 function getErrorDetails(error: unknown): string {
   if (error instanceof Error) {
     const cause =
@@ -281,6 +292,14 @@ function getModelRequestTimeoutMs(task: AIModelTask) {
   return 90000;
 }
 
+function getAnthropicMaxTokens(task: AIModelTask) {
+  if (task === "body" || task === "full") {
+    return 8192;
+  }
+
+  return 2048;
+}
+
 function toErrorCause(error: unknown) {
   return error instanceof Error ? error : undefined;
 }
@@ -299,6 +318,59 @@ export async function getAIProviderConfig(): Promise<ProviderConfig> {
     baseUrl,
     provider: detectProvider(baseUrl),
   };
+}
+
+function extractProviderResponseContent(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+
+  const anthropicContent = (payload as { content?: unknown }).content;
+  if (Array.isArray(anthropicContent)) {
+    const text = anthropicContent
+      .map((item) => {
+        if (!item || typeof item !== "object") return "";
+        if ("type" in item && item.type !== "text") return "";
+        if ("text" in item && typeof item.text === "string") return item.text;
+        return "";
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  const choices = (payload as { choices?: Array<{ message?: { content?: unknown }; text?: unknown }> }).choices;
+  const firstChoice = choices?.[0];
+  const content = firstChoice?.message?.content;
+
+  if (typeof content === "string") return content;
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "text" in item && typeof item.text === "string") {
+          return item.text;
+        }
+        return "";
+      })
+      .join("\n")
+      .trim();
+  }
+
+  if (typeof firstChoice?.text === "string") return firstChoice.text;
+
+  return "";
+}
+
+function extractProviderErrorMessage(payload: unknown, fallback: string) {
+  if (payload && typeof payload === "object" && "error" in payload) {
+    const error = (payload as { error?: unknown }).error;
+    if (error && typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+      return (error as { message: string }).message;
+    }
+  }
+
+  return fallback;
 }
 
 function getTaskSpecificModel(task: AIModelTask, runtimeConfig: RuntimeModelConfig) {
@@ -428,7 +500,6 @@ function polishTitleText(text: string) {
     .replace(/^[：:｜|\-\s]+/, "")
     .replace(/[：:｜|\-\s]+$/, "")
     .replace(/\s{2,}/g, " ")
-    .slice(0, MAX_TITLE_LENGTH)
     .replace(/[：:｜|\-\s，。、；！？,.!?]+$/g, "")
     .trim();
 }
@@ -541,6 +612,27 @@ function polishTitleCandidates(items: string[]) {
   return diversifyTitleCandidates(cleaned).slice(0, 5);
 }
 
+function getTitleLength(title: string) {
+  return title.replace(/\s+/g, "").length;
+}
+
+function isTitleWithinLimit(title: string) {
+  return getTitleLength(title) <= MAX_TITLE_LENGTH;
+}
+
+function getTitleLengthIssue(title: string, titleCandidates: string[]) {
+  if (!isTitleWithinLimit(title)) {
+    return `主标题过长，请控制在 ${MAX_TITLE_LENGTH} 字内。`;
+  }
+
+  const overlongCandidate = titleCandidates.find((item) => !isTitleWithinLimit(item));
+  if (overlongCandidate) {
+    return `标题候选过长，请控制在 ${MAX_TITLE_LENGTH} 字内。`;
+  }
+
+  return "";
+}
+
 function detectTitleArchetype(title: string) {
   if (/[？?]$/.test(title) || /为什么|怎么|凭什么|到底|究竟/.test(title)) return "question";
   if (/不是.+而是|别再|先别|很多人都/.test(title)) return "contrast";
@@ -612,18 +704,19 @@ function selectPrimaryTitle(preferredTitle: string, titleCandidates: string[], f
   const candidates = Array.from(
     new Set([preferredTitle, ...titleCandidates, fallbackTitle].map((item) => polishTitleText(item)).filter(Boolean)),
   );
+  const compliantCandidates = candidates.filter((item) => isTitleWithinLimit(item));
+
+  if (compliantCandidates.length) {
+    return compliantCandidates.sort((left, right) => scoreTitleNaturalness(right) - scoreTitleNaturalness(left))[0] ?? fallbackTitle;
+  }
 
   return candidates.sort((left, right) => scoreTitleNaturalness(right) - scoreTitleNaturalness(left))[0] ?? fallbackTitle;
 }
 
-function getTitleCandidateDiversityIssue(titleCandidates: string[], topicTitle: string) {
+function getTitleCandidateStructureIssue(titleCandidates: string[], topicTitle: string) {
   const normalized = Array.from(new Set(titleCandidates.map((item) => item.trim()).filter(Boolean)));
   if (normalized.length < 4) {
     return "标题候选太少，句式不够分散，请重新生成。";
-  }
-
-  if (normalized.some((item) => item.replace(/\s+/g, "").length > MAX_TITLE_LENGTH)) {
-    return `标题过长，请控制在 ${MAX_TITLE_LENGTH} 字内。`;
   }
 
   const archetypeCount = new Set(normalized.map((item) => detectTitleArchetype(item))).size;
@@ -649,7 +742,7 @@ function getTitleCandidateDiversityIssue(titleCandidates: string[], topicTitle: 
 }
 
 function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: string) {
-  const issue = getTitleCandidateDiversityIssue(titleCandidates, topicTitle);
+  const issue = getTitleCandidateStructureIssue(titleCandidates, topicTitle);
   if (issue) {
     throw new Error(issue);
   }
@@ -657,7 +750,7 @@ function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: st
 
 function resolveSafeTitleCandidates(aiCandidates: string[], fallbackCandidates: string[], topicTitle: string) {
   const normalizedAiCandidates = polishTitleCandidates(aiCandidates);
-  if (!getTitleCandidateDiversityIssue(normalizedAiCandidates, topicTitle)) {
+  if (!getTitleCandidateStructureIssue(normalizedAiCandidates, topicTitle)) {
     return normalizedAiCandidates;
   }
 
@@ -667,6 +760,78 @@ function resolveSafeTitleCandidates(aiCandidates: string[], fallbackCandidates: 
   }
 
   return normalizedAiCandidates;
+}
+
+function buildTitleAdjustmentSystemPrompt(tone: string) {
+  return [
+    "你是一位资深中文公众号编辑，专门负责把标题压缩到指定长度，同时保留传播感。",
+    "不要简单截断，不要只删掉句尾几个字，要重写成自然完整、适合传播的公众号标题。",
+    "必须保留原来的核心事件、主要判断和读者价值感。",
+    "",
+    "## 写作规则",
+    ...getRulesForPhase("planning").map((rule, index) => `${index + 1}. ${rule}`),
+    "",
+    ...buildTonePromptSections(tone).system,
+    "请严格返回 JSON，不要额外解释。",
+  ].join("\n");
+}
+
+function buildTitleAdjustmentUserPrompt(
+  request: AIWriteGenerateRequest,
+  result: Pick<AIWriteResult, "title" | "titleCandidates" | "selectedAngle" | "summary" | "outline">,
+) {
+  return [
+    "任务：把当前标题压缩到指定字数上限。",
+    ...buildSharedTaskContext(request),
+    `当前主标题：${result.title}`,
+    `当前标题候选：${result.titleCandidates.join(" | ")}`,
+    result.summary ? `摘要参考：${result.summary}` : "",
+    result.outline.length ? `大纲参考：${result.outline.join(" | ")}` : "",
+    `硬性要求：主标题和每个标题候选都必须不超过 ${MAX_TITLE_LENGTH} 字。`,
+    "不要简单截断，不要省略成半句话，不要丢掉事件主体或关键判断。",
+    "请保留 5 个标题候选，并保持句式尽量分散。",
+    '请只返回 JSON：{"title":"","titleCandidates":[],"selectedAngle":"","summary":"","outline":[],"body":""}',
+  ].filter(Boolean).join("\n");
+}
+
+async function adjustTitlesToLength<T extends AIWriteResult>(
+  request: AIWriteGenerateRequest,
+  result: T,
+) {
+  let current = result;
+
+  for (let pass = 0; pass < TITLE_LENGTH_ADJUSTMENT_MAX_PASSES; pass += 1) {
+    if (!getTitleLengthIssue(current.title, current.titleCandidates)) {
+      return current;
+    }
+
+    const { content } = await callCompatibleModel({
+      systemPrompt: buildTitleAdjustmentSystemPrompt(request.tone),
+      userPrompt: buildTitleAdjustmentUserPrompt(request, current),
+      temperature: 0.45,
+      task: "title",
+    });
+    const parsed = extractJsonPayload(content);
+    const nextCandidates = resolveSafeTitleCandidates(
+      normalizeStringList(parsed.titleCandidates, current.titleCandidates),
+      current.titleCandidates,
+      request.topic.title,
+    );
+    assertTitleCandidateDiversity(nextCandidates, request.topic.title);
+
+    current = {
+      ...current,
+      title: selectPrimaryTitle(normalizeText(parsed.title, current.title), nextCandidates, current.title),
+      titleCandidates: nextCandidates.length ? nextCandidates : current.titleCandidates,
+      selectedAngle: normalizeSelectedAngle(parsed.selectedAngle, current.selectedAngle),
+    };
+  }
+
+  if (getTitleLengthIssue(current.title, current.titleCandidates)) {
+    throw new Error(`AI 未能把标题控制在 ${MAX_TITLE_LENGTH} 字内，请重试。`);
+  }
+
+  return current;
 }
 
 function assertOutlineDiversity(outline: string[]) {
@@ -969,30 +1134,7 @@ function extractJsonPayload(text: string): JsonRecord {
 }
 
 function extractMessageContent(payload: unknown) {
-  if (!payload || typeof payload !== "object") return "";
-
-  const choices = (payload as { choices?: Array<{ message?: { content?: unknown }; text?: unknown }> }).choices;
-  const firstChoice = choices?.[0];
-  const content = firstChoice?.message?.content;
-
-  if (typeof content === "string") return content;
-
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => {
-        if (typeof item === "string") return item;
-        if (item && typeof item === "object" && "text" in item && typeof item.text === "string") {
-          return item.text;
-        }
-        return "";
-      })
-      .join("\n")
-      .trim();
-  }
-
-  if (typeof firstChoice?.text === "string") return firstChoice.text;
-
-  return "";
+  return extractProviderResponseContent(payload);
 }
 
 function buildGenerateSystemPrompt(scope: AIWriteGenerateRequest["scope"], tone: string) {
@@ -1097,6 +1239,7 @@ function buildSharedTaskContext(request: {
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
   const tonePrompt = buildTonePromptSections(request.tone);
+  const wordCount = buildWordCountGuidance(request.targetWordCount);
 
   return [
     `主题：${request.topic.title}`,
@@ -1108,7 +1251,7 @@ function buildSharedTaskContext(request: {
     `选题理由：${request.topic.reason}`,
     `文章类型：${request.articleType}`,
     `目标读者：${request.targetReader}`,
-    `目标字数：约 ${request.targetWordCount} 字`,
+    `目标字数：严格控制在 ${wordCount.normalized} 字，允许误差不超过 ${wordCount.tolerance} 字`,
     ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `内容领域：${request.settings.contentAreas.join("、")}`,
@@ -1125,14 +1268,87 @@ function normalizeTargetWordCount(targetWordCount: number) {
 
 function buildWordCountGuidance(targetWordCount: number) {
   const normalized = normalizeTargetWordCount(targetWordCount);
-  const min = Math.max(300, Math.round(normalized * 0.85));
-  const max = Math.round(normalized * 1.15);
+  const tolerance = Math.min(
+    BODY_WORD_COUNT_TOLERANCE_MAX,
+    Math.max(BODY_WORD_COUNT_TOLERANCE_MIN, Math.round(normalized * BODY_WORD_COUNT_TOLERANCE_RATIO)),
+  );
+  const min = Math.max(300, normalized - tolerance);
+  const max = normalized + tolerance;
 
   return {
     normalized,
+    tolerance,
     min,
     max,
-    sentence: `正文目标字数约 ${normalized} 字，可上下浮动到 ${min}-${max} 字。`,
+    sentence: `正文目标字数严格为 ${normalized} 字，允许误差不超过 ${tolerance} 字（即 ${min}-${max} 字）。`,
+  };
+}
+
+function getBodyWordCountMetrics(body: string, targetWordCount: number) {
+  const guidance = buildWordCountGuidance(targetWordCount);
+  const actual = calculateWords(stripNonArticleText(body));
+
+  return {
+    ...guidance,
+    target: guidance.normalized,
+    actual,
+    isTooShort: actual < guidance.min,
+    isTooLong: actual > guidance.max,
+  };
+}
+
+function buildWordCountAdjustmentSystemPrompt(tone: string) {
+  return [
+    "你是一位资深中文公众号编辑，专门负责在不跑题的前提下校准正文长度。",
+    "请输出适合直接发布的公众号正文，不要解释改动，不要列点说明你做了什么。",
+    "严格保持原文的核心判断、结构、小标题方向和事实边界，不要编造新事实、数据、引用、采访和人物故事。",
+    "如果需要压缩，就删掉重复表达、空话、弱转折和可有可无的例子；如果需要补足，就补充必要解释、过渡、影响和建议，但不要发散。",
+    "",
+    "## 写作规则",
+    ...getRulesForPhase("drafting").map((rule, index) => `${index + 1}. ${rule}`),
+    "",
+    ...buildTonePromptSections(tone).system,
+    "请严格返回 JSON，不要额外解释。",
+  ].join("\n");
+}
+
+function buildWordCountAdjustmentUserPrompt(
+  request: AIWriteGenerateRequest,
+  plan: AIArticlePlan,
+  body: string,
+) {
+  const metrics = getBodyWordCountMetrics(body, request.targetWordCount);
+  const adjustmentInstruction = metrics.isTooLong
+    ? `当前正文约 ${metrics.actual} 字，已经超出目标值 ${metrics.target} 字。请在不跑题的前提下压缩到 ${metrics.min}-${metrics.max} 字，且尽量直接落到 ${metrics.target} 字附近。`
+    : `当前正文约 ${metrics.actual} 字，低于目标值 ${metrics.target} 字。请在不跑题的前提下补足到 ${metrics.min}-${metrics.max} 字，且尽量直接落到 ${metrics.target} 字附近。`;
+
+  return [
+    "任务：校准公众号正文长度，让它严格贴近设定字数。",
+    ...buildSharedTaskContext(request),
+    `最终标题：${plan.title}`,
+    `摘要：${plan.summary}`,
+    `写作角度：${plan.selectedAngle}`,
+    `大纲：${plan.outline.join(" | ")}`,
+    adjustmentInstruction,
+    `硬性要求：最终正文必须落在 ${metrics.min}-${metrics.max} 字之间，并尽量以 ${metrics.target} 字为准。`,
+    `${metrics.sentence} 请保留 ## 小标题结构。`,
+    "只调整正文，不要改成大纲，不要输出写作说明。",
+    "如果压缩，优先删减重复表述、空泛判断、可省略的过渡句和冗长例子。",
+    "如果补足，优先补充因果解释、影响对象、实际后果和结尾建议，不要平铺新观点。",
+    `待校准正文：\n${body}`,
+    '请只返回 JSON：{"transformedText":""}',
+  ].filter(Boolean).join("\n");
+}
+
+function buildWordCountStatus(body: string, targetWordCount: number, adjusted: boolean) {
+  const metrics = getBodyWordCountMetrics(body, targetWordCount);
+  return {
+    actual: metrics.actual,
+    min: metrics.min,
+    max: metrics.max,
+    target: metrics.normalized,
+    adjusted,
+    inRange: !metrics.isTooShort && !metrics.isTooLong,
   };
 }
 
@@ -1250,6 +1466,8 @@ function buildDraftingUserPrompt(
     `写作角度：${plan.selectedAngle}`,
     `大纲：${plan.outline.join(" | ")}`,
     `${wordCount.sentence} 使用 ## 小标题分节。`,
+    `硬性要求：最终正文必须落在 ${wordCount.min}-${wordCount.max} 字之间，并尽量直接命中 ${wordCount.normalized} 字。不能明显超出，也不能明显不足。`,
+    "如果内容过多，优先压缩重复解释、弱信息和套话；如果内容不足，优先补充因果、影响和建议，但不要发散到无关新话题。",
     "正文至少要回答 4 个层次中的 3 个：这件事为什么发生、真正变化在哪里、对谁影响最大、接下来会出现什么后果。",
     "文中至少写出一个容易被忽略的代价、门槛或风险，不要只写机会和表面热度。",
     "结尾给出 2-3 条可执行建议，并自然收束到互动 CTA。",
@@ -1315,6 +1533,132 @@ function buildTransformUserPrompt(request: AIWriteTransformRequest) {
   ].filter(Boolean).join("\n");
 }
 
+async function adjustBodyToTargetWordCount(
+  request: AIWriteGenerateRequest,
+  plan: AIArticlePlan,
+  body: string,
+) {
+  const initialMetrics = getBodyWordCountMetrics(body, request.targetWordCount);
+  if (!initialMetrics.isTooShort && !initialMetrics.isTooLong) {
+    return null;
+  }
+
+  let currentBody = body;
+  let currentMetrics = initialMetrics;
+  const usedModels: string[] = [];
+  let provider = "";
+
+  for (let pass = 0; pass < BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES; pass += 1) {
+    const { config, model, content } = await callCompatibleModel({
+      systemPrompt: buildWordCountAdjustmentSystemPrompt(request.tone),
+      userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, currentBody),
+      temperature: 0.4,
+      task: "transform",
+    });
+
+    const parsed = extractJsonPayload(content);
+    const adjustedBody = polishBodyText(
+      normalizeBodyText(parsed.transformedText, content.trim() || currentBody),
+    );
+    const adjustedMetrics = getBodyWordCountMetrics(adjustedBody, request.targetWordCount);
+    const becameCloser =
+      Math.abs(adjustedMetrics.actual - adjustedMetrics.normalized) < Math.abs(currentMetrics.actual - currentMetrics.normalized);
+    const reachedTarget = !adjustedMetrics.isTooShort && !adjustedMetrics.isTooLong;
+
+    if (!becameCloser && !reachedTarget) {
+      break;
+    }
+
+    assertGeneratedBodyQuality(adjustedBody, currentBody);
+    currentBody = adjustedBody;
+    currentMetrics = adjustedMetrics;
+    usedModels.push(model);
+    provider = config.provider;
+
+    if (reachedTarget) {
+      break;
+    }
+  }
+
+  if (usedModels.length === 0) {
+    return null;
+  }
+
+  return {
+    body: currentBody,
+    model: usedModels.join(" -> "),
+    provider,
+  };
+}
+
+async function draftBodyWithStrictWordCount(
+  request: AIWriteGenerateRequest,
+  plan: AIArticlePlan,
+) {
+  let lastResult: AIWriteResult | null = null;
+  let lastWordCountStatus = null as ReturnType<typeof buildWordCountStatus> | null;
+  const modelTrail: string[] = [];
+  let provider = "";
+
+  for (let attempt = 0; attempt < BODY_REGENERATION_MAX_ATTEMPTS; attempt += 1) {
+    const draftingResponse = await callCompatibleModel({
+      systemPrompt: buildDraftingSystemPrompt(request.tone),
+      userPrompt: buildDraftingUserPrompt(request, plan),
+      temperature: attempt === 0 ? 0.72 : 0.62,
+      task: request.scope,
+    });
+
+    provider = draftingResponse.config.provider;
+    const draftedResult = mergeBodyWithPlan(
+      draftingResponse.content,
+      plan,
+      request.topic,
+      request.draft?.body?.trim() ?? "",
+    );
+    const adjustedBodyResult = await adjustBodyToTargetWordCount(request, plan, draftedResult.body);
+    const result = adjustedBodyResult
+      ? {
+          ...draftedResult,
+          body: adjustedBodyResult.body,
+        }
+      : draftedResult;
+    const wordCountStatus = buildWordCountStatus(result.body, request.targetWordCount, Boolean(adjustedBodyResult));
+
+    modelTrail.push(
+      adjustedBodyResult?.model
+        ? `${draftingResponse.model} -> ${adjustedBodyResult.model}`
+        : draftingResponse.model,
+    );
+
+    lastResult = result;
+    lastWordCountStatus = wordCountStatus;
+
+    if (wordCountStatus.inRange) {
+      return {
+        provider,
+        model: modelTrail.join(" => "),
+        result,
+        wordCountStatus,
+      };
+    }
+  }
+
+  if (!lastResult || !lastWordCountStatus) {
+    throw new Error("AI 未生成可用正文，请重新生成。");
+  }
+
+  console.warn("AI body word count did not converge to target", {
+    target: lastWordCountStatus.target,
+    actual: lastWordCountStatus.actual,
+    min: lastWordCountStatus.min,
+    max: lastWordCountStatus.max,
+  });
+
+  throw new Error(
+    "AI 未能按设定字数生成正文，请重试。",
+  );
+}
+
 async function callCompatibleModel({
   systemPrompt,
   userPrompt,
@@ -1337,24 +1681,43 @@ async function callCompatibleModel({
 
   let response: Response | null = null;
   let currentModel = model;
+  const protocol = detectProviderProtocol(config.baseUrl);
 
   for (let attempt = 0; attempt <= MODEL_REQUEST_MAX_RETRIES; attempt += 1) {
     try {
-      response = await fetch(`${config.baseUrl}/chat/completions`, {
+      response = await fetch(protocol === "anthropic" ? `${config.baseUrl}/messages` : `${config.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Type": "application/json",
-        },
+        headers: protocol === "anthropic"
+          ? {
+              "Content-Type": "application/json",
+              "x-api-key": config.apiKey,
+              "anthropic-version": "2023-06-01",
+            }
+          : {
+              Authorization: `Bearer ${config.apiKey}`,
+              "Content-Type": "application/json",
+            },
         signal: AbortSignal.timeout(getModelRequestTimeoutMs(task)),
-        body: JSON.stringify({
-          model: currentModel,
-          temperature,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-        }),
+        body: JSON.stringify(
+          protocol === "anthropic"
+            ? {
+                model: currentModel,
+                temperature,
+                max_tokens: getAnthropicMaxTokens(task),
+                system: systemPrompt,
+                messages: [
+                  { role: "user", content: userPrompt },
+                ],
+              }
+            : {
+                model: currentModel,
+                temperature,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: userPrompt },
+                ],
+              },
+        ),
       });
       break;
     } catch (error) {
@@ -1390,10 +1753,7 @@ async function callCompatibleModel({
   const content = extractMessageContent(payload);
 
   if (!response.ok) {
-    const errorMessage =
-      (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "object" && payload.error && "message" in payload.error && typeof payload.error.message === "string"
-        ? payload.error.message
-        : "") || `AI request failed with status ${response.status}`;
+    const errorMessage = extractProviderErrorMessage(payload, `AI request failed with status ${response.status}`);
     throw new Error(errorMessage);
   }
 
@@ -1429,6 +1789,11 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
 
   if (request.scope !== "title") {
     assertOutlineDiversity(outline);
+  }
+
+  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
+  if (titleLengthIssue) {
+    throw new Error(titleLengthIssue);
   }
 
   if (request.scope === "body" || request.scope === "full") {
@@ -1485,6 +1850,11 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
 
+  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
+  if (titleLengthIssue) {
+    throw new Error(titleLengthIssue);
+  }
+
   assertOutlineDiversity(outline);
   assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline);
   assertResultConsistency(request.topic, { summary, outline, body: "" });
@@ -1515,12 +1885,18 @@ function mergeBodyWithPlan(
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, plan.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, plan.body));
 
+  const title = selectPrimaryTitle(normalizeText(parsed.title, plan.title), titleCandidates, plan.title);
+  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
+  if (titleLengthIssue) {
+    throw new Error(titleLengthIssue);
+  }
+
   assertOutlineDiversity(outline);
   assertGeneratedBodyQuality(body, fallbackBody || plan.body);
   assertResultConsistency(topic, { summary: plan.summary, outline: plan.outline, body }, { requireBody: true });
 
   return {
-    title: selectPrimaryTitle(normalizeText(parsed.title, plan.title), titleCandidates, plan.title),
+    title,
     titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(plan.titleCandidates),
     selectedAngle: normalizeSelectedAngle(parsed.selectedAngle, plan.selectedAngle),
     summary: polishSummaryText(normalizeText(parsed.summary, plan.summary)),
@@ -1583,18 +1959,16 @@ export async function generateWechatArticle(request: AIWriteGenerateRequest) {
     const plan = reusedPlan
       ? reusedPlan
       : mergePlanningResult(request, planningResponse ? planningResponse.content : "");
-
-    const draftingResponse = await callCompatibleModel({
-      systemPrompt: buildDraftingSystemPrompt(request.tone),
-      userPrompt: buildDraftingUserPrompt(request, plan),
-      temperature: 0.74,
-      task: request.scope,
-    });
+    const bodyGeneration = await draftBodyWithStrictWordCount(request, plan);
+    assertResultConsistency(request.topic, { summary: bodyGeneration.result.summary, outline: bodyGeneration.result.outline, body: bodyGeneration.result.body }, { requireBody: true });
 
     return {
-      provider: draftingResponse.config.provider,
-      model: planningResponse ? `${planningResponse.model} -> ${draftingResponse.model}` : draftingResponse.model,
-      result: mergeBodyWithPlan(draftingResponse.content, plan, request.topic, request.draft?.body?.trim() ?? ""),
+      provider: bodyGeneration.provider,
+      model: planningResponse
+        ? `${planningResponse.model} -> ${bodyGeneration.model}`
+        : bodyGeneration.model,
+      result: bodyGeneration.result,
+      wordCountStatus: bodyGeneration.wordCountStatus,
     };
   }
 
@@ -1604,11 +1978,17 @@ export async function generateWechatArticle(request: AIWriteGenerateRequest) {
     temperature: request.scope === "title" ? 0.82 : 0.7,
     task: request.scope,
   });
+  const mergedResult = mergeGeneratedResult(request, content);
+  const adjustedResult =
+    request.scope === "title" || request.scope === "outline"
+      ? await adjustTitlesToLength(request, mergedResult)
+      : mergedResult;
 
   return {
     provider: config.provider,
     model,
-    result: mergeGeneratedResult(request, content),
+    result: adjustedResult,
+    wordCountStatus: undefined,
   };
 }
 

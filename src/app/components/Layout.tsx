@@ -151,7 +151,7 @@ export function Layout({ children }: LayoutProps) {
           </div>
         </header>
 
-        <main className={`flex-1 min-h-0 ${isFullWidth ? "overflow-hidden" : "overflow-auto p-6"}`}>
+        <main id="app-scroll-root" className={`flex-1 min-h-0 ${isFullWidth ? "overflow-hidden" : "overflow-auto p-6"}`}>
           {children}
         </main>
       </div>
