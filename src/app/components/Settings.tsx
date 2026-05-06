@@ -1302,16 +1302,8 @@ export function Settings() {
               </div>
             </div>
 
-            <DialogFooter className="absolute inset-x-0 bottom-0 border-t border-slate-100 bg-white/95 px-6 py-4 backdrop-blur sm:justify-between">
+            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-between border-t border-slate-100 bg-white/95 px-6 py-4 backdrop-blur">
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={closeAIProviderDialog}
-                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
-                  style={{ fontWeight: 500 }}
-                >
-                  取消
-                </button>
                 <button
                   type="button"
                   onClick={() => void handleTestAIProviderConfig()}
@@ -1322,15 +1314,25 @@ export function Settings() {
                   {aiProviderTesting ? "测试中" : "测试连接"}
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleSaveAIProviderConfig()}
-                disabled={aiProviderLoading}
-                className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
-                style={{ fontWeight: 600 }}
-              >
-                {aiProviderLoading ? "保存中" : aiProviderForm.id ? "保存配置" : "添加配置"}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeAIProviderDialog}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
+                  style={{ fontWeight: 500 }}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveAIProviderConfig()}
+                  disabled={aiProviderLoading}
+                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
+                  style={{ fontWeight: 600 }}
+                >
+                  {aiProviderLoading ? "保存中" : aiProviderForm.id ? "保存配置" : "添加配置"}
+                </button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1518,24 +1520,26 @@ export function Settings() {
               </div>
             </div>
 
-            <DialogFooter className="absolute inset-x-0 bottom-0 border-t border-slate-100 bg-white/95 px-6 py-4 backdrop-blur sm:justify-between">
-              <button
-                type="button"
-                onClick={closeAIImageProviderDialog}
-                className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
-                style={{ fontWeight: 500 }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveAIImageProviderConfig()}
-                disabled={aiImageProviderLoading}
-                className="rounded-xl bg-amber-500 px-4 py-2.5 text-[13px] text-white hover:bg-amber-600 disabled:bg-amber-300"
-                style={{ fontWeight: 600 }}
-              >
-                {aiImageProviderLoading ? "保存中" : aiImageProviderForm.id ? "保存配置" : "添加配置"}
-              </button>
+            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-end border-t border-slate-100 bg-white/95 px-6 py-4 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeAIImageProviderDialog}
+                  className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
+                  style={{ fontWeight: 500 }}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveAIImageProviderConfig()}
+                  disabled={aiImageProviderLoading}
+                  className="rounded-xl bg-amber-500 px-4 py-2.5 text-[13px] text-white hover:bg-amber-600 disabled:bg-amber-300"
+                  style={{ fontWeight: 600 }}
+                >
+                  {aiImageProviderLoading ? "保存中" : aiImageProviderForm.id ? "保存配置" : "添加配置"}
+                </button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
