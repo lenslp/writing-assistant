@@ -66,7 +66,7 @@ const domainUiThemes: Record<
 };
 
 const domainArticleTypeOptions: Record<keyof typeof domainConfigs, string[]> = {
-  科技: ["趋势解读", "观点文", "产品解读", "盘点文"],
+  科技: ["项目推荐", "产品解读", "趋势解读", "观点文", "盘点文"],
   教育: ["方法文", "解读文", "指南文", "观点文"],
   旅游: ["攻略文", "体验文", "清单文", "路线文", "小众推荐", "城市指南", "季节游"],
   情感: ["共鸣文", "故事文", "观点文", "关系解读"],
@@ -166,6 +166,10 @@ export function WritingPage() {
     [activeTopic, selectedDomain],
   );
   const activeDomainConfig = useMemo(() => domainConfigs[selectedDomain], [selectedDomain]);
+  const isGithubTrendingTopic = useMemo(
+    () => Boolean(topicForWriting?.source?.includes("GitHub Trending")),
+    [topicForWriting],
+  );
 
   const fallbackOutline = useMemo(() => (topicForWriting ? createOutline(topicForWriting) : []), [topicForWriting]);
   const fallbackSummary = useMemo(() => (topicForWriting ? createSummary(topicForWriting, settings) : ""), [settings, topicForWriting]);
@@ -232,6 +236,11 @@ export function WritingPage() {
       setArticleType(articleTypeOptions[0]);
     }
   }, [articleType, articleTypeOptions]);
+
+  useEffect(() => {
+    if (!isGithubTrendingTopic) return;
+    setArticleType((current) => (current === "观点文" || current === "趋势解读" || !current ? "项目推荐" : current));
+  }, [isGithubTrendingTopic]);
 
   useEffect(() => {
     if (!toneOptions.length) return;
@@ -447,6 +456,7 @@ export function WritingPage() {
           summary: result.summary,
           body: result.body,
           domain: selectedDomain,
+          source: topicForWriting?.source || targetDraft.source || "",
           query,
         }),
       });
@@ -544,6 +554,60 @@ export function WritingPage() {
     }
   }
 
+  async function retryGithubTrendingImageInsert(targetDraft: Draft, result: AIWriteResult) {
+    if (!topicForWriting?.source?.includes("GitHub Trending") || !result.body.trim()) {
+      return result;
+    }
+
+    try {
+      const response = await fetch("/api/images/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: result.title,
+          summary: result.summary,
+          body: result.body,
+          domain: selectedDomain,
+          source: topicForWriting.source,
+          query: `${result.title} ${targetDraft.topic}`.trim(),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      const imageUrl = typeof payload?.url === "string" ? payload.url.trim() : "";
+      if (!response.ok || !imageUrl) {
+        return result;
+      }
+
+      const nextBody = insertAutoImageIntoBody(result.body, imageUrl, buildAutoImageCaption({
+        title: result.title,
+        summary: result.summary,
+        domain: selectedDomain,
+      }));
+
+      if (nextBody === result.body) {
+        return result;
+      }
+
+      setBody(nextBody);
+      updateDraft(targetDraft.id, {
+        domain: selectedDomain,
+        title: result.title,
+        titleCandidates: result.titleCandidates,
+        selectedAngle: result.selectedAngle,
+        summary: result.summary,
+        outline: result.outline,
+        body: nextBody,
+        status: targetDraft.status === "已发布" ? "已发布" : "待修改",
+      });
+
+      return { ...result, body: nextBody };
+    } catch {
+      return result;
+    }
+  }
+
   function resetGenerationState() {
     requestAbortControllerRef.current = null;
     setIsGenerating(false);
@@ -633,9 +697,17 @@ export function WritingPage() {
 
       void maybeAutoInsertImage(targetDraft, generatedResult, scope)
         .then((finalResult) => {
-          if (finalResult.body === generatedResult.body) return;
-          setSaveNotice(buildGenerationSuccessNotice(scope, label, true, payload.wordCountStatus));
-          window.setTimeout(() => setSaveNotice(""), 2400);
+          if (finalResult.body !== generatedResult.body) {
+            setSaveNotice(buildGenerationSuccessNotice(scope, label, true, payload.wordCountStatus));
+            window.setTimeout(() => setSaveNotice(""), 2400);
+            return;
+          }
+
+          void retryGithubTrendingImageInsert(targetDraft, generatedResult).then((retryResult) => {
+            if (retryResult.body === generatedResult.body) return;
+            setSaveNotice(buildGenerationSuccessNotice(scope, label, true, payload.wordCountStatus));
+            window.setTimeout(() => setSaveNotice(""), 2400);
+          });
         })
         .catch(() => {
           // Ignore background image insertion failures to keep generation responsive.

@@ -47,7 +47,8 @@ const SOURCE_CONTEXT_PLANNING_CONTENT_LIMIT = 900;
 const SOURCE_CONTEXT_DRAFTING_CONTENT_LIMIT = 1400;
 const MIN_GENERATED_BODY_WORDS = 650;
 const MIN_GENERATED_SUMMARY_WORDS = 36;
-const MIN_GENERATED_OUTLINE_ITEMS = 4;
+const MIN_GENERATED_OUTLINE_ITEMS = 3;
+const MIN_GENERATED_GITHUB_OUTLINE_ITEMS = 2;
 const TITLE_LENGTH_ADJUSTMENT_MAX_PASSES = 2;
 const BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES = 2;
 const BODY_REGENERATION_MAX_ATTEMPTS = 2;
@@ -184,6 +185,9 @@ const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
   { scope: "universal", text: "少写抽象空词（赋能、价值、趋势、认知升级、底层逻辑、方法论、启示），能写具体处境就写具体处境。" },
   { scope: "universal", text: "不要自我介绍文章结构，不要写“本文将”“这篇文章会”“接下来我们聊”这种提示式句子。" },
   { scope: "universal", text: "禁止使用明显 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见。" },
+  { scope: "universal", text: "不要把普通事实硬拔高成“标志某种趋势”“体现重要意义”“见证关键转折”。信息够具体时，直接写发生了什么、改了什么、影响了谁。" },
+  { scope: "universal", text: "少用宣传腔和万能褒义词：充满活力、深刻、关键性、令人惊叹、划时代、持续演变、格局、里程碑。能落到具体细节就不要喊口号。" },
+  { scope: "universal", text: "不要写模糊归因，如“专家认为”“有观察者指出”“行业报告显示”，除非能给出明确对象；不能明确时，就直接写作者判断，不要借空权威撑场面。" },
   { scope: "universal", text: "不要编造具体数据、人物发言、采访、机构结论、案例细节和百分比；事实不足时用因果判断和经验推理补足。" },
   { scope: "universal", text: "文章必须给出一个贯穿全文的核心判断，至少写一个“表面看是 A，实际更关键的是 B”的反差，但不要用“底层逻辑”“本质上”等模板词。" },
   { scope: "universal", text: "深度不是堆术语。复杂概念先翻译成人话，再解释它为什么重要。默认读者不是行业从业者，写法要让普通读者顺着读懂。" },
@@ -200,6 +204,8 @@ const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
   { scope: "drafting", text: "同一篇文章里小标题句式要有变化，有判断句也有场景句。每段都应推动信息、判断或情绪，少写万能总结句。" },
   { scope: "drafting", text: "多用短段落（每段 1-3 句），句子节奏有长有短、有停顿有转折。重要部分多写，次要部分收着写，不要机械平均展开。" },
   { scope: "drafting", text: "尽量把抽象变化改写成具体影响：这对普通人、创作者、家长、用户、消费者意味着什么。用因果链和现实处境解释，不用黑话。" },
+  { scope: "drafting", text: "避免“这不仅是……而是……”“不仅……还……”这类否定式排比，也不要为了显得完整硬凑三连词。两点讲透，比三点堆满更像真人写作。" },
+  { scope: "drafting", text: "不要追求每段都像金句或结论。允许有些句子只是承接、追问、补充细节，让文章保留真实思考的呼吸感。" },
   { scope: "drafting", text: "结尾不要像社论收口，更像朋友把话说透后给一个清楚提醒，附 2-3 条可执行建议。" },
 ] as const;
 
@@ -217,9 +223,18 @@ function getEnv(name: string) {
   return process.env[name]?.trim() ?? "";
 }
 
+function normalizeAIProviderBaseUrl(baseUrl: string) {
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "")
+    .replace(/\/messages$/i, "");
+}
+
 function detectProvider(baseUrl: string) {
   if (baseUrl.includes("dashscope") || baseUrl.includes("aliyuncs")) return "Qwen / DashScope";
   if (baseUrl.includes("anthropic")) return "Claude / Anthropic";
+  if (baseUrl.includes("generativelanguage.googleapis.com")) return "Gemini";
   if (baseUrl.includes("openrouter")) return "OpenRouter";
   if (baseUrl.includes("deepseek")) return "DeepSeek";
   if (baseUrl.includes("siliconflow")) return "SiliconFlow";
@@ -229,6 +244,10 @@ function detectProvider(baseUrl: string) {
 
 function detectProviderProtocol(baseUrl: string): ProviderProtocol {
   return baseUrl.includes("anthropic") ? "anthropic" : "openai";
+}
+
+function isXiaomiMiMoBaseUrl(baseUrl: string) {
+  return /xiaomimimo\.com/i.test(baseUrl);
 }
 
 function getErrorDetails(error: unknown): string {
@@ -310,7 +329,7 @@ export async function getAIProviderConfig(): Promise<ProviderConfig> {
     return null;
   });
   const apiKey = storedConfig?.apiKey || getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
-  const baseUrl = (storedConfig?.baseUrl || getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL") || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const baseUrl = normalizeAIProviderBaseUrl(storedConfig?.baseUrl || getEnv("AI_BASE_URL") || getEnv("OPENAI_BASE_URL") || DEFAULT_BASE_URL);
 
   return {
     configured: Boolean(apiKey),
@@ -323,6 +342,11 @@ export async function getAIProviderConfig(): Promise<ProviderConfig> {
 function extractProviderResponseContent(payload: unknown) {
   if (!payload || typeof payload !== "object") return "";
 
+  const directOutputText = (payload as { output_text?: unknown }).output_text;
+  if (typeof directOutputText === "string" && directOutputText.trim()) {
+    return directOutputText.trim();
+  }
+
   const anthropicContent = (payload as { content?: unknown }).content;
   if (Array.isArray(anthropicContent)) {
     const text = anthropicContent
@@ -331,6 +355,57 @@ function extractProviderResponseContent(payload: unknown) {
         if ("type" in item && item.type !== "text") return "";
         if ("text" in item && typeof item.text === "string") return item.text;
         return "";
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  const responseOutput = (payload as { output?: unknown }).output;
+  if (Array.isArray(responseOutput)) {
+    const text = responseOutput
+      .flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+
+        const contentBlocks = "content" in item ? (item as { content?: unknown }).content : null;
+        if (!Array.isArray(contentBlocks)) return [];
+
+        return contentBlocks.map((block) => {
+          if (!block || typeof block !== "object") return "";
+          if ("text" in block && typeof block.text === "string") return block.text;
+          if (
+            "text" in block &&
+            block.text &&
+            typeof block.text === "object" &&
+            "value" in block.text &&
+            typeof (block.text as { value?: unknown }).value === "string"
+          ) {
+            return (block.text as { value: string }).value;
+          }
+          if ("output_text" in block && typeof block.output_text === "string") return block.output_text;
+          return "";
+        });
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  const geminiCandidates = (payload as { candidates?: unknown }).candidates;
+  if (Array.isArray(geminiCandidates)) {
+    const text = geminiCandidates
+      .flatMap((candidate) => {
+        if (!candidate || typeof candidate !== "object") return [];
+        const content = "content" in candidate ? (candidate as { content?: unknown }).content : null;
+        if (!content || typeof content !== "object") return [];
+        const parts = "parts" in content ? (content as { parts?: unknown }).parts : null;
+        if (!Array.isArray(parts)) return [];
+        return parts.map((part) => {
+          if (!part || typeof part !== "object") return "";
+          return "text" in part && typeof part.text === "string" ? part.text : "";
+        });
       })
       .join("\n")
       .trim();
@@ -355,6 +430,15 @@ function extractProviderResponseContent(payload: unknown) {
       })
       .join("\n")
       .trim();
+  }
+
+  if (firstChoice?.message && typeof firstChoice.message === "object") {
+    const reasoningContent = "reasoning_content" in firstChoice.message
+      ? (firstChoice.message as { reasoning_content?: unknown }).reasoning_content
+      : null;
+    if (typeof reasoningContent === "string" && reasoningContent.trim()) {
+      return reasoningContent.trim();
+    }
   }
 
   if (typeof firstChoice?.text === "string") return firstChoice.text;
@@ -408,14 +492,9 @@ async function getAIModelSelectionForTask(task: AIModelTask): Promise<ModelSelec
 
   if (task === "title" || task === "outline" || task === "transform") {
     const explicitFastModel = getExplicitFastModel(runtimeConfig);
-    const fastModel = explicitFastModel || DEFAULT_FAST_MODEL;
 
     return {
       primary: explicitFastModel || generalModel || DEFAULT_FAST_MODEL,
-      fallback:
-        !explicitFastModel && generalModel && generalModel !== fastModel
-          ? fastModel
-          : undefined,
     };
   }
 
@@ -455,6 +534,45 @@ function normalizeStringList(value: unknown, fallback: string[] = []) {
     .filter(Boolean);
 
   return items.length ? Array.from(new Set(items)) : fallback;
+}
+
+function normalizeOutlineList(value: unknown, fallback: string[] = []) {
+  if (Array.isArray(value)) {
+    return normalizeStringList(value, fallback);
+  }
+
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const text = value.replace(/\r\n/g, "\n").trim();
+  if (!text) {
+    return fallback;
+  }
+
+  const numberedItems = Array.from(
+    text.matchAll(/(?:^|\n)\s*(?:\d+[.)、]|[-*•])\s*([^\n]+)/g),
+    (match) => match[1]?.trim() ?? "",
+  ).filter(Boolean);
+  if (numberedItems.length) {
+    return Array.from(new Set(numberedItems));
+  }
+
+  const splitItems = text
+    .split(/\n+|[|｜]/)
+    .flatMap((item) => item.split(/[；;]/))
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (splitItems.length > 1) {
+    return Array.from(new Set(splitItems));
+  }
+
+  const sentenceItems = text
+    .split(/(?<=[。！？!?])/)
+    .map((item) => item.trim())
+    .filter((item) => calculateWords(item) >= 8);
+
+  return sentenceItems.length ? Array.from(new Set(sentenceItems)) : fallback;
 }
 
 function normalizeText(value: unknown, fallback = "") {
@@ -607,6 +725,10 @@ function polishOutlineItems(outline: string[]) {
     .slice(0, 7);
 }
 
+function polishOutlineItemsForTopic(topic: Pick<TopicSuggestion, "source">, outline: string[]) {
+  return polishOutlineItems(outline);
+}
+
 function polishTitleCandidates(items: string[]) {
   const cleaned = Array.from(new Set(items.map((item) => polishTitleText(item)).filter(Boolean)));
   return diversifyTitleCandidates(cleaned).slice(0, 5);
@@ -705,6 +827,8 @@ function scoreTitleNaturalness(title: string) {
   if (/[？?]$/.test(title)) score += 1;
   if (/普通人|打工人|家长|创作者|用户/.test(title)) score += 1;
   if (/别只盯着|如果只把|真正会变的是|更该关心|更容易看漏/.test(title)) score += 1;
+  if (/^聊聊|^看看|^试试|^最近|^这次|^今天/.test(title)) score += 1;
+  if (/项目名 + 看点/.test(title)) score -= 3;
 
   AI_TITLE_BANNED_PATTERNS.forEach((pattern) => {
     if (pattern.test(title)) score -= 4;
@@ -713,6 +837,7 @@ function scoreTitleNaturalness(title: string) {
   if (/逻辑|方法|趋势拆解|综合观察|专业|深度|启示|信号|变量|真相|密码/.test(title)) score -= 1;
   if (/背后的|意味着什么|给所有人|值得关注|最该关注|看反了/.test(title)) score -= 2;
   if (/^关于|聊聊|说说/.test(title)) score -= 1;
+  if (/(最近|值得|推荐|看点).*(最近|值得|推荐|看点)/.test(title)) score -= 1;
   if (length > 24) score -= 1;
 
   return score;
@@ -791,8 +916,24 @@ function getTitleCandidateStructureIssue(titleCandidates: string[], topicTitle: 
   return "";
 }
 
+function getGithubTitleCandidateStructureIssue(titleCandidates: string[]) {
+  const normalized = Array.from(new Set(titleCandidates.map((item) => item.trim()).filter(Boolean)));
+  if (normalized.length < 2) {
+    return "标题候选太少，请重新生成。";
+  }
+
+  const uniqueCount = new Set(normalized.map((item) => item.replace(/[「」“”":：，,。！？!?、\s]/g, ""))).size;
+  if (uniqueCount < 2) {
+    return "标题候选彼此太像，请重新生成。";
+  }
+
+  return "";
+}
+
 function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: string) {
-  const issue = getTitleCandidateStructureIssue(titleCandidates, topicTitle);
+  const issue = topicTitle.includes("/")
+    ? getGithubTitleCandidateStructureIssue(titleCandidates)
+    : getTitleCandidateStructureIssue(titleCandidates, topicTitle);
   if (issue) {
     throw new Error(issue);
   }
@@ -800,6 +941,9 @@ function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: st
 
 function resolveSafeTitleCandidates(aiCandidates: string[], fallbackCandidates: string[], topicTitle: string) {
   const normalizedAiCandidates = polishTitleCandidates(aiCandidates);
+  if (topicTitle.includes("/")) {
+    return normalizedAiCandidates.length ? normalizedAiCandidates : polishTitleCandidates(fallbackCandidates);
+  }
   if (!getTitleCandidateStructureIssue(normalizedAiCandidates, topicTitle)) {
     return normalizedAiCandidates;
   }
@@ -1000,9 +1144,16 @@ function hasGeneratedPlanningQuality(
   outline: string[],
   fallbackSummary = "",
   fallbackOutline: string[] = [],
+  topic?: Pick<TopicSuggestion, "source" | "title">,
 ) {
   const normalizedSummary = summary.trim();
   const dedupedOutline = outline.map((item) => item.trim()).filter(Boolean);
+  const minOutlineItems = getGeneratedOutlineMinimum(topic);
+  const isGithubTrending = topic && (topic.source?.includes("GitHub Trending") || topic.title.includes("/"));
+  const allowsSingleGithubOutline =
+    Boolean(isGithubTrending) &&
+    dedupedOutline.length === 1 &&
+    calculateWords(dedupedOutline[0] ?? "") >= 16;
 
   if (!normalizedSummary) {
     return {
@@ -1033,7 +1184,7 @@ function hasGeneratedPlanningQuality(
     };
   }
 
-  if (dedupedOutline.length < MIN_GENERATED_OUTLINE_ITEMS) {
+  if (dedupedOutline.length < minOutlineItems && !allowsSingleGithubOutline) {
     return {
       ok: false,
       reason: "大纲条目过少，本次没有保存为结构稿。",
@@ -1062,7 +1213,7 @@ function hasGeneratedPlanningQuality(
   }
 
   const informativeOutlineCount = dedupedOutline.filter((item) => calculateWords(item) >= 8).length;
-  if (informativeOutlineCount < MIN_GENERATED_OUTLINE_ITEMS) {
+  if (informativeOutlineCount < minOutlineItems && !allowsSingleGithubOutline) {
     return {
       ok: false,
       reason: "大纲信息密度不够，暂不保存为结构稿。",
@@ -1077,8 +1228,9 @@ function assertGeneratedPlanningQuality(
   outline: string[],
   fallbackSummary = "",
   fallbackOutline: string[] = [],
+  topic?: Pick<TopicSuggestion, "source" | "title">,
 ) {
-  const result = hasGeneratedPlanningQuality(summary, outline, fallbackSummary, fallbackOutline);
+  const result = hasGeneratedPlanningQuality(summary, outline, fallbackSummary, fallbackOutline, topic);
   if (!result.ok) {
     throw new Error(result.reason);
   }
@@ -1128,6 +1280,12 @@ function collectConsistencyKeywords(title: string, tags: string[], angles: strin
     .slice(0, 8);
 }
 
+function getGeneratedOutlineMinimum(topic?: Pick<TopicSuggestion, "source" | "title">) {
+  return topic && (topic.source?.includes("GitHub Trending") || topic.title.includes("/"))
+    ? MIN_GENERATED_GITHUB_OUTLINE_ITEMS
+    : MIN_GENERATED_OUTLINE_ITEMS;
+}
+
 function countMatchedKeywords(text: string, keywords: string[]) {
   const normalized = normalizeConsistencyText(text);
   if (!normalized) return 0;
@@ -1147,14 +1305,17 @@ function assertResultConsistency(
   const summaryMatches = countMatchedKeywords(result.summary, keywords);
   const outlineMatches = countMatchedKeywords(result.outline.join(" "), keywords);
   const planningMatches = summaryMatches + outlineMatches;
+  const isGithubTrending = topic.source?.includes("GitHub Trending") || topic.title.includes("/");
 
   if (planningMatches === 0) {
-    throw new Error("生成结果和当前选题的关联度太弱，请重新生成。");
+    if (!isGithubTrending) {
+      throw new Error("生成结果和当前选题的关联度太弱，请重新生成。");
+    }
   }
 
   if (options?.requireBody) {
     const bodyMatches = countMatchedKeywords(stripNonArticleText(result.body), keywords);
-    if (bodyMatches === 0 && planningMatches === 0) {
+    if (!isGithubTrending && bodyMatches === 0 && planningMatches === 0) {
       throw new Error("正文和当前选题的关联度太弱，请重新生成。");
     }
   }
@@ -1255,6 +1416,67 @@ function clipPromptText(text: string, maxLength: number) {
   if (!normalized) return "";
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength).trim()}…`;
+}
+
+function isGithubTrendingSource(source?: string | null) {
+  return Boolean(source?.includes("GitHub Trending"));
+}
+
+function buildGithubTrendingPromptSections(
+  request: Pick<AIWriteGenerateRequest, "topic" | "sourceContext" | "scope">,
+  mode: "planning" | "drafting" | "generate",
+) {
+  if (!isGithubTrendingSource(request.topic.source) && !isGithubTrendingSource(request.sourceContext?.source)) {
+    return [];
+  }
+
+  const projectName = request.sourceContext?.title?.trim() || request.topic.title.trim();
+  const sections = [
+    "这是 GitHub 热门开源项目文章，不是泛科技评论，也不是行业趋势报告。",
+    "写法更像一篇推荐介绍文，在给读者介绍一个最近爆火、值得一看/值得试的开源项目，而不是借题发挥做观点输出。",
+    "正文主任务是把项目介绍清楚、把看点说具体、把适合谁用讲明白，不要把篇幅主要花在抽象判断和行业评论上。",
+    "如果热点事实卡片里有项目名、Star、语言、功能、仓库信息，优先把这些细节自然写进去；没有就不要脑补。",
+    "尽量把项目名写进标题或开头，不要整篇都在用“这个项目”“这类工具”指代。",
+    "少谈空泛的大趋势，多讲这个项目具体解决了什么问题、和同类东西比新在哪、为什么最近传播这么快。",
+  ];
+
+  if (mode === "planning" || mode === "generate") {
+    sections.push(
+      "标题要像一个编辑自然起的标题，允许更短一点、口语一点，不要总是“项目名 + 看点”这种固定句式。",
+      "标题可以直接点出项目名，也可以只抓一个很具体的感受、动作或场景，不必每次都把价值说满。",
+      "摘要要像转发前的一句自然介绍，直接说这个项目为什么值得看看、能做什么、适合谁看，别做成结构化提纲。",
+      "大纲尽量像介绍文章的自然分段，不要刻意压成固定模板；可以写它是什么、亮点在哪、适合谁、值不值得试。",
+    );
+  }
+
+  if (mode === "drafting" || (mode === "generate" && (request.scope === "body" || request.scope === "full"))) {
+    sections.push(
+      `正文请按开源项目推荐文来写，默认围绕「${projectName} 是什么」「它最吸引人的地方在哪」「普通人为什么会想点进去看」「值不值得试」自然展开。`,
+      "全文更像在认真给朋友推荐一个项目，语气要像编辑在介绍一个新鲜东西，不要像讲解课件，也不要像评审报告。",
+      "小标题尽量自然一点，允许有一两个判断句或场景句，不要每段都长得像说明书；也不要每次都以“项目简介/为什么火/怎么上手”开头。",
+      "开头先把热度和看点讲出来，再进入项目细节；不要一上来讲行业背景，也不要先做概念科普。",
+      "默认正文节奏是：一段轻一点的引子 + 几段自然介绍 + 一段短判断，不要写成长篇评论。",
+      "至少补 1-2 个实际使用示例，优先用代码块、命令行或最小可运行片段来展示，而不是只用口头描述。",
+      "如果项目适合上手，给出一个很短的示例片段或安装命令，让读者一眼知道怎么试。",
+      "结尾给出一句轻判断：这个项目适不适合现在去看、值不值得试、如果要试先看哪里。"
+    );
+  }
+
+  return sections.map((item, index) => `${index + 1}. ${item}`);
+}
+
+function isGithubTrendingDraft(request: Pick<AIWriteGenerateRequest, "topic">) {
+  return isGithubTrendingSource(request.topic.source);
+}
+
+function getGithubTrendingSourceContextForPrompt(sourceContext: AIWriteGenerateRequest["sourceContext"]) {
+  if (!sourceContext || !sourceContext.url) return sourceContext;
+  return {
+    ...sourceContext,
+    content: sourceContext.content ? clipPromptText(sourceContext.content, 900) : "",
+    summary: sourceContext.summary ? clipPromptText(sourceContext.summary, 120) : "",
+    facts: sourceContext.facts?.slice(0, 3) ?? [],
+  };
 }
 
 function buildSourceContextPromptSections(
@@ -1412,11 +1634,15 @@ function buildWordCountStatus(body: string, targetWordCount: number, adjusted: b
 function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
   const { topic, draft, scope } = request;
   const wordCount = buildWordCountGuidance(request.targetWordCount);
+  const sourceContext = isGithubTrendingDraft(request)
+    ? getGithubTrendingSourceContextForPrompt(request.sourceContext)
+    : request.sourceContext;
   const sections = [
     `任务：生成适合公众号的${scope === "full" ? "完整文章" : scope === "title" ? "标题候选" : scope === "outline" ? "摘要和大纲" : "正文"}`,
     ...buildSharedTaskContext(request),
-    ...buildSourceContextPromptSections(request.sourceContext, "generate"),
-    request.sourceContext?.content
+    ...buildSourceContextPromptSections(sourceContext, "generate"),
+    ...buildGithubTrendingPromptSections(request, "generate"),
+    sourceContext?.content
       ? "要求：以上内容来自热点详情页自动提取，可作为事实和细节参考；请优先信任“热点事实卡片”，再参考详情正文展开。如果提取内容不完整，请基于已知信息写作，不要自行编造。"
       : "",
     scope === "body" || scope === "full"
@@ -1431,10 +1657,10 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
     `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
     "优先把标题控制在 12-24 字之间，宁可短一点，也不要拖成长句。",
     "标题里不要出现“知乎、微博、抖音、百度、今日头条、热搜、热榜”这类平台词，除非平台名本身就是事件主体的一部分。",
-    "不要把 5 个标题写成同一个母句换尾巴，也不要重复使用“真正值得看的是什么 / 很多人都看反了 / 最该关注什么 / 背后更大的变化是”这类套话。",
-    "5 个标题必须尽量分散句式，至少覆盖问题型、判断型、反差纠偏型、人群/场景型、趋势后果型中的 4 类。",
-    `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像导读，不像摘要报告。`,
-    "大纲输出 5-7 条，每条都是可直接当小标题的短句。",
+    "标题不用刻意五花八门，别把所有候选都写成同一套句式硬换词。",
+    "标题优先像自然推荐而不是文章摘要，读起来要顺，不要总用反问、转折和“为什么”式开头。",
+    `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像一段自然转述，不像摘要报告。`,
+    "大纲不要写得太像清单，允许两段式、三段式和轻判断混写。",
   ].filter(Boolean);
 
   return sections.join("\n");
@@ -1458,21 +1684,25 @@ function buildPlanningSystemPrompt(tone: string) {
 function buildPlanningUserPrompt(request: AIWriteGenerateRequest) {
   const { draft } = request;
   const wordCount = buildWordCountGuidance(request.targetWordCount);
+  const sourceContext = isGithubTrendingDraft(request)
+    ? getGithubTrendingSourceContextForPrompt(request.sourceContext)
+    : request.sourceContext;
 
   return [
     "任务：为一篇公众号文章生成标题、摘要和写作结构。",
     ...buildSharedTaskContext(request),
-    ...buildSourceContextPromptSections(request.sourceContext, "planning"),
-    request.sourceContext?.content
+    ...buildSourceContextPromptSections(sourceContext, "planning"),
+    ...buildGithubTrendingPromptSections(request, "planning"),
+    sourceContext?.content
       ? "要求：优先把“热点事实卡片”里的信息写进标题、摘要和大纲，再用详情页正文补背景，不要脱离原始热点自行脑补。"
       : "",
     `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
     "优先把标题控制在 12-24 字之间，不要写成解释句或超长复句。",
     "标题里不要出现“知乎、微博、抖音、百度、今日头条、热搜、热榜”这类平台词，除非平台名本身就是事件主体的一部分。",
     "不要重复使用“真正值得看的是什么 / 很多人都看反了 / 最该关注什么 / 背后更大的变化是”这类固定尾句。",
-    "请给出 5 个句式明显不同的标题候选，至少覆盖问题型、判断型、反差型、人群/场景型、趋势型中的 4 类。",
+    "请给出 5 个标题候选，但不要为了分散而硬凑不同句式，自然比变化更重要。",
     `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像导读。`,
-    `大纲输出 5-7 条，每一条都要像真正的小标题，能支撑一篇约 ${wordCount.normalized} 字的正文展开。`,
+    `大纲输出 4-6 条就够了，允许更像自然分段，不必强行写成栏目清单。`,
     draft?.title ? `当前标题参考：${draft.title}` : "",
     draft?.summary ? `当前摘要参考：${draft.summary}` : "",
     draft?.outline?.length ? `当前大纲参考：${draft.outline.join(" | ")}` : "",
@@ -1503,6 +1733,9 @@ function buildDraftingUserPrompt(
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
   const wordCount = buildWordCountGuidance(request.targetWordCount);
+  const sourceContext = isGithubTrendingDraft(request)
+    ? getGithubTrendingSourceContextForPrompt(request.sourceContext)
+    : request.sourceContext;
 
   return [
     "任务：基于既定标题和结构，写出完整公众号正文。",
@@ -1514,15 +1747,16 @@ function buildDraftingUserPrompt(
     ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
-    ...buildSourceContextPromptSections(request.sourceContext, "drafting"),
-    request.sourceContext?.content
+    ...buildSourceContextPromptSections(sourceContext, "drafting"),
+    ...buildGithubTrendingPromptSections(request, "drafting"),
+    sourceContext?.content
       ? "写作要求：请先围绕“热点事实卡片”建立正文的事实骨架，再吸收详情页内容补充背景，但不要逐句复述，也不要补写未被确认的具体数据和情节。"
       : "",
     `最终标题：${plan.title}`,
     `摘要：${plan.summary}`,
     `写作角度：${plan.selectedAngle}`,
     `大纲：${plan.outline.join(" | ")}`,
-    `${wordCount.sentence} 使用 ## 小标题分节。`,
+    `${wordCount.sentence} 使用 ## 小标题分节，但不要把小标题写成固定模板，尽量自然一点。`,
     `硬性要求：最终正文必须落在 ${wordCount.min}-${wordCount.max} 字之间，并尽量直接命中 ${wordCount.normalized} 字。不能明显超出，也不能明显不足。`,
     "如果内容过多，优先压缩重复解释、弱信息和套话；如果内容不足，优先补充因果、影响和建议，但不要发散到无关新话题。",
     "正文至少要回答 4 个层次中的 3 个：这件事为什么发生、真正变化在哪里、对谁影响最大、接下来会出现什么后果。",
@@ -1535,7 +1769,7 @@ function buildDraftingUserPrompt(
 
 function buildTransformInstruction(action: AITransformAction) {
   if (action === "rewrite") {
-    return "在不改变核心观点的前提下，重写这段内容，让表达更像成熟公众号作者，节奏更好、信息密度更高。";
+    return "在不改变核心观点的前提下，重写这段内容，重点去掉 AI 味：删填充词、拆模板句、压口号感、补自然节奏，让它更像成熟公众号作者亲手改过。";
   }
 
   if (action === "expand") {
@@ -1580,6 +1814,7 @@ function buildTransformUserPrompt(request: AIWriteTransformRequest) {
     `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
     "改写方向：更像公众号爆文作者，而不是报告写作者。多用短句，保留判断感和节奏感。",
+    "去味清单：删掉填充连接词、空泛拔高、模糊归因、宣传腔、否定式排比和硬凑三连词；把能说具体的地方都说具体。",
     `本次改写重点：${tonePreset.transformFocus}`,
     "不要编造新事实、案例、数据、采访和引用。",
     "不要为了显得高级而堆抽象词，优先把话说明白。",
@@ -1742,6 +1977,7 @@ async function callCompatibleModel({
   let response: Response | null = null;
   let currentModel = model;
   const protocol = detectProviderProtocol(config.baseUrl);
+  const isXiaomiMiMo = isXiaomiMiMoBaseUrl(config.baseUrl);
 
   for (let attempt = 0; attempt <= MODEL_REQUEST_MAX_RETRIES; attempt += 1) {
     try {
@@ -1751,10 +1987,12 @@ async function callCompatibleModel({
           ? {
               "Content-Type": "application/json",
               "x-api-key": config.apiKey,
+              ...(isXiaomiMiMo ? { "api-key": config.apiKey, Authorization: `Bearer ${config.apiKey}` } : {}),
               "anthropic-version": "2023-06-01",
             }
           : {
               Authorization: `Bearer ${config.apiKey}`,
+              ...(isXiaomiMiMo ? { "api-key": config.apiKey } : {}),
               "Content-Type": "application/json",
             },
         signal: AbortSignal.timeout(getModelRequestTimeoutMs(task)),
@@ -1772,6 +2010,12 @@ async function callCompatibleModel({
             : {
                 model: currentModel,
                 temperature,
+                ...(isXiaomiMiMo
+                  ? {
+                      max_completion_tokens: task === "title" || task === "outline" || task === "transform" ? 4096 : 16384,
+                      top_p: 0.95,
+                    }
+                  : {}),
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: userPrompt },
@@ -1849,7 +2093,7 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
   const title = normalizedTitles.title;
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
-  const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
+  const outline = polishOutlineItemsForTopic(request.topic, normalizeOutlineList(parsed.outline, base.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, base.body));
 
   if (request.scope !== "title") {
@@ -1868,19 +2112,19 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
       titleCandidates: normalizedTitles.titleCandidates,
       selectedAngle,
       summary: polishSummaryText(existingSummary),
-      outline: polishOutlineItems(existingOutline),
+      outline: polishOutlineItemsForTopic(request.topic, existingOutline),
       body: existingBody,
     };
   }
 
   if (request.scope === "outline") {
-    assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline);
+    assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline, request.topic);
     assertResultConsistency(request.topic, { summary, outline, body: "" });
     return {
       ...base,
       selectedAngle,
       summary,
-      outline: outline.length ? outline : polishOutlineItems(base.outline),
+      outline: outline.length ? outline : polishOutlineItemsForTopic(request.topic, base.outline),
       body: existingBody,
     };
   }
@@ -1913,10 +2157,10 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
   const title = normalizedTitles.title;
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
-  const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
+  const outline = polishOutlineItemsForTopic(request.topic, normalizeOutlineList(parsed.outline, base.outline));
 
   assertOutlineDiversity(outline);
-  assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline);
+  assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline, request.topic);
   assertResultConsistency(request.topic, { summary, outline, body: "" });
 
   return {
@@ -1924,7 +2168,7 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
     titleCandidates: normalizedTitles.titleCandidates,
     selectedAngle,
     summary,
-    outline: outline.length ? outline : polishOutlineItems(base.outline),
+    outline: outline.length ? outline : polishOutlineItemsForTopic(request.topic, base.outline),
     body: request.draft?.body?.trim() ?? "",
   };
 }
@@ -1942,7 +2186,7 @@ function mergeBodyWithPlan(
     topic.title,
   );
   assertTitleCandidateDiversity(titleCandidates, topic.title);
-  const outline = polishOutlineItems(normalizeStringList(parsed.outline, plan.outline));
+  const outline = polishOutlineItemsForTopic(topic, normalizeOutlineList(parsed.outline, plan.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, plan.body));
 
   const normalizedTitles = normalizeTitlesWithinLimit(
@@ -1961,7 +2205,7 @@ function mergeBodyWithPlan(
     titleCandidates: normalizedTitles.titleCandidates,
     selectedAngle: normalizeSelectedAngle(parsed.selectedAngle, plan.selectedAngle),
     summary: polishSummaryText(normalizeText(parsed.summary, plan.summary)),
-    outline: outline.length ? outline : polishOutlineItems(plan.outline),
+    outline: outline.length ? outline : polishOutlineItemsForTopic(topic, plan.outline),
     body,
   };
 }
@@ -1971,7 +2215,7 @@ function tryReuseExistingPlan(request: AIWriteGenerateRequest) {
 
   const base = createBaseResult(request.topic, request.settings, request.draft);
   const summary = polishSummaryText(request.draft.summary ?? "");
-  const outline = polishOutlineItems(request.draft.outline ?? []);
+  const outline = polishOutlineItemsForTopic(request.topic, request.draft.outline ?? []);
 
   if (!summary || !outline.length) {
     return null;
@@ -1979,7 +2223,7 @@ function tryReuseExistingPlan(request: AIWriteGenerateRequest) {
 
   try {
     assertOutlineDiversity(outline);
-    assertGeneratedPlanningQuality(summary, outline);
+    assertGeneratedPlanningQuality(summary, outline, "", [], request.topic);
     assertResultConsistency(request.topic, { summary, outline, body: "" });
   } catch {
     return null;

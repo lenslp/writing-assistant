@@ -33,6 +33,16 @@ type TxqqLikePayload = {
   data?: Array<Record<string, unknown>>;
 };
 
+type GitHubTrendingRepo = {
+  title: string;
+  description: string;
+  url: string;
+  language: string;
+  starsToday: number;
+  totalStars: number;
+  forks: number;
+};
+
 function hashId(source: string, input: string) {
   return createHash("sha1").update(`${source}:${input}`).digest("hex");
 }
@@ -176,6 +186,17 @@ function parseCompactNumber(rawValue: string | number | null | undefined) {
 
 function buildNormalizedHeat(rawValue: string | number | null | undefined, fallbackValue: number) {
   return normalizeHeat(parseCompactNumber(rawValue), fallbackValue);
+}
+
+function parseGithubCompactNumber(rawValue: string) {
+  const normalized = rawValue.trim().toLowerCase().replace(/,/g, "");
+  if (!normalized) return 0;
+
+  const numeric = Number.parseFloat(normalized);
+  if (Number.isNaN(numeric)) return 0;
+  if (normalized.endsWith("k")) return Math.round(numeric * 1000);
+  if (normalized.endsWith("m")) return Math.round(numeric * 1000000);
+  return Math.round(numeric);
 }
 
 function buildTitleDedupKey(item: ScrapedHotTopic) {
@@ -852,10 +873,82 @@ async function scrapeTwitterHotFromRssBridge(): Promise<ScrapedHotTopic[]> {
   );
 }
 
+async function scrapeGithubTrending(): Promise<ScrapedHotTopic[]> {
+  const html = await fetchText("https://github.com/trending?since=daily", {
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+
+  const $ = cheerio.load(html);
+  const repos: GitHubTrendingRepo[] = [];
+
+  $("article.Box-row").each((index, element) => {
+    if (index >= HOT_TOPIC_SOURCE_FETCH_LIMIT) return false;
+
+    const title = $("h2", element).text().replace(/\s+/g, " ").trim().replace(/\s*\/\s*/g, " / ");
+    const href = $("h2 a", element).attr("href")?.trim() ?? "";
+    const url = href ? `https://github.com${href}` : "";
+    const description = $("p", element).text().replace(/\s+/g, " ").trim();
+    const language = $('[itemprop="programmingLanguage"]', element).text().replace(/\s+/g, " ").trim();
+    const starsTodayText = $("span.d-inline-block.float-sm-right", element).text().replace(/\s+/g, " ").trim();
+    const starsTodayMatch = starsTodayText.match(/([\d.,]+)\s+stars?\s+today/i);
+    const starsToday = parseGithubCompactNumber(starsTodayMatch?.[1] ?? "");
+
+    const metaLinks = $("a.Link--muted", element).toArray();
+    const totalStars = parseGithubCompactNumber($(metaLinks[0] ?? null).text().replace(/\s+/g, " ").trim());
+    const forks = parseGithubCompactNumber($(metaLinks[1] ?? null).text().replace(/\s+/g, " ").trim());
+
+    if (!title || !url) return;
+
+    repos.push({
+      title,
+      description,
+      url,
+      language,
+      starsToday,
+      totalStars,
+      forks,
+    });
+  });
+
+  if (!repos.length) {
+    throw new Error("github trending returned empty payload");
+  }
+
+  return repos.map((repo, index) => {
+    const starsToday = repo.starsToday || Math.max(180, 1600 - index * 35);
+    const totalStars = repo.totalStars || Math.max(2000, 18000 - index * 220);
+    const heat = Math.min(9999, Math.round(starsToday * 2.6 + Math.log10(Math.max(totalStars, 1)) * 900));
+    const tags = [
+      "GitHub Trending",
+      repo.language || "开源项目",
+      "上升中",
+    ].filter(Boolean);
+
+    return {
+      id: `github-trending-${hashId("github-trending", repo.url || repo.title)}`,
+      externalId: hashId("github-trending", repo.url || repo.title),
+      title: repo.title,
+      source: "GitHub Trending",
+      sourceType: "html",
+      heat,
+      trend: normalizeTrend(Math.min(96, Math.max(18, Math.round(starsToday / 40)))),
+      tags,
+      url: repo.url,
+      summary: `${repo.description || "近期热度上升很快的开源项目"}${repo.starsToday ? ` · 今日新增 ${repo.starsToday.toLocaleString()} stars` : ""}`,
+      sourcePublishedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      raw: repo,
+    } satisfies ScrapedHotTopic;
+  });
+}
+
 export async function scrapeHotTopics() {
   const batchFetchedAt = new Date().toISOString();
   const sourceFetchers: SourceFetcher[] = [
     { source: "微博", fetch: scrapeWeiboHotFromApi },
+    { source: "GitHub Trending", fetch: scrapeGithubTrending },
     { source: "抖音", fetch: scrapeDouyinHot },
     { source: "知乎", fetch: scrapeZhihuHot },
     { source: "今日头条", fetch: scrapeToutiaoHot },

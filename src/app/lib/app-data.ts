@@ -150,6 +150,25 @@ export function createFormattingForDomain(domain: ArticleDomain, fallbackTemplat
   };
 }
 
+export function createFormattingForTopicInput(input: {
+  domain: ArticleDomain;
+  source?: string;
+  fallbackTemplate?: string;
+}): DraftFormatting {
+  if (input.source?.includes("GitHub Trending")) {
+    return {
+      ...createDefaultFormatting(input.fallbackTemplate ?? defaultSettings.defaultTemplate),
+      template: "暖色调",
+      colorScheme: "商务橙",
+      gradientQuote: true,
+      roundedQuote: true,
+      numberedBadge: true,
+    };
+  }
+
+  return createFormattingForDomain(input.domain, input.fallbackTemplate ?? defaultSettings.defaultTemplate);
+}
+
 export function createTitleCandidates(topic: TopicSuggestion, settings: AppSettings) {
   const subject = topic.title.replace(/\s+/g, " ").trim();
   const primaryAngle = topic.angles[0]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || subject;
@@ -186,6 +205,23 @@ export function createTitleCandidates(topic: TopicSuggestion, settings: AppSetti
       .replace(/比起(.+)本身，更值得聊的是(.+)/, "比起$1，更值得聊的是$2")
       .trim();
   };
+
+  if (topic.source?.includes("GitHub Trending")) {
+    const repoName = subject.replace(/\s+/g, " ").trim();
+    const focus = primaryAngle.replace(/^它|这个项目|这项目/, "").trim() || secondaryAngle || "一个值得关注的开源项目";
+    const githubCandidates = [
+      repoName,
+      `${repoName}`,
+      `${repoName}，我最近会推荐它`,
+      `${repoName}，真有点意思`,
+      `${repoName}，不是随便火的`,
+      `${repoName}：${focus}`,
+      `聊聊 ${repoName}`,
+      `${repoName} 的几个看点`,
+    ];
+
+    return Array.from(new Set(githubCandidates.map(shortenCandidate).filter(Boolean))).slice(0, 5);
+  }
 
   const rawCandidates = [
     subject,

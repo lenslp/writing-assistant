@@ -5,27 +5,30 @@ import {
   setActiveAIProviderConfig,
   upsertAIProviderConfig,
 } from "../../../lib/app-config-db";
-import { hasPersistenceBackend } from "../../../lib/persistence";
+import type { AIProviderKind } from "../../../lib/app-config-db";
 
 export const dynamic = "force-dynamic";
 
 type PatchPayload = {
   id?: string;
   name?: string;
+  providerType?: AIProviderKind;
   baseUrl?: string;
   apiKey?: string;
   model?: string;
   fastModel?: string;
   longformModel?: string;
   setAsActive?: boolean;
-  action?: "upsert" | "activate";
+};
+
+type PostPayload = {
   profileId?: string;
 };
 
 export async function GET() {
   try {
     const config = await readAIProviderConfig();
-    return NextResponse.json({ config, persisted: hasPersistenceBackend() });
+    return NextResponse.json({ config, persisted: true });
   } catch (error) {
     console.error("Failed to read AI provider config:", error);
     return NextResponse.json(
@@ -36,24 +39,19 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  if (!hasPersistenceBackend()) {
-    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
-  }
-
   try {
     const payload = (await request.json()) as PatchPayload;
-    const config = payload.action === "activate"
-      ? await setActiveAIProviderConfig(payload.profileId?.trim() ?? "")
-      : await upsertAIProviderConfig({
-          id: payload.id?.trim() ?? "",
-          name: payload.name?.trim() ?? "",
-          baseUrl: payload.baseUrl?.trim() ?? "",
-          apiKey: payload.apiKey?.trim() ?? "",
-          model: payload.model?.trim() ?? "",
-          fastModel: payload.fastModel?.trim() ?? "",
-          longformModel: payload.longformModel?.trim() ?? "",
-          setAsActive: payload.setAsActive !== false,
-        });
+    const config = await upsertAIProviderConfig({
+      id: payload.id?.trim() ?? "",
+      name: payload.name?.trim() ?? "",
+      providerType: payload.providerType,
+      baseUrl: payload.baseUrl?.trim() ?? "",
+      apiKey: payload.apiKey?.trim() ?? "",
+      model: payload.model?.trim() ?? "",
+      fastModel: payload.fastModel?.trim() ?? "",
+      longformModel: payload.longformModel?.trim() ?? "",
+      setAsActive: payload.setAsActive,
+    });
 
     return NextResponse.json({ config, persisted: true });
   } catch (error) {
@@ -65,15 +63,31 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
-  if (!hasPersistenceBackend()) {
-    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
-  }
+export async function POST(request: Request) {
+  try {
+    const payload = (await request.json()) as PostPayload;
+    const profileId = payload.profileId?.trim() ?? "";
 
+    if (!profileId) {
+      return NextResponse.json({ message: "缺少目标配置 ID" }, { status: 400 });
+    }
+
+    const config = await setActiveAIProviderConfig(profileId);
+    return NextResponse.json({ config, persisted: true });
+  } catch (error) {
+    console.error("Failed to set active AI provider config:", error);
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "切换默认模型配置失败" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const profileId = searchParams.get("profileId")?.trim() ?? "";
-    const config = await deleteAIProviderConfig(profileId || undefined);
+    const profileId = searchParams.get("profileId")?.trim() ?? undefined;
+    const config = await deleteAIProviderConfig(profileId);
     return NextResponse.json({ config, persisted: true });
   } catch (error) {
     console.error("Failed to delete AI provider config:", error);

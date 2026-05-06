@@ -22,6 +22,7 @@ type DraftBlock =
   | { type: "quote"; content: string }
   | { type: "divider" }
   | { type: "image"; image: DraftImage }
+  | { type: "code"; content: string; language: string }
   | { type: "unordered-list"; items: string[] }
   | { type: "ordered-list"; items: string[] }
   | { type: "paragraph"; content: string }
@@ -52,6 +53,7 @@ export type WechatDraftPrecheckItem = {
 const WECHAT_API_BASE = "https://api.weixin.qq.com";
 const WECHAT_DIGEST_LIMIT = 120;
 const IMAGE_MARKDOWN_PATTERN = /^!\[(.*?)\]\((.+)\)$/;
+const CODE_BLOCK_PATTERN = /^```(\w+)?\s*\n([\s\S]*?)\n```$/;
 const IMAGE_CAPTION_PATTERN = /^(?:图注|说明|caption)[:：]\s*(.+)$/i;
 const AUTO_HIGHLIGHT_PATTERNS = [
   /(?:先说结论|结论先说|一句话总结|核心在于|关键在于|本质上|更重要的是|最重要的是|真正重要的是|真正的问题是|需要注意的是|说白了|简单来说|换句话说|归根结底|一定要记住|记住一句话)/g,
@@ -259,6 +261,15 @@ function extractBlocks(body: string): DraftBlock[] {
     .map((section) => section.trim())
     .filter(Boolean)
     .map((section) => {
+      const codeMatch = section.match(CODE_BLOCK_PATTERN);
+      if (codeMatch) {
+        return {
+          type: "code",
+          language: codeMatch[1]?.trim() || "",
+          content: codeMatch[2].trim(),
+        } satisfies DraftBlock;
+      }
+
       const image = parseImageSection(section);
       if (image) {
         return { type: "image", image } satisfies DraftBlock;
@@ -726,6 +737,13 @@ function renderWechatArticleHtml(title: string, summary: string, blocks: DraftBl
             ? `<figcaption style="margin-top:10px;text-align:center;color:#999;font-size:12px;line-height:1.7;">${renderInlineTextWithStyle(block.image.caption, { quoteColor: primary })}</figcaption>`
             : ""
         }</figure>`,
+      );
+      return;
+    }
+
+    if (block.type === "code") {
+      sections.push(
+        `<pre style="margin:24px 0;padding:16px 18px;overflow:auto;border-radius:12px;background:#0f172a;color:#e2e8f0;line-height:1.75;font-size:13px;"><code>${escapeHtml(block.content)}</code></pre>`,
       );
       return;
     }

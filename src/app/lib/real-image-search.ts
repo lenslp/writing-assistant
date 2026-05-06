@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import * as cheerio from "cheerio";
 import { resolveArticleDomain, type ArticleDomain } from "./content-domains";
 import { buildAutoImageSearchQuery } from "./article-auto-image";
+import { readLatestHotTopicForTopic } from "./hot-topic-db";
 
 type RealImageSearchInput = {
   query?: string;
@@ -10,6 +12,7 @@ type RealImageSearchInput = {
   body?: string;
   domain?: string;
   count?: number;
+  source?: string;
 };
 
 export type RealImageSearchResult = {
@@ -580,7 +583,202 @@ function getRelaxedScoreThreshold(input: RealImageSearchInput) {
   return 12;
 }
 
+function isGithubTrendingInput(input: RealImageSearchInput) {
+  return Boolean(input.source?.includes("GitHub Trending"));
+}
+
+function extractGithubRepoSlugFromText(text: string) {
+  const normalized = text.trim();
+  if (!normalized) return "";
+
+  const directMatch = normalized.match(/([A-Za-z0-9_.-]+)\s*\/\s*([A-Za-z0-9_.-]+)/);
+  if (directMatch) {
+    return `${directMatch[1]}/${directMatch[2]}`;
+  }
+
+  return "";
+}
+
+function normalizeGithubRepoUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!/github\.com$/i.test(parsed.hostname)) return "";
+
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length < 2) return "";
+    return `https://github.com/${segments[0]}/${segments[1]}`;
+  } catch {
+    return "";
+  }
+}
+
+function toAbsoluteGithubAssetUrl(repoUrl: string, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith("//")) {
+    return `https:${trimmed}`;
+  }
+
+  if (trimmed.startsWith("/")) {
+    return `https://github.com${trimmed}`;
+  }
+
+  try {
+    return new URL(trimmed, `${repoUrl}/`).toString();
+  } catch {
+    return "";
+  }
+}
+
+function isUsableGithubImage(url: string) {
+  if (!url) return false;
+  if (!/^https?:\/\//i.test(url)) return false;
+  if (matchesBlockedHost(url)) return false;
+  if (/avatar|badge|icon|emoji|sponsor|favicon/i.test(url)) return false;
+  if (/\.svg($|\?)/i.test(url)) return false;
+  return true;
+}
+
+function scoreGithubImage(url: string, alt = "") {
+  const text = `${url} ${alt}`.toLowerCase();
+  let score = 0;
+
+  if (/opengraph\.githubassets\.com/.test(text)) score += 40;
+  if (/raw\.githubusercontent\.com/.test(text)) score += 30;
+  if (/githubusercontent\.com/.test(text)) score += 20;
+  if (/screenshot|demo|preview|cover|hero|sample|example|showcase/.test(text)) score += 20;
+  if (/readme|assets|docs|images|img/.test(text)) score += 10;
+  if (/logo|avatar|badge|shield|icon/.test(text)) score -= 25;
+
+  return score;
+}
+
+function buildGithubRepoScreenshotUrl(repoUrl: string) {
+  return `https://image.thum.io/get/width/1440/noanimate/${repoUrl}`;
+}
+
+async function fetchGithubRepoScreenshot(repoUrl: string) {
+  const screenshotUrl = buildGithubRepoScreenshotUrl(repoUrl);
+  if (!(await isReachableImage(screenshotUrl))) {
+    return [];
+  }
+
+  return [
+    {
+      url: screenshotUrl,
+      source: "bing" as const,
+      query: repoUrl,
+      title: "GitHub Repo Screenshot",
+      pageUrl: repoUrl,
+    },
+  ] satisfies RealImageSearchResult[];
+}
+
+async function fetchGithubRepoPreviewImages(repoUrl: string) {
+  const html = await fetchSearchHtml(repoUrl);
+  const $ = cheerio.load(html);
+  const candidates: Array<{ url: string; score: number }> = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (rawUrl: string, alt = "") => {
+    const nextUrl = toAbsoluteGithubAssetUrl(repoUrl, rawUrl);
+    if (!isUsableGithubImage(nextUrl) || seen.has(nextUrl)) return;
+    seen.add(nextUrl);
+    candidates.push({
+      url: nextUrl,
+      score: scoreGithubImage(nextUrl, alt),
+    });
+  };
+
+  const ogImage = $('meta[property="og:image"]').attr("content");
+  if (ogImage) {
+    pushCandidate(ogImage, "og-image");
+  }
+
+  $("#readme img").each((_, element) => {
+    const src = $(element).attr("src") || $(element).attr("data-canonical-src") || "";
+    const alt = $(element).attr("alt") || "";
+    pushCandidate(src, alt);
+  });
+
+  $("img").each((_, element) => {
+    const src = $(element).attr("src") || $(element).attr("data-canonical-src") || "";
+    const alt = $(element).attr("alt") || "";
+    if (/screenshot|preview|demo|showcase|hero/i.test(`${src} ${alt}`)) {
+      pushCandidate(src, alt);
+    }
+  });
+
+  const ranked = candidates
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 6);
+
+  const results: RealImageSearchResult[] = [];
+  for (const candidate of ranked) {
+    if (!(await isReachableImage(candidate.url))) continue;
+    results.push({
+      url: candidate.url,
+      source: "bing",
+      query: repoUrl,
+      title: "GitHub Repo Preview",
+      pageUrl: repoUrl,
+    });
+  }
+
+  return results;
+}
+
+async function searchGithubTrendingRepoImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
+  if (!isGithubTrendingInput(input) || !input.title?.trim()) {
+    return [];
+  }
+
+  const repoSlug = extractGithubRepoSlugFromText(`${input.title} ${input.query || ""}`);
+  const directRepoUrl = repoSlug ? normalizeGithubRepoUrl(`https://github.com/${repoSlug}`) : "";
+  if (directRepoUrl) {
+    const directScreenshotResults = await fetchGithubRepoScreenshot(directRepoUrl).catch(() => []);
+    if (directScreenshotResults.length) {
+      return directScreenshotResults;
+    }
+
+    const directPreviewResults = await fetchGithubRepoPreviewImages(directRepoUrl).catch(() => []);
+    if (directPreviewResults.length) {
+      return directPreviewResults;
+    }
+  }
+
+  const hotTopic = await readLatestHotTopicForTopic({
+    title: input.title.trim(),
+    source: input.source || "GitHub Trending",
+  }).catch(() => null);
+
+  const repoUrl = normalizeGithubRepoUrl(hotTopic?.url || "");
+  if (!repoUrl) {
+    return [];
+  }
+
+  const screenshotResults = await fetchGithubRepoScreenshot(repoUrl).catch(() => []);
+  if (screenshotResults.length) {
+    return screenshotResults;
+  }
+
+  return fetchGithubRepoPreviewImages(repoUrl);
+}
+
 export async function searchRealArticleImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
+  const githubImages = await searchGithubTrendingRepoImages(input);
+  if (githubImages.length) {
+    return githubImages.slice(0, Math.max(1, Math.min(input.count ?? 6, 12)));
+  }
+
   const query = buildSearchQuery(input);
   if (!query) {
     return [];

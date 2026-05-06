@@ -9,6 +9,7 @@ type Payload = {
   summary?: string;
   body?: string;
   domain?: string;
+  source?: string;
 };
 
 export async function POST(request: Request) {
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
       summary: payload.summary,
       body: payload.body,
       domain: payload.domain,
+      source: payload.source,
       count: 6,
     });
 

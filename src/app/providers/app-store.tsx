@@ -13,6 +13,7 @@ import {
   calculateWords,
   createBody,
   createFormattingForDomain,
+  createFormattingForTopicInput,
   createOutline,
   createSummary,
   defaultDrafts,
@@ -258,7 +259,11 @@ function createDraft(topic: TopicSuggestion, settings: AppSettings, scope: Gener
     outline: scope === "title" ? [] : outline,
     body,
     source: topic.source,
-    formatting: createFormattingForDomain(topic.domain, settings.defaultTemplate),
+    formatting: createFormattingForTopicInput({
+      domain: topic.domain,
+      source: topic.source,
+      fallbackTemplate: settings.defaultTemplate,
+    }),
   };
 }
 

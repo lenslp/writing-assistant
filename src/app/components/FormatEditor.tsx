@@ -51,6 +51,7 @@ type ContentBlock =
   | { type: "quote"; content: string }
   | { type: "divider" }
   | { type: "image"; content: string; src?: string; alt?: string; caption?: string; isPlaceholder?: boolean }
+  | { type: "code"; content: string; language: string }
   | { type: "golden"; content: string }
   | { type: "highlight"; content: string }
   | { type: "unordered-list"; items: string[] }
@@ -96,6 +97,7 @@ const AUTO_HIGHLIGHT_PATTERNS = [
 
 const IMAGE_MARKDOWN_PATTERN = /^!\[(.*?)\]\((.+)\)$/;
 const IMAGE_CAPTION_PATTERN = /^(?:图注|说明|caption)[:：]\s*(.+)$/i;
+const CODE_BLOCK_PATTERN = /^```(\w+)?\s*\n([\s\S]*?)\n```$/;
 
 function getInlineHighlightStyle(primary: string, accent: string): CSSProperties {
   return {
@@ -204,6 +206,42 @@ function parseImageSection(section: string) {
   return null;
 }
 
+function splitBodySections(body: string) {
+  const normalized = normalizeStructuredBodyText(body).replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const sections: string[] = [];
+  let buffer: string[] = [];
+  let inCodeBlock = false;
+
+  const flush = () => {
+    const section = buffer.join("\n").trim();
+    if (section) sections.push(section);
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (!inCodeBlock && buffer.length) flush();
+      buffer.push(trimmed);
+      inCodeBlock = !inCodeBlock;
+      if (!inCodeBlock) flush();
+      continue;
+    }
+
+    if (!inCodeBlock && !trimmed) {
+      flush();
+      continue;
+    }
+
+    buffer.push(trimmed);
+  }
+
+  flush();
+  return sections;
+}
+
 function renderInlineHtml(text: string, options?: { autoHighlight?: boolean; highlightStyle?: string }) {
   const tokens = collectInlineTokens(text, options?.autoHighlight);
 
@@ -271,13 +309,20 @@ function renderInlineNodes(text: string, options?: { autoHighlight?: boolean; hi
 }
 
 function extractContentBlocks(body: string): ContentBlock[] {
-  return normalizeStructuredBodyText(body)
-    .split(/\n{2,}/)
-    .map((section) => section.trim())
+  return splitBodySections(body)
     .filter(Boolean)
     .map((section) => {
       const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
+      const codeMatch = section.match(CODE_BLOCK_PATTERN);
       const imageBlock = parseImageSection(section);
+
+      if (codeMatch) {
+        return {
+          type: "code",
+          language: codeMatch[1]?.trim() || "",
+          content: codeMatch[2].trim(),
+        } satisfies ContentBlock;
+      }
 
       if (imageBlock) {
         return imageBlock satisfies ContentBlock;
@@ -332,6 +377,10 @@ function buildWechatText(draft: Draft, body: string, settingsCta: string) {
         return [`[配图] ${block.caption || block.alt || "配图"}`, block.src ? `图片链接：${block.src}` : ""]
           .filter(Boolean)
           .join("\n");
+      }
+
+      if (block.type === "code") {
+        return [`\`\`\`${block.language || ""}`, block.content, "```"].filter(Boolean).join("\n");
       }
 
       if (block.type === "unordered-list") {
@@ -414,6 +463,13 @@ function buildHtml(
         return isWechatChannel
           ? `<div style="margin:24px 0;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};overflow:hidden;border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};"><div style="height:180px;background:${String(domainStyle.imageFrameStyle.background)};display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid ${String(domainStyle.imagePlaceholderChipStyle.borderColor)};background:${String(domainStyle.imagePlaceholderChipStyle.background)};color:${String(domainStyle.imagePlaceholderChipStyle.color)};font-size:12px;">配图占位</span></div><div style="padding:10px 12px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;">${escapeHtml(block.content)}</div></div>`
           : `<div style="margin:24px 0;padding:28px 16px;border:1px dashed #cbd5e1;border-radius:16px;text-align:center;color:#94a3b8;">${escapeHtml(block.content)}</div>`;
+      }
+
+      if (block.type === "code") {
+        const language = block.language ? escapeHtml(block.language) : "code";
+        return isWechatChannel
+          ? `<figure style="margin:24px 0;border:1px solid ${domainStyle.highlightBorderColor};border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`
+          : `<figure style="margin:24px 0;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`;
       }
 
       if (block.type === "golden") {

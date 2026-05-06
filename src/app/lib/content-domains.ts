@@ -379,10 +379,14 @@ export function resolveArticleDomain(input?: string | null): ArticleDomain {
   }
 
   for (const domain of articleDomains) {
+    if (domain.trim().toLowerCase() === normalized) {
+      return domain;
+    }
+  }
+
+  for (const domain of articleDomains) {
     const config = domainConfigs[domain];
-    if (
-      [config.label, ...config.aliases].some((item) => item.trim().toLowerCase() === normalized)
-    ) {
+    if (config.aliases.some((item) => item.trim().toLowerCase() === normalized)) {
       return domain;
     }
   }

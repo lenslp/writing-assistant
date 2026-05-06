@@ -5,6 +5,7 @@ import { readAIProviderConfig } from "../../../lib/app-config-db";
 export const dynamic = "force-dynamic";
 
 type TestPayload = {
+  providerType?: "openai" | "anthropic";
   baseUrl?: string;
   apiKey?: string;
   model?: string;
@@ -16,7 +17,26 @@ function detectProviderProtocol(baseUrl: string) {
   return baseUrl.includes("anthropic") ? "anthropic" as const : "openai" as const;
 }
 
+function normalizeAIProviderBaseUrl(baseUrl: string) {
+  return baseUrl
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "")
+    .replace(/\/messages$/i, "");
+}
+
+function isXiaomiMiMoBaseUrl(baseUrl: string) {
+  return /xiaomimimo\.com/i.test(baseUrl);
+}
+
 function extractMessageContent(payload: unknown) {
+  const directOutputText = payload && typeof payload === "object" && "output_text" in payload
+    ? (payload as { output_text?: unknown }).output_text
+    : null;
+  if (typeof directOutputText === "string" && directOutputText.trim()) {
+    return directOutputText.trim();
+  }
+
   const anthropicContent = payload && typeof payload === "object" && "content" in payload
     ? (payload as { content?: unknown }).content
     : null;
@@ -34,6 +54,59 @@ function extractMessageContent(payload: unknown) {
     if (text) return text;
   }
 
+  const responseOutput = payload && typeof payload === "object" && "output" in payload
+    ? (payload as { output?: unknown }).output
+    : null;
+  if (Array.isArray(responseOutput)) {
+    const text = responseOutput
+      .flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const content = "content" in item ? (item as { content?: unknown }).content : null;
+        if (!Array.isArray(content)) return [];
+        return content.map((block) => {
+          if (!block || typeof block !== "object") return "";
+          if ("text" in block && typeof block.text === "string") return block.text;
+          if (
+            "text" in block &&
+            block.text &&
+            typeof block.text === "object" &&
+            "value" in block.text &&
+            typeof (block.text as { value?: unknown }).value === "string"
+          ) {
+            return (block.text as { value: string }).value;
+          }
+          if ("output_text" in block && typeof block.output_text === "string") return block.output_text;
+          return "";
+        });
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
+  const geminiCandidates = payload && typeof payload === "object" && "candidates" in payload
+    ? (payload as { candidates?: unknown }).candidates
+    : null;
+  if (Array.isArray(geminiCandidates)) {
+    const text = geminiCandidates
+      .flatMap((candidate) => {
+        if (!candidate || typeof candidate !== "object") return [];
+        const content = "content" in candidate ? (candidate as { content?: unknown }).content : null;
+        if (!content || typeof content !== "object") return [];
+        const parts = "parts" in content ? (content as { parts?: unknown }).parts : null;
+        if (!Array.isArray(parts)) return [];
+        return parts.map((part) => {
+          if (!part || typeof part !== "object") return "";
+          return "text" in part && typeof part.text === "string" ? part.text : "";
+        });
+      })
+      .join("\n")
+      .trim();
+
+    if (text) return text;
+  }
+
   const choices = payload && typeof payload === "object" && "choices" in payload
     ? (payload as { choices?: unknown }).choices
     : null;
@@ -44,9 +117,29 @@ function extractMessageContent(payload: unknown) {
     ? (choices[0] as { message?: unknown }).message
     : null;
 
-  return message && typeof message === "object" && "content" in message && typeof (message as { content?: unknown }).content === "string"
-    ? (message as { content: string }).content.trim()
-    : "";
+  if (message && typeof message === "object" && "content" in message && typeof (message as { content?: unknown }).content === "string") {
+    return (message as { content: string }).content.trim();
+  }
+
+  if (message && typeof message === "object" && "content" in message && Array.isArray((message as { content?: unknown }).content)) {
+    const text = ((message as { content: Array<unknown> }).content ?? [])
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "text" in item && typeof item.text === "string") {
+          return item.text;
+        }
+        return "";
+      })
+      .join("\n")
+      .trim();
+    if (text) return text;
+  }
+
+  if (message && typeof message === "object" && "reasoning_content" in message && typeof (message as { reasoning_content?: unknown }).reasoning_content === "string") {
+    return ((message as { reasoning_content: string }).reasoning_content ?? "").trim();
+  }
+
+  return "";
 }
 
 function extractErrorMessage(payload: unknown, fallback: string) {
@@ -81,14 +174,14 @@ export async function POST(request: Request) {
   const savedConfig = await getAIProviderConfig();
   const summary = await readAIProviderConfig();
   const activeProfile = summary.activeProfile;
-  const runtimeBaseUrl = payload?.baseUrl?.trim().replace(/\/+$/, "") || savedConfig.baseUrl;
+  const runtimeBaseUrl = normalizeAIProviderBaseUrl(payload?.baseUrl?.trim() || savedConfig.baseUrl);
   const runtimeApiKey = payload?.apiKey?.trim() || savedConfig.apiKey;
   const model =
-    payload?.fastModel?.trim() ||
     payload?.model?.trim() ||
+    payload?.fastModel?.trim() ||
     payload?.longformModel?.trim() ||
-    activeProfile?.fastModel ||
     activeProfile?.model ||
+    activeProfile?.fastModel ||
     activeProfile?.longformModel ||
     "qwen-turbo";
   const config = {
@@ -99,6 +192,7 @@ export async function POST(request: Request) {
     provider: detectProviderProtocol(runtimeBaseUrl) === "anthropic" ? "Anthropic" : "OpenAI Compatible",
   };
   const protocol = detectProviderProtocol(config.baseUrl);
+  const isXiaomiMiMo = isXiaomiMiMoBaseUrl(config.baseUrl);
 
   if (!config.configured) {
     return NextResponse.json(
@@ -119,10 +213,12 @@ export async function POST(request: Request) {
         ? {
             "Content-Type": "application/json",
             "x-api-key": config.apiKey,
+            ...(isXiaomiMiMo ? { "api-key": config.apiKey, Authorization: `Bearer ${config.apiKey}` } : {}),
             "anthropic-version": "2023-06-01",
           }
         : {
             Authorization: `Bearer ${config.apiKey}`,
+            ...(isXiaomiMiMo ? { "api-key": config.apiKey } : {}),
             "Content-Type": "application/json",
           },
       signal: AbortSignal.timeout(20000),
@@ -141,6 +237,13 @@ export async function POST(request: Request) {
               model,
               temperature: 0,
               max_tokens: 24,
+              ...(isXiaomiMiMo
+                ? {
+                    max_completion_tokens: 128,
+                    top_p: 0.95,
+                    thinking: { type: "disabled" },
+                  }
+                : {}),
               messages: [
                 { role: "system", content: "你只用于测试接口连通性。" },
                 { role: "user", content: "请回复：连接成功" },

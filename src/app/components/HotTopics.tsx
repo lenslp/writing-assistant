@@ -19,8 +19,11 @@ const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache:v2";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
-const SOURCE_PRIORITY = ["微博", "Twitter/X", "知乎", "抖音", "百度", "今日头条"] as const;
+const SOURCE_PRIORITY = ["微博", "Twitter/X", "GitHub Trending", "知乎", "抖音", "百度", "今日头条"] as const;
 const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
+type HotTopicCategory = ArticleDomain | "GitHub Trending";
+const GITHUB_CATEGORY = "GitHub Trending" as const;
+const GITHUB_CATEGORY_ORDER = -1;
 
 type HotTopicsCachePayload = {
   items: HotTopicItem[];
@@ -119,7 +122,7 @@ function HotTopicsLoadingShell() {
             <LoaderCircle className="h-4 w-4 animate-spin" />
             热点数据准备中
           </div>
-          <div className="mt-1.5 text-[12px] text-blue-600/80">正在连接微博、抖音、百度等来源，首次加载会稍慢一点。</div>
+          <div className="mt-1.5 text-[12px] text-blue-600/80">正在连接微博、GitHub Trending、抖音、百度等来源，首次加载会稍慢一点。</div>
         </div>
       </div>
 
@@ -296,10 +299,10 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
   const topicDomainMap = useMemo(
     () =>
-      new Map(
+      new Map<string, HotTopicCategory>(
         items.map((topic) => [
           topic.id,
-          topic.domain ?? "其他",
+          topic.source === GITHUB_CATEGORY ? GITHUB_CATEGORY : (topic.domain ?? "其他"),
         ]),
       ),
     [items],
@@ -352,8 +355,12 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const categoryOptions = useMemo(
     () => [
       "全部",
-      ...Array.from(new Set([...settings.contentAreas, ...Array.from(topicDomainMap.values())]))
-        .sort((left, right) => (DOMAIN_ORDER.get(left) ?? 999) - (DOMAIN_ORDER.get(right) ?? 999)),
+      ...Array.from(new Set<HotTopicCategory>([...settings.contentAreas, ...Array.from(topicDomainMap.values())]))
+        .sort((left, right) => {
+          const leftOrder = left === GITHUB_CATEGORY ? GITHUB_CATEGORY_ORDER : (DOMAIN_ORDER.get(left) ?? 999);
+          const rightOrder = right === GITHUB_CATEGORY ? GITHUB_CATEGORY_ORDER : (DOMAIN_ORDER.get(right) ?? 999);
+          return leftOrder - rightOrder;
+        }),
     ],
     [settings.contentAreas, topicDomainMap],
   );
