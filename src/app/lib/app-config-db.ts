@@ -53,12 +53,31 @@ export type AIProviderSecret = {
   longformModel: string;
 };
 
-export type AIProviderSummary = {
+export type AIProviderProfileSecret = AIProviderSecret & {
+  id: string;
+  name: string;
+};
+
+type AIProviderCollectionSecret = {
+  profiles: AIProviderProfileSecret[];
+  activeProfileId: string | null;
+};
+
+export type AIProviderProfileSummary = {
+  id: string;
+  name: string;
   baseUrl: string;
   model: string;
   fastModel: string;
   longformModel: string;
   hasApiKey: boolean;
+  isActive: boolean;
+};
+
+export type AIProviderSummary = {
+  activeProfileId: string | null;
+  activeProfile: AIProviderProfileSummary | null;
+  profiles: AIProviderProfileSummary[];
   source: "database" | "environment" | "default";
 };
 
@@ -147,12 +166,68 @@ function normalizeWechatIntegration(settings: unknown): WechatIntegration {
   };
 }
 
-function normalizeAIProviderConfig(settings: unknown): AIProviderSecret | null {
+function normalizeAIProviderProfile(value: unknown): AIProviderProfileSecret | null {
+  if (!isPlainObject(value)) return null;
+
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl.trim().replace(/\/+$/, "") : "";
+  const apiKey = typeof value.apiKey === "string" ? value.apiKey.trim() : "";
+  const model = typeof value.model === "string" ? value.model.trim() : "";
+  const fastModel = typeof value.fastModel === "string" ? value.fastModel.trim() : "";
+  const longformModel = typeof value.longformModel === "string" ? value.longformModel.trim() : "";
+
+  if (!id || !name || (!baseUrl && !apiKey && !model && !fastModel && !longformModel)) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    baseUrl,
+    apiKey,
+    model,
+    fastModel,
+    longformModel,
+  };
+}
+
+function toAIProviderProfileSummary(profile: AIProviderProfileSecret, activeProfileId: string | null): AIProviderProfileSummary {
+  return {
+    id: profile.id,
+    name: profile.name,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    fastModel: profile.fastModel,
+    longformModel: profile.longformModel,
+    hasApiKey: Boolean(profile.apiKey),
+    isActive: activeProfileId === profile.id,
+  };
+}
+
+function normalizeAIProviderConfig(settings: unknown): AIProviderCollectionSecret | null {
   const root = isPlainObject(settings) ? settings : {};
   const rawConfig = isPlainObject(root[AI_PROVIDER_CONFIG_KEY]) ? root[AI_PROVIDER_CONFIG_KEY] : null;
 
   if (!rawConfig) {
     return null;
+  }
+
+  const rawProfiles = Array.isArray(rawConfig.profiles) ? rawConfig.profiles : [];
+  const profiles = rawProfiles
+    .map(normalizeAIProviderProfile)
+    .filter((item): item is AIProviderProfileSecret => Boolean(item));
+
+  if (profiles.length > 0) {
+    const activeProfileId =
+      typeof rawConfig.activeProfileId === "string" && profiles.some((item) => item.id === rawConfig.activeProfileId)
+        ? rawConfig.activeProfileId
+        : profiles[0]?.id ?? null;
+
+    return {
+      profiles,
+      activeProfileId,
+    };
   }
 
   const baseUrl = typeof rawConfig.baseUrl === "string" ? rawConfig.baseUrl.trim().replace(/\/+$/, "") : "";
@@ -166,11 +241,76 @@ function normalizeAIProviderConfig(settings: unknown): AIProviderSecret | null {
   }
 
   return {
-    baseUrl,
-    apiKey,
-    model,
-    fastModel,
-    longformModel,
+    profiles: [{
+      id: "legacy-default",
+      name: "默认配置",
+      baseUrl,
+      apiKey,
+      model,
+      fastModel,
+      longformModel,
+    }],
+    activeProfileId: "legacy-default",
+  };
+}
+
+function toActiveAIProviderSecret(config: AIProviderCollectionSecret | null): AIProviderSecret | null {
+  if (!config) return null;
+  const activeProfile =
+    (config.activeProfileId ? config.profiles.find((item) => item.id === config.activeProfileId) : null) ??
+    config.profiles[0] ??
+    null;
+
+  if (!activeProfile) {
+    return null;
+  }
+
+  return {
+    baseUrl: activeProfile.baseUrl,
+    apiKey: activeProfile.apiKey,
+    model: activeProfile.model,
+    fastModel: activeProfile.fastModel,
+    longformModel: activeProfile.longformModel,
+  };
+}
+
+function createStoredAIProviderConfig(config: AIProviderCollectionSecret | null) {
+  if (!config || config.profiles.length === 0) {
+    return null;
+  }
+
+  return {
+    profiles: config.profiles,
+    activeProfileId: config.activeProfileId,
+  };
+}
+
+function createAIProviderSummaryFromActiveConfig(activeConfig: AIProviderSecret | null, source: AIProviderSummary["source"]): AIProviderSummary {
+  if (!activeConfig) {
+    return {
+      activeProfileId: null,
+      activeProfile: null,
+      profiles: [],
+      source,
+    };
+  }
+
+  const activeProfile: AIProviderProfileSummary = {
+    id: "runtime",
+    name: source === "environment" ? "环境变量配置" : "默认配置",
+    baseUrl: activeConfig.baseUrl,
+    model: activeConfig.model,
+    fastModel: activeConfig.fastModel,
+    longformModel: activeConfig.longformModel,
+    hasApiKey: Boolean(activeConfig.apiKey),
+    isActive: true,
+  };
+
+  return {
+    activeProfileId: activeProfile.id,
+    activeProfile,
+    profiles: [activeProfile],
+    source,
   };
 }
 
@@ -214,7 +354,7 @@ function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOff
 function mergePublicSettingsWithSecrets(
   publicSettings: AppSettings,
   integration: WechatIntegration,
-  aiProviderConfig: AIProviderSecret | null,
+  aiProviderConfig: AIProviderCollectionSecret | null,
   aiImageProviderConfig: AIImageProviderSecret | null,
 ) {
   return {
@@ -223,9 +363,9 @@ function mergePublicSettingsWithSecrets(
       accounts: integration.accounts,
       selectedAccountId: integration.selectedAccountId,
     },
-    ...(aiProviderConfig
+    ...(aiProviderConfig && createStoredAIProviderConfig(aiProviderConfig)
       ? {
-          [AI_PROVIDER_CONFIG_KEY]: aiProviderConfig,
+          [AI_PROVIDER_CONFIG_KEY]: createStoredAIProviderConfig(aiProviderConfig),
         }
       : {}),
     ...(aiImageProviderConfig
@@ -556,12 +696,15 @@ export async function readAIProviderConfig() {
   const storedConfig = normalizeAIProviderConfig(record?.settings);
 
   if (storedConfig) {
+    const activeProfile =
+      (storedConfig.activeProfileId ? storedConfig.profiles.find((item) => item.id === storedConfig.activeProfileId) : null) ??
+      storedConfig.profiles[0] ??
+      null;
+
     return {
-      baseUrl: storedConfig.baseUrl,
-      model: storedConfig.model,
-      fastModel: storedConfig.fastModel,
-      longformModel: storedConfig.longformModel,
-      hasApiKey: Boolean(storedConfig.apiKey),
+      activeProfileId: activeProfile?.id ?? null,
+      activeProfile: activeProfile ? toAIProviderProfileSummary(activeProfile, activeProfile.id) : null,
+      profiles: storedConfig.profiles.map((item) => toAIProviderProfileSummary(item, activeProfile?.id ?? null)),
       source: "database",
     } satisfies AIProviderSummary;
   }
@@ -572,27 +715,29 @@ export async function readAIProviderConfig() {
   const envLongformModel = getEnv("AI_MODEL_LONGFORM") || getEnv("OPENAI_MODEL_LONGFORM");
   const envApiKey = getEnv("AI_API_KEY") || getEnv("OPENAI_API_KEY");
 
-  return {
+  return createAIProviderSummaryFromActiveConfig({
     baseUrl: envBaseUrl,
+    apiKey: envApiKey,
     model: envModel,
     fastModel: envFastModel,
     longformModel: envLongformModel,
-    hasApiKey: Boolean(envApiKey),
-    source: envBaseUrl || envModel || envApiKey ? "environment" : "default",
-  } satisfies AIProviderSummary;
+  }, envBaseUrl || envModel || envApiKey ? "environment" : "default");
 }
 
 export async function readAIProviderSecret() {
   const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
-  return normalizeAIProviderConfig(record?.settings);
+  return toActiveAIProviderSecret(normalizeAIProviderConfig(record?.settings));
 }
 
 export async function upsertAIProviderConfig(input: {
+  id?: string;
+  name?: string;
   baseUrl: string;
   apiKey?: string;
   model: string;
   fastModel?: string;
   longformModel?: string;
+  setAsActive?: boolean;
 }) {
   const record = await readRawAppConfigRecord();
   const currentPublicSettings = normalizeAppSettings(record?.settings);
@@ -603,7 +748,10 @@ export async function upsertAIProviderConfig(input: {
   const model = input.model.trim();
   const fastModel = input.fastModel?.trim() ?? "";
   const longformModel = input.longformModel?.trim() ?? "";
-  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingConfig?.apiKey ?? "";
+  const existingProfile =
+    (input.id?.trim() ? existingConfig?.profiles.find((item) => item.id === input.id?.trim()) : null) ??
+    null;
+  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingProfile?.apiKey ?? "";
 
   if (!baseUrl) {
     throw new Error("请填写模型接口地址。");
@@ -617,12 +765,31 @@ export async function upsertAIProviderConfig(input: {
     throw new Error("请填写 API Key。");
   }
 
-  const nextConfig: AIProviderSecret = {
+  const currentProfiles = existingConfig?.profiles ?? [];
+  const profileId = input.id?.trim() || crypto.randomUUID();
+  const nextProfile: AIProviderProfileSecret = {
+    id: profileId,
+    name: input.name?.trim() || model || "未命名配置",
     baseUrl,
     apiKey,
     model,
     fastModel,
     longformModel,
+  };
+  const existingProfileIndex = currentProfiles.findIndex((item) => item.id === profileId);
+  const nextProfiles = [...currentProfiles];
+
+  if (existingProfileIndex >= 0) {
+    nextProfiles[existingProfileIndex] = nextProfile;
+  } else {
+    nextProfiles.unshift(nextProfile);
+  }
+
+  const nextConfig: AIProviderCollectionSecret = {
+    profiles: nextProfiles,
+    activeProfileId: input.setAsActive === false
+      ? existingConfig?.activeProfileId ?? nextProfiles[0]?.id ?? null
+      : profileId,
   };
   const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, nextConfig, aiImageProviderConfig);
 
@@ -632,22 +799,62 @@ export async function upsertAIProviderConfig(input: {
     updatedAt: new Date().toISOString(),
   });
 
-  return {
-    baseUrl: nextConfig.baseUrl,
-    model: nextConfig.model,
-    fastModel: nextConfig.fastModel,
-    longformModel: nextConfig.longformModel,
-    hasApiKey: Boolean(nextConfig.apiKey),
-    source: "database",
-  } satisfies AIProviderSummary;
+  return readAIProviderConfig();
 }
 
-export async function deleteAIProviderConfig() {
+export async function setActiveAIProviderConfig(profileId: string) {
+  const record = await readRawAppConfigRecord();
+  const currentPublicSettings = normalizeAppSettings(record?.settings);
+  const integration = normalizeWechatIntegration(record?.settings);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
+
+  if (!aiProviderConfig || aiProviderConfig.profiles.length === 0) {
+    throw new Error("当前没有可切换的模型配置。");
+  }
+
+  if (!aiProviderConfig.profiles.some((item) => item.id === profileId)) {
+    throw new Error("目标模型配置不存在。");
+  }
+
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, {
+    profiles: aiProviderConfig.profiles,
+    activeProfileId: profileId,
+  }, aiImageProviderConfig);
+
+  await saveRawAppConfigRecord({
+    settings: storedSettings,
+    selectedTopicId: record?.selectedTopicId ?? null,
+    updatedAt: new Date().toISOString(),
+  });
+
+  return readAIProviderConfig();
+}
+
+export async function deleteAIProviderConfig(profileId?: string) {
   const record = await readRawAppConfigRecord();
   const currentPublicSettings = normalizeAppSettings(record?.settings);
   const integration = normalizeWechatIntegration(record?.settings);
   const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
-  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, null, aiImageProviderConfig);
+  const aiProviderConfig = normalizeAIProviderConfig(record?.settings);
+
+  const nextConfig = (() => {
+    if (!profileId) return null;
+    if (!aiProviderConfig) return null;
+
+    const profiles = aiProviderConfig.profiles.filter((item) => item.id !== profileId);
+    if (profiles.length === 0) return null;
+
+    return {
+      profiles,
+      activeProfileId:
+        aiProviderConfig.activeProfileId === profileId
+          ? profiles[0]?.id ?? null
+          : aiProviderConfig.activeProfileId,
+    } satisfies AIProviderCollectionSecret;
+  })();
+
+  const storedSettings = mergePublicSettingsWithSecrets(currentPublicSettings, integration, nextConfig, aiImageProviderConfig);
 
   await saveRawAppConfigRecord({
     settings: storedSettings,

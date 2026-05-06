@@ -612,6 +612,56 @@ function polishTitleCandidates(items: string[]) {
   return diversifyTitleCandidates(cleaned).slice(0, 5);
 }
 
+function trimTitleToLimit(title: string) {
+  const cleaned = polishTitleText(title);
+  if (isTitleWithinLimit(cleaned)) return cleaned;
+
+  const separators = ["：", ":", "｜", "|", "，", ",", " ", "-", "·"];
+
+  for (const separator of separators) {
+    if (!cleaned.includes(separator)) continue;
+    const shortened = polishTitleText(cleaned.split(separator)[0] ?? "");
+    if (shortened && isTitleWithinLimit(shortened)) {
+      return shortened;
+    }
+  }
+
+  let compact = cleaned
+    .replace(/这件事|这波热度|这场讨论|这条热搜|这个话题/g, "")
+    .replace(/到底|究竟|真的|正在|已经/g, "")
+    .replace(/\s+/g, "");
+
+  if (isTitleWithinLimit(compact)) return compact;
+
+  while (getTitleLength(compact) > MAX_TITLE_LENGTH) {
+    compact = compact.slice(0, -1).trim();
+  }
+
+  return polishTitleText(compact);
+}
+
+function normalizeTitlesWithinLimit(preferredTitle: string, titleCandidates: string[], fallbackTitle: string) {
+  const normalizedCandidates = polishTitleCandidates(titleCandidates)
+    .map((item) => trimTitleToLimit(item))
+    .filter(Boolean)
+    .filter((item, index, items) => items.indexOf(item) === index);
+
+  const title = selectPrimaryTitle(
+    trimTitleToLimit(preferredTitle),
+    normalizedCandidates,
+    trimTitleToLimit(fallbackTitle),
+  );
+
+  const ensuredCandidates = normalizedCandidates.length
+    ? normalizedCandidates
+    : [title].filter(Boolean);
+
+  return {
+    title: trimTitleToLimit(title),
+    titleCandidates: ensuredCandidates.slice(0, 5),
+  };
+}
+
 function getTitleLength(title: string) {
   return title.replace(/\s+/g, "").length;
 }
@@ -821,14 +871,20 @@ async function adjustTitlesToLength<T extends AIWriteResult>(
 
     current = {
       ...current,
-      title: selectPrimaryTitle(normalizeText(parsed.title, current.title), nextCandidates, current.title),
-      titleCandidates: nextCandidates.length ? nextCandidates : current.titleCandidates,
+      ...normalizeTitlesWithinLimit(
+        normalizeText(parsed.title, current.title),
+        nextCandidates.length ? nextCandidates : current.titleCandidates,
+        current.title,
+      ),
       selectedAngle: normalizeSelectedAngle(parsed.selectedAngle, current.selectedAngle),
     };
   }
 
   if (getTitleLengthIssue(current.title, current.titleCandidates)) {
-    throw new Error(`AI 未能把标题控制在 ${MAX_TITLE_LENGTH} 字内，请重试。`);
+    return {
+      ...current,
+      ...normalizeTitlesWithinLimit(current.title, current.titleCandidates, current.title),
+    };
   }
 
   return current;
@@ -1349,6 +1405,7 @@ function buildWordCountStatus(body: string, targetWordCount: number, adjusted: b
     target: metrics.normalized,
     adjusted,
     inRange: !metrics.isTooShort && !metrics.isTooLong,
+    deviation: metrics.isTooShort ? "short" : metrics.isTooLong ? "long" : "none",
   };
 }
 
@@ -1654,9 +1711,12 @@ async function draftBodyWithStrictWordCount(
     max: lastWordCountStatus.max,
   });
 
-  throw new Error(
-    "AI 未能按设定字数生成正文，请重试。",
-  );
+  return {
+    provider,
+    model: modelTrail.join(" => "),
+    result: lastResult,
+    wordCountStatus: lastWordCountStatus,
+  };
 }
 
 async function callCompatibleModel({
@@ -1781,7 +1841,12 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
     request.topic.title,
   );
   assertTitleCandidateDiversity(titleCandidates, request.topic.title);
-  const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
+  const normalizedTitles = normalizeTitlesWithinLimit(
+    normalizeText(parsed.title, titleCandidates[0] || base.title),
+    titleCandidates,
+    base.title,
+  );
+  const title = normalizedTitles.title;
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
@@ -1789,11 +1854,6 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
 
   if (request.scope !== "title") {
     assertOutlineDiversity(outline);
-  }
-
-  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
-  if (titleLengthIssue) {
-    throw new Error(titleLengthIssue);
   }
 
   if (request.scope === "body" || request.scope === "full") {
@@ -1805,7 +1865,7 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
     return {
       ...base,
       title,
-      titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(base.titleCandidates),
+      titleCandidates: normalizedTitles.titleCandidates,
       selectedAngle,
       summary: polishSummaryText(existingSummary),
       outline: polishOutlineItems(existingOutline),
@@ -1827,7 +1887,7 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
 
   return {
     title,
-    titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(base.titleCandidates),
+    titleCandidates: normalizedTitles.titleCandidates,
     selectedAngle,
     summary,
     outline: outline.length ? outline : base.outline,
@@ -1845,15 +1905,15 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
     request.topic.title,
   );
   assertTitleCandidateDiversity(titleCandidates, request.topic.title);
-  const title = selectPrimaryTitle(normalizeText(parsed.title, titleCandidates[0] || base.title), titleCandidates, base.title);
+  const normalizedTitles = normalizeTitlesWithinLimit(
+    normalizeText(parsed.title, titleCandidates[0] || base.title),
+    titleCandidates,
+    base.title,
+  );
+  const title = normalizedTitles.title;
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, base.outline));
-
-  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
-  if (titleLengthIssue) {
-    throw new Error(titleLengthIssue);
-  }
 
   assertOutlineDiversity(outline);
   assertGeneratedPlanningQuality(summary, outline, base.summary, base.outline);
@@ -1861,7 +1921,7 @@ function mergePlanningResult(request: AIWriteGenerateRequest, rawText: string): 
 
   return {
     title,
-    titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(base.titleCandidates),
+    titleCandidates: normalizedTitles.titleCandidates,
     selectedAngle,
     summary,
     outline: outline.length ? outline : polishOutlineItems(base.outline),
@@ -1885,11 +1945,12 @@ function mergeBodyWithPlan(
   const outline = polishOutlineItems(normalizeStringList(parsed.outline, plan.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, plan.body));
 
-  const title = selectPrimaryTitle(normalizeText(parsed.title, plan.title), titleCandidates, plan.title);
-  const titleLengthIssue = getTitleLengthIssue(title, titleCandidates);
-  if (titleLengthIssue) {
-    throw new Error(titleLengthIssue);
-  }
+  const normalizedTitles = normalizeTitlesWithinLimit(
+    normalizeText(parsed.title, plan.title),
+    titleCandidates,
+    plan.title,
+  );
+  const title = normalizedTitles.title;
 
   assertOutlineDiversity(outline);
   assertGeneratedBodyQuality(body, fallbackBody || plan.body);
@@ -1897,7 +1958,7 @@ function mergeBodyWithPlan(
 
   return {
     title,
-    titleCandidates: titleCandidates.length ? titleCandidates : polishTitleCandidates(plan.titleCandidates),
+    titleCandidates: normalizedTitles.titleCandidates,
     selectedAngle: normalizeSelectedAngle(parsed.selectedAngle, plan.selectedAngle),
     summary: polishSummaryText(normalizeText(parsed.summary, plan.summary)),
     outline: outline.length ? outline : polishOutlineItems(plan.outline),

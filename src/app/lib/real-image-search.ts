@@ -505,7 +505,7 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
 
   const domain = resolveArticleDomain(input.domain) as ArticleDomain;
   if (domain === "汽车" && /(autohome|bitauto|che168|pcauto|sohuauto|cheshi)/i.test(pageHost)) score += 8;
-  if (domain === "旅游" && /(qunar|ctrip|mafengwo|feizhu|ly\.com)/i.test(pageHost)) score += 8;
+  if (domain === "旅游" && /(qunar|ctrip|mafengwo|feizhu|ly\.com|tuniu|lvmama|zuche|yundashequ|mafengwo|tripadvisor|booking|agoda|airbnb|xiaohongshu|dianping)/i.test(pageHost)) score += 8;
   if (domain === "社会" && /(news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 6;
   if (domain === "科技" && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
 

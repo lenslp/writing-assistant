@@ -4,6 +4,14 @@ import { readAIProviderConfig } from "../../../lib/app-config-db";
 
 export const dynamic = "force-dynamic";
 
+type TestPayload = {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  fastModel?: string;
+  longformModel?: string;
+};
+
 function detectProviderProtocol(baseUrl: string) {
   return baseUrl.includes("anthropic") ? "anthropic" as const : "openai" as const;
 }
@@ -68,10 +76,28 @@ function classifyModelError(status: number, message: string) {
   return message || "模型连接测试失败。";
 }
 
-export async function POST() {
-  const config = await getAIProviderConfig();
+export async function POST(request: Request) {
+  const payload = await request.json().catch(() => null) as TestPayload | null;
+  const savedConfig = await getAIProviderConfig();
   const summary = await readAIProviderConfig();
-  const model = summary.fastModel || summary.model || summary.longformModel || "qwen-turbo";
+  const activeProfile = summary.activeProfile;
+  const runtimeBaseUrl = payload?.baseUrl?.trim().replace(/\/+$/, "") || savedConfig.baseUrl;
+  const runtimeApiKey = payload?.apiKey?.trim() || savedConfig.apiKey;
+  const model =
+    payload?.fastModel?.trim() ||
+    payload?.model?.trim() ||
+    payload?.longformModel?.trim() ||
+    activeProfile?.fastModel ||
+    activeProfile?.model ||
+    activeProfile?.longformModel ||
+    "qwen-turbo";
+  const config = {
+    ...savedConfig,
+    configured: Boolean(runtimeApiKey),
+    apiKey: runtimeApiKey,
+    baseUrl: runtimeBaseUrl,
+    provider: detectProviderProtocol(runtimeBaseUrl) === "anthropic" ? "Anthropic" : "OpenAI Compatible",
+  };
   const protocol = detectProviderProtocol(config.baseUrl);
 
   if (!config.configured) {

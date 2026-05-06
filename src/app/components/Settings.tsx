@@ -49,21 +49,33 @@ type WechatAccountForm = {
   setAsSelected: boolean;
 };
 
-type AIProviderView = {
+type AIProviderProfileView = {
+  id: string;
+  name: string;
   baseUrl: string;
   model: string;
   fastModel: string;
   longformModel: string;
   hasApiKey: boolean;
+  isActive: boolean;
+};
+
+type AIProviderView = {
+  activeProfileId: string | null;
+  activeProfile: AIProviderProfileView | null;
+  profiles: AIProviderProfileView[];
   source: "database" | "environment" | "default";
 };
 
 type AIProviderForm = {
+  id: string;
+  name: string;
   baseUrl: string;
   apiKey: string;
   model: string;
   fastModel: string;
   longformModel: string;
+  setAsActive: boolean;
 };
 
 type AIImageProviderView = {
@@ -90,11 +102,14 @@ const emptyWechatAccountForm: WechatAccountForm = {
 };
 
 const emptyAIProviderForm: AIProviderForm = {
+  id: "",
+  name: "",
   baseUrl: "",
   apiKey: "",
   model: "",
   fastModel: "",
   longformModel: "",
+  setAsActive: true,
 };
 
 const emptyAIImageProviderForm: AIImageProviderForm = {
@@ -160,6 +175,9 @@ export function Settings() {
   const [aiProviderForm, setAIProviderForm] = useState<AIProviderForm>(emptyAIProviderForm);
   const [aiProviderLoading, setAIProviderLoading] = useState(false);
   const [aiProviderTesting, setAIProviderTesting] = useState(false);
+  const [aiProviderEditingId, setAIProviderEditingId] = useState<string | null>(null);
+  const [isAIProviderDialogOpen, setIsAIProviderDialogOpen] = useState(false);
+  const [aiProviderTestFeedback, setAIProviderTestFeedback] = useState<{ type: "idle" | "success" | "error"; message: string } | null>(null);
   const [aiImageProvider, setAIImageProvider] = useState<AIImageProviderView | null>(null);
   const [aiImageProviderForm, setAIImageProviderForm] = useState<AIImageProviderForm>(emptyAIImageProviderForm);
   const [aiImageProviderLoading, setAIImageProviderLoading] = useState(false);
@@ -233,48 +251,21 @@ export function Settings() {
     () => aiProviderPresets.find((preset) => preset.baseUrl === aiProviderForm.baseUrl) ?? null,
     [aiProviderForm.baseUrl],
   );
+  const activeAiProviderProfile = useMemo(
+    () => aiProvider?.profiles.find((profile) => profile.id === aiProvider?.activeProfileId) ?? aiProvider?.activeProfile ?? null,
+    [aiProvider],
+  );
   const currentProtocolLabel = useMemo(() => {
     if (activeAiProviderPreset) return activeAiProviderPreset.name;
     if (!aiProviderForm.baseUrl.trim()) return "未选择";
     return aiProviderForm.baseUrl.includes("anthropic") ? "Anthropic Native" : "OpenAI Compatible";
   }, [activeAiProviderPreset, aiProviderForm.baseUrl]);
-  const aiProviderSourceLabel =
-    aiProvider?.source === "database" ? "页面配置" : aiProvider?.source === "environment" ? "环境变量" : "默认配置";
   const aiProviderDraftModel = aiProviderForm.longformModel.trim() || aiProviderForm.model.trim() || "未设置";
-  const aiProviderSavedModel = aiProvider?.model?.trim() || "未设置";
-  const aiProviderKeyStatusLabel = aiProvider?.hasApiKey ? "已保存" : "未配置";
   const aiProviderProtocolHint = currentProtocolLabel === "Anthropic Native"
     ? "适合 Claude 原生接口"
     : currentProtocolLabel === "OpenAI Compatible"
       ? "适合大多数兼容模型服务"
       : "先选择协议入口";
-  const aiProviderFormHints = useMemo(() => {
-    const hints: string[] = [];
-
-    if (!aiProviderForm.baseUrl.trim()) {
-      hints.push("需要填写可访问的模型接口 Base URL。");
-    } else if (!/\/v1\/?$/.test(aiProviderForm.baseUrl.trim())) {
-      hints.push("Base URL 通常应以 /v1 结尾，避免请求路径拼接错误。");
-    }
-
-    if (!aiProviderForm.fastModel.trim()) {
-      hints.push("快模型未填写时，标题、大纲、改写会回退到默认模型。");
-    }
-
-    if (!aiProviderForm.longformModel.trim()) {
-      hints.push("长文模型未填写时，正文、全文会回退到默认模型。");
-    }
-
-    if (
-      aiProviderForm.fastModel.trim() &&
-      aiProviderForm.model.trim() &&
-      aiProviderForm.fastModel.trim() === aiProviderForm.model.trim()
-    ) {
-      hints.push("快模型与默认模型相同是允许的，但速度收益可能不明显。");
-    }
-
-    return hints;
-  }, [aiProviderForm.baseUrl, aiProviderForm.fastModel, aiProviderForm.longformModel, aiProviderForm.model]);
 
   const updateField = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
     setForm((currentForm) => ({ ...currentForm, [key]: value }));
@@ -352,12 +343,17 @@ export function Settings() {
 
       const config = payload.config as AIProviderView;
       setAIProvider(config);
+      const profile = config.activeProfile ?? config.profiles[0] ?? null;
+      setAIProviderEditingId(profile?.id ?? null);
       setAIProviderForm({
-        baseUrl: config.baseUrl || aiProviderPresets[0].baseUrl,
+        id: profile?.id ?? "",
+        name: profile?.name ?? "",
+        baseUrl: profile?.baseUrl || aiProviderPresets[0].baseUrl,
         apiKey: "",
-        model: config.model || aiProviderPresets[0].model,
-        fastModel: config.fastModel || "",
-        longformModel: config.longformModel || "",
+        model: profile?.model || aiProviderPresets[0].model,
+        fastModel: profile?.fastModel || "",
+        longformModel: profile?.longformModel || "",
+        setAsActive: true,
       });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "加载模型配置失败");
@@ -409,10 +405,56 @@ export function Settings() {
     setAIProviderForm((current) => ({
       ...current,
       baseUrl: preset.baseUrl,
+      name: current.name || preset.name,
       model: preset.model,
       fastModel: preset.fastModel,
       longformModel: preset.longformModel,
     }));
+  };
+
+  const handleSelectAIProviderProfile = (profileId: string) => {
+    const profile = aiProvider?.profiles.find((item) => item.id === profileId);
+    if (!profile) return;
+
+    setAIProviderEditingId(profile.id);
+    setAIProviderForm({
+      id: profile.id,
+      name: profile.name,
+      baseUrl: profile.baseUrl,
+      apiKey: "",
+      model: profile.model,
+      fastModel: profile.fastModel,
+      longformModel: profile.longformModel,
+      setAsActive: profile.isActive,
+    });
+  };
+
+  const handleCreateAIProviderProfile = () => {
+    const preset = aiProviderPresets[0];
+    setAIProviderTestFeedback(null);
+    setAIProviderEditingId(null);
+    setAIProviderForm({
+      id: "",
+      name: "",
+      baseUrl: preset.baseUrl,
+      apiKey: "",
+      model: preset.model,
+      fastModel: preset.fastModel,
+      longformModel: preset.longformModel,
+      setAsActive: true,
+    });
+    setIsAIProviderDialogOpen(true);
+  };
+
+  const handleEditAIProviderProfile = (profileId: string) => {
+    setAIProviderTestFeedback(null);
+    handleSelectAIProviderProfile(profileId);
+    setIsAIProviderDialogOpen(true);
+  };
+
+  const closeAIProviderDialog = () => {
+    setIsAIProviderDialogOpen(false);
+    setAIProviderTestFeedback(null);
   };
 
   const handleSaveAIProviderConfig = async () => {
@@ -424,7 +466,11 @@ export function Settings() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(aiProviderForm),
+        body: JSON.stringify({
+          action: "upsert",
+          ...aiProviderForm,
+          setAsActive: aiProviderForm.setAsActive,
+        }),
       });
       const payload = await response.json().catch(() => null);
 
@@ -434,8 +480,21 @@ export function Settings() {
 
       const config = payload.config as AIProviderView;
       setAIProvider(config);
-      setAIProviderForm((current) => ({ ...current, apiKey: "" }));
-      setNotice("模型配置已保存");
+      const profile = config.activeProfile ?? config.profiles[0] ?? null;
+      setAIProviderEditingId(profile?.id ?? null);
+      setAIProviderForm({
+        id: profile?.id ?? "",
+        name: profile?.name ?? "",
+        baseUrl: profile?.baseUrl || aiProviderPresets[0].baseUrl,
+        apiKey: "",
+        model: profile?.model || aiProviderPresets[0].model,
+        fastModel: profile?.fastModel || "",
+        longformModel: profile?.longformModel || "",
+        setAsActive: true,
+      });
+      setIsAIProviderDialogOpen(false);
+      setAIProviderTestFeedback(null);
+      setNotice(aiProviderForm.id ? "模型配置已更新并切换生效" : "模型配置已新增并切换生效");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "保存模型配置失败");
@@ -447,18 +506,42 @@ export function Settings() {
 
   const handleTestAIProviderConfig = async () => {
     setAIProviderTesting(true);
+    setAIProviderTestFeedback({
+      type: "idle",
+      message: "正在测试当前表单配置...",
+    });
 
     try {
-      const response = await fetch("/api/ai/test", { method: "POST" });
+      const response = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          baseUrl: aiProviderForm.baseUrl,
+          apiKey: aiProviderForm.apiKey,
+          model: aiProviderForm.model,
+          fastModel: aiProviderForm.fastModel,
+          longformModel: aiProviderForm.longformModel,
+        }),
+      });
       const payload = await response.json().catch(() => null);
 
       if (!response.ok || !payload?.ok) {
         throw new Error(payload?.message ?? "模型连接测试失败");
       }
 
+      setAIProviderTestFeedback({
+        type: "success",
+        message: `${payload.provider ?? "模型"} · ${payload.model ?? ""} 测试通过`,
+      });
       setNotice(`${payload.provider ?? "模型"} · ${payload.model ?? ""} 测试通过`);
       window.setTimeout(() => setNotice(""), 3000);
     } catch (error) {
+      setAIProviderTestFeedback({
+        type: "error",
+        message: error instanceof Error ? error.message : "模型连接测试失败",
+      });
       setNotice(error instanceof Error ? error.message : "模型连接测试失败");
       window.setTimeout(() => setNotice(""), 4000);
     } finally {
@@ -466,11 +549,14 @@ export function Settings() {
     }
   };
 
-  const handleDeleteAIProviderConfig = async () => {
+  const handleDeleteAIProviderConfig = async (profileId?: string) => {
     setAIProviderLoading(true);
 
     try {
-      const response = await fetch("/api/ai/provider", { method: "DELETE" });
+      const response = await fetch(
+        profileId ? `/api/ai/provider?profileId=${encodeURIComponent(profileId)}` : "/api/ai/provider",
+        { method: "DELETE" },
+      );
       const payload = await response.json().catch(() => null);
 
       if (!response.ok || !payload?.config) {
@@ -479,17 +565,66 @@ export function Settings() {
 
       const config = payload.config as AIProviderView;
       setAIProvider(config);
+      const profile = config.activeProfile ?? config.profiles[0] ?? null;
+      setAIProviderEditingId(profile?.id ?? null);
       setAIProviderForm({
-        baseUrl: config.baseUrl || aiProviderPresets[0].baseUrl,
+        id: profile?.id ?? "",
+        name: profile?.name ?? "",
+        baseUrl: profile?.baseUrl || aiProviderPresets[0].baseUrl,
         apiKey: "",
-        model: config.model || aiProviderPresets[0].model,
-        fastModel: config.fastModel || "",
-        longformModel: config.longformModel || "",
+        model: profile?.model || aiProviderPresets[0].model,
+        fastModel: profile?.fastModel || "",
+        longformModel: profile?.longformModel || "",
+        setAsActive: true,
       });
-      setNotice("已恢复使用环境变量模型配置");
+      setNotice(profileId ? "模型配置已删除" : "已恢复使用环境变量模型配置");
       window.setTimeout(() => setNotice(""), 2500);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "恢复环境变量配置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setAIProviderLoading(false);
+    }
+  };
+
+  const handleActivateAIProviderConfig = async (profileId: string) => {
+    setAIProviderLoading(true);
+
+    try {
+      const response = await fetch("/api/ai/provider", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "activate",
+          profileId,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.config) {
+        throw new Error(payload?.message ?? "切换模型配置失败");
+      }
+
+      const config = payload.config as AIProviderView;
+      setAIProvider(config);
+      const profile = config.profiles.find((item) => item.id === profileId) ?? config.activeProfile ?? null;
+      setAIProviderEditingId(profile?.id ?? null);
+      setAIProviderForm({
+        id: profile?.id ?? "",
+        name: profile?.name ?? "",
+        baseUrl: profile?.baseUrl || aiProviderPresets[0].baseUrl,
+        apiKey: "",
+        model: profile?.model || aiProviderPresets[0].model,
+        fastModel: profile?.fastModel || "",
+        longformModel: profile?.longformModel || "",
+        setAsActive: true,
+      });
+      setNotice("已切换当前生效配置");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "切换模型配置失败");
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIProviderLoading(false);
@@ -876,182 +1011,93 @@ export function Settings() {
       </Section>
 
       <Section id="ai-writer" title="AI 写作模型">
-        <div className="rounded-[28px] border border-blue-100 bg-[linear-gradient(135deg,#eef5ff_0%,#f8fbff_62%,#ffffff_100%)] px-5 py-4 text-blue-900 shadow-[0_16px_40px_rgba(59,130,246,0.08)]">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <div className="text-[12px] uppercase tracking-[0.18em] text-blue-500/80">Protocol Access</div>
-              <div className="mt-2 text-[18px] text-slate-900" style={{ fontWeight: 700 }}>先选协议，再配模型</div>
-              <div className="mt-1 text-[13px] leading-6 text-slate-600">
-                API Key 只保存在服务端。支持 `OpenAI Compatible` 和 `Anthropic Native` 两类入口，其它模型服务只要兼容其中一种协议也能接入。
-              </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Profiles</div>
+              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>配置列表与切换</div>
+              <div className="mt-1 text-[12px] leading-5 text-gray-500">支持保存多个模型入口。新建和编辑都会在弹框中完成，也可以直接切换默认生效配置。</div>
             </div>
-            <div className="grid min-w-[260px] gap-2 sm:grid-cols-2">
-              <div className="rounded-2xl border border-blue-200/70 bg-white/90 px-4 py-3">
-                <div className="text-[11px] text-slate-400">当前协议</div>
-                <div className="mt-1 text-[14px] text-slate-900" style={{ fontWeight: 700 }}>{currentProtocolLabel}</div>
-                <div className="mt-1 text-[11px] text-slate-500">{aiProviderProtocolHint}</div>
-              </div>
-              <div className="rounded-2xl border border-blue-200/70 bg-white/90 px-4 py-3">
-                <div className="text-[11px] text-slate-400">预计生效</div>
-                <div className="mt-1 truncate text-[14px] text-slate-900" style={{ fontWeight: 700 }}>{aiProviderDraftModel}</div>
-                <div className="mt-1 text-[11px] text-slate-500">{activeAiProviderPreset ? "已匹配预设" : "手动配置中"}</div>
-              </div>
-            </div>
+            <button
+              type="button"
+              onClick={handleCreateAIProviderProfile}
+              className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-blue-200 bg-white px-3 py-2 text-[12px] text-blue-600 hover:bg-blue-50"
+              style={{ fontWeight: 600 }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              新建
+            </button>
           </div>
-        </div>
 
-        <div className="grid gap-4 xl:grid-cols-[0.88fr_1.28fr_0.84fr]">
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
-            <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Protocol</div>
-            <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>选择协议入口</div>
-            <div className="mt-1 text-[12px] leading-5 text-gray-500">这里只保留两种主流协议模式：`OpenAI Compatible` 和 `Anthropic Native`。如果你的服务兼容其中一种协议，直接按对应入口配置即可。</div>
+          <div className="mt-4 space-y-2">
+            {aiProvider?.profiles.length ? aiProvider.profiles.map((profile) => {
+              const isActive = profile.isActive;
+              const protocolName =
+                aiProviderPresets.find((preset) => preset.baseUrl === profile.baseUrl)?.name ??
+                (profile.baseUrl.includes("anthropic") ? "Anthropic Native" : "OpenAI Compatible");
 
-            <div className="mt-4 space-y-2">
-              {aiProviderPresets.map((preset) => {
-                const isActive = activeAiProviderPreset?.name === preset.name;
-                const meta = aiProviderPresetDetails[preset.name];
-
-                return (
-                  <button
-                    key={preset.name}
-                    type="button"
-                    onClick={() => handleApplyAIProviderPreset(preset)}
-                    className={`w-full rounded-3xl border px-4 py-3.5 text-left transition-all ${
-                      isActive
-                        ? "border-blue-200 bg-blue-50 shadow-[0_14px_30px_rgba(59,130,246,0.10)]"
-                        : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className={`text-[14px] ${isActive ? "text-blue-700" : "text-gray-900"}`} style={{ fontWeight: 700 }}>
-                        {preset.name}
+              return (
+                <div key={profile.id} className="rounded-2xl border border-gray-200 bg-gray-50/40 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <div className="truncate text-[14px] text-gray-900" style={{ fontWeight: 700 }}>
+                          {profile.name}
+                        </div>
+                        {isActive ? (
+                          <span className="text-[11px] text-emerald-700" style={{ fontWeight: 600 }}>
+                            默认
+                          </span>
+                        ) : null}
                       </div>
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] ${isActive ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"}`} style={{ fontWeight: 600 }}>
-                        {meta.tag}
-                      </span>
+                      <div className="mt-1 text-[12px] leading-5 text-gray-500">
+                        {protocolName} · {profile.model || "未设置模型"}
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-gray-400">{profile.baseUrl || "未设置 Base URL"}</div>
                     </div>
-                    <div className={`mt-1 text-[12px] leading-5 ${isActive ? "text-blue-600" : "text-gray-500"}`}>
-                      {meta.hint}
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleEditAIProviderProfile(profile.id)}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-700 hover:bg-white"
+                        style={{ fontWeight: 600 }}
+                      >
+                        编辑
+                      </button>
+                      {!isActive ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleActivateAIProviderConfig(profile.id)}
+                          disabled={aiProviderLoading}
+                          className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-700 hover:bg-white disabled:opacity-60"
+                          style={{ fontWeight: 600 }}
+                        >
+                          设为默认
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteAIProviderConfig(profile.id)}
+                        disabled={aiProviderLoading}
+                        className="rounded-lg border border-red-100 px-3 py-1.5 text-[12px] text-red-500 hover:bg-red-50 disabled:opacity-60"
+                        style={{ fontWeight: 600 }}
+                      >
+                        删除
+                      </button>
                     </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-gray-100 bg-white p-4">
-              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Connection</div>
-              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>连接配置</div>
-              <div className="mt-1 text-[12px] leading-5 text-gray-500">先确认协议入口，再填写 Base URL 和 API Key，最后为不同写作任务分配模型。</div>
-
-              <div className="mt-4 grid gap-3">
-                <Field
-                  label="接口地址 Base URL"
-                  value={aiProviderForm.baseUrl}
-                  onChange={(value) => handleAIProviderFormChange("baseUrl", value)}
-                />
-                <Field
-                  label={aiProvider?.hasApiKey ? "API Key（已配置，留空则不修改）" : "API Key"}
-                  value={aiProviderForm.apiKey}
-                  onChange={(value) => handleAIProviderFormChange("apiKey", value)}
-                  type="password"
-                />
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-gray-100 bg-white p-4">
-              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Model Roles</div>
-              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>模型分工</div>
-              <div className="mt-1 text-[12px] leading-5 text-gray-500">默认模型负责兜底，快模型偏速度，长文模型偏正文质量。</div>
-
-              <div className="mt-4 grid gap-3">
-                <div>
-                  <Field
-                    label="默认写作模型"
-                    value={aiProviderForm.model}
-                    onChange={(value) => handleAIProviderFormChange("model", value)}
-                  />
-                  <div className="mt-1 text-[11px] text-gray-400">未指定任务时的默认模型，也作为其他模型留空时的回退选项。</div>
-                </div>
-                <div>
-                  <Field
-                    label="快模型（标题 / 大纲 / 改写）"
-                    value={aiProviderForm.fastModel}
-                    onChange={(value) => handleAIProviderFormChange("fastModel", value)}
-                  />
-                  <div className="mt-1 text-[11px] text-gray-400">适合标题灵感、结构规划和局部改写，优先考虑响应速度。</div>
-                </div>
-                <div>
-                  <Field
-                    label="长文模型（正文 / 全文）"
-                    value={aiProviderForm.longformModel}
-                    onChange={(value) => handleAIProviderFormChange("longformModel", value)}
-                  />
-                  <div className="mt-1 text-[11px] text-gray-400">适合正文与全文生成，优先考虑稳定性、信息密度和成稿质量。</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
-              <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Runtime</div>
-              <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>当前生效状态</div>
-
-              <div className="mt-4 grid gap-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
-                    <div className="text-[11px] text-gray-400">当前协议</div>
-                    <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{currentProtocolLabel}</div>
-                  </div>
-                  <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
-                    <div className="text-[11px] text-gray-400">当前来源</div>
-                    <div className="mt-1 text-[13px] text-gray-900" style={{ fontWeight: 700 }}>{aiProviderSourceLabel}</div>
                   </div>
                 </div>
-
-                <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
-                  <div className="text-[11px] text-gray-400">保存后预计生效模型</div>
-                  <div className="mt-1 truncate text-[14px] text-gray-900" style={{ fontWeight: 700 }}>{aiProviderDraftModel}</div>
-                </div>
-
-                <div className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-[12px] leading-6 text-gray-500">
-                  <div><span className="text-gray-400">密钥状态：</span>{aiProviderKeyStatusLabel}</div>
-                  <div className="truncate"><span className="text-gray-400">当前已生效：</span>{aiProviderSavedModel}</div>
-                  <div><span className="text-gray-400">影响范围：</span>标题 / 大纲 / 正文 / 全文</div>
-                </div>
+              );
+            }) : (
+              <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/40 px-4 py-6 text-[12px] leading-5 text-gray-500">
+                当前还没有页面内保存的写作模型配置。可以先新建一个，也可以继续使用环境变量。
               </div>
-            </div>
-
-            <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-4">
-              <div className="text-[13px] text-amber-900" style={{ fontWeight: 700 }}>配置建议</div>
-              <div className="mt-2 space-y-2 text-[12px] leading-5 text-amber-900/80">
-                {aiProviderFormHints.length ? (
-                  aiProviderFormHints.map((hint) => (
-                    <div key={hint}>- {hint}</div>
-                  ))
-                ) : (
-                  <>
-                    <div>- 当前配置结构完整，保存后可以直接测试标题、大纲和正文链路。</div>
-                    <div>- 如果你希望成本更稳，可把快模型和默认模型设成同一个轻量模型。</div>
-                  </>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-gray-100 bg-gray-50/70 px-4 py-3">
-          <button
-            type="button"
-            onClick={() => void handleSaveAIProviderConfig()}
-            disabled={aiProviderLoading}
-            className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
-            style={{ fontWeight: 600 }}
-          >
-            {aiProviderLoading ? "保存中" : "保存并生效"}
-          </button>
           <button
             type="button"
             onClick={() => void loadAIProviderConfig()}
@@ -1075,10 +1121,10 @@ export function Settings() {
               type="button"
               onClick={() => void handleDeleteAIProviderConfig()}
               disabled={aiProviderLoading}
-              className="rounded-xl border border-red-100 px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 disabled:opacity-60"
+              className="rounded-xl border border-amber-100 px-4 py-2.5 text-[13px] text-amber-700 hover:bg-amber-50 disabled:opacity-60"
               style={{ fontWeight: 500 }}
             >
-              恢复环境变量
+              清空页面配置并恢复环境变量
             </button>
           ) : null}
         </div>
@@ -1294,9 +1340,177 @@ export function Settings() {
         <TagEditor label="你偏好生成的内容形式" values={form.contentPreferences} color="purple" onChange={(values) => updateField("contentPreferences", values)} />
       </Section>
 
-          <div className="flex justify-end text-[12px] text-gray-400">
-            {isDirty ? "你有未保存的修改" : "当前设置已同步到云端"}
-          </div>
+        <Dialog open={isAIProviderDialogOpen} onOpenChange={setIsAIProviderDialogOpen}>
+          <DialogContent className="!max-w-[96vw] sm:!max-w-[50vw] rounded-[24px] border border-slate-200 bg-white p-0 shadow-[0_24px_80px_rgba(15,23,42,0.16)]">
+            <DialogHeader className="border-b border-slate-100 px-6 pb-3 pt-5">
+              <DialogTitle className="text-[18px] text-slate-900" style={{ fontWeight: 700 }}>
+                {aiProviderForm.id ? "编辑模型配置" : "新建模型配置"}
+              </DialogTitle>
+              <DialogDescription className="text-[12px] leading-5 text-slate-500">
+                选择协议预设后补全连接和模型分工，保存时可直接设为默认。
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="max-h-[72vh] overflow-y-auto px-6 py-4">
+              <div className="grid gap-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+                <div className="rounded-2xl border border-gray-200 bg-gray-50/40 p-3.5">
+                  <div className="text-[12px] text-gray-500" style={{ fontWeight: 600 }}>协议预设</div>
+                  <div className="mt-3 space-y-2">
+                    {aiProviderPresets.map((preset) => {
+                      const isActive = activeAiProviderPreset?.name === preset.name;
+                      const meta = aiProviderPresetDetails[preset.name];
+
+                      return (
+                        <button
+                          key={preset.name}
+                          type="button"
+                          onClick={() => handleApplyAIProviderPreset(preset)}
+                          className={`w-full rounded-xl border px-3 py-2.5 text-left transition-all ${
+                            isActive
+                              ? "border-blue-200 bg-white"
+                              : "border-gray-200 bg-white hover:border-gray-300"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className={`text-[13px] ${isActive ? "text-blue-700" : "text-gray-900"}`} style={{ fontWeight: 700 }}>
+                              {preset.name}
+                            </div>
+                            <span className={`text-[10px] ${isActive ? "text-blue-600" : "text-gray-400"}`} style={{ fontWeight: 600 }}>
+                              {meta.tag}
+                            </span>
+                          </div>
+                          <div className={`mt-1 text-[11px] leading-5 ${isActive ? "text-blue-600" : "text-gray-500"}`}>
+                            {meta.hint}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Connection</div>
+                    <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>连接配置</div>
+                    <div className="mt-1 text-[12px] leading-5 text-gray-500">确认协议入口后，填写配置名称、Base URL 和 API Key。</div>
+
+                    <div className="mt-3 grid gap-3">
+                      <Field
+                        label="配置名称"
+                        value={aiProviderForm.name}
+                        onChange={(value) => handleAIProviderFormChange("name", value)}
+                        placeholder="例如：MiMo 正文 Pro / Claude 方案 / OpenRouter 备用"
+                      />
+                      <Field
+                        label="接口地址 Base URL"
+                        value={aiProviderForm.baseUrl}
+                        onChange={(value) => handleAIProviderFormChange("baseUrl", value)}
+                      />
+                      <Field
+                        label={activeAiProviderProfile?.hasApiKey && aiProviderForm.id ? "API Key（已配置，留空则不修改）" : "API Key"}
+                        value={aiProviderForm.apiKey}
+                        onChange={(value) => handleAIProviderFormChange("apiKey", value)}
+                        type="password"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div className="text-[12px] uppercase tracking-[0.16em] text-gray-400">Model Roles</div>
+                    <div className="mt-1 text-[15px] text-gray-900" style={{ fontWeight: 700 }}>模型分工</div>
+                    <div className="mt-1 text-[12px] leading-5 text-gray-500">默认模型负责兜底，快模型偏速度，长文模型偏正文质量。</div>
+
+                    <div className="mt-3 grid gap-3">
+                      <div>
+                        <Field
+                          label="默认写作模型"
+                          value={aiProviderForm.model}
+                          onChange={(value) => handleAIProviderFormChange("model", value)}
+                        />
+                        <div className="mt-1 text-[11px] leading-5 text-gray-400">未指定任务时的默认模型，也作为其他模型留空时的回退选项。</div>
+                      </div>
+                      <div>
+                        <Field
+                          label="快模型（标题 / 大纲 / 改写）"
+                          value={aiProviderForm.fastModel}
+                          onChange={(value) => handleAIProviderFormChange("fastModel", value)}
+                        />
+                        <div className="mt-1 text-[11px] leading-5 text-gray-400">适合标题灵感、结构规划和局部改写，优先考虑响应速度。</div>
+                      </div>
+                      <div>
+                        <Field
+                          label="长文模型（正文 / 全文）"
+                          value={aiProviderForm.longformModel}
+                          onChange={(value) => handleAIProviderFormChange("longformModel", value)}
+                        />
+                        <div className="mt-1 text-[11px] leading-5 text-gray-400">适合正文与全文生成，优先考虑稳定性、信息密度和成稿质量。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={aiProviderForm.setAsActive}
+                      onChange={(event) => handleAIProviderFormChange("setAsActive", event.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    保存后设为默认生效配置
+                  </label>
+
+                  {aiProviderTestFeedback ? (
+                    <div
+                      className={`rounded-xl border px-4 py-3 text-[12px] leading-5 ${
+                        aiProviderTestFeedback.type === "success"
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : aiProviderTestFeedback.type === "error"
+                            ? "border-red-200 bg-red-50 text-red-600"
+                            : "border-slate-200 bg-slate-50 text-slate-500"
+                      }`}
+                    >
+                      {aiProviderTestFeedback.message}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="border-t border-slate-100 bg-white px-6 py-4 sm:justify-between">
+              <button
+                type="button"
+                onClick={closeAIProviderDialog}
+                className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50"
+                style={{ fontWeight: 500 }}
+              >
+                取消
+              </button>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => void handleTestAIProviderConfig()}
+                  disabled={aiProviderLoading || aiProviderTesting}
+                  className="rounded-xl border border-blue-200 px-4 py-2.5 text-[13px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+                  style={{ fontWeight: 500 }}
+                >
+                  {aiProviderTesting ? "测试中" : "测试连接"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveAIProviderConfig()}
+                  disabled={aiProviderLoading}
+                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
+                  style={{ fontWeight: 600 }}
+                >
+                  {aiProviderLoading ? "保存中" : aiProviderForm.id ? "保存配置" : "创建配置"}
+                </button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <div className="flex justify-end text-[12px] text-gray-400">
+          {isDirty ? "你有未保存的修改" : "当前设置已同步到云端"}
+        </div>
         </div>
       </div>
     </div>
@@ -1317,11 +1531,13 @@ function Field({
   value,
   onChange,
   type = "text",
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: "text" | "password";
+  placeholder?: string;
 }) {
   return (
     <div>
@@ -1329,8 +1545,9 @@ function Field({
       <input
         type={type}
         value={value}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300 focus:bg-white transition-colors"
+        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[13px] outline-none transition-colors focus:border-blue-300 focus:bg-white"
       />
     </div>
   );

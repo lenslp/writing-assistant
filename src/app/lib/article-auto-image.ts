@@ -63,7 +63,18 @@ function buildSearchSceneHint(input: {
 
   if (input.domain === "科技") return avoidPortrait ? "technology event device real photo" : "technology scene real photo";
   if (input.domain === "教育") return avoidPortrait ? "study desk classroom notebook real photo" : "classroom study real photo";
-  if (input.domain === "旅游") return "destination landscape street travel real photo";
+  if (input.domain === "旅游") {
+    // 根据标题关键词动态调整图片搜索场景
+    if (/(古镇|古城|古村|苗寨|藏寨)/i.test(text)) return "ancient town village traditional architecture real photo";
+    if (/(海边|海岛|沙滩|潜水|冲浪|邮轮)/i.test(text)) return "beach ocean island tropical real photo";
+    if (/(雪山|冰川|滑雪|温泉)/i.test(text)) return "mountain snow winter landscape real photo";
+    if (/(草原|沙漠|戈壁|梯田)/i.test(text)) return "grassland desert landscape nature real photo";
+    if (/(赏花|红叶|银杏|樱花|花海|薰衣草)/i.test(text)) return "flowers garden bloom nature real photo";
+    if (/(自驾|公路|环线|国道)/i.test(text)) return "road trip highway driving real photo";
+    if (/(博物馆|美术馆|展览|世界遗产)/i.test(text)) return "museum exhibition cultural heritage real photo";
+    if (/(亲子|遛娃|主题乐园)/i.test(text)) return "family travel theme park kids real photo";
+    return "destination landscape street travel real photo";
+  }
   if (input.domain === "情感") return avoidPortrait ? "home interior objects ambient scene real photo" : "lifestyle people home real photo";
   if (input.domain === "社会") return avoidPortrait ? "documentary office street documents real photo" : "documentary street life real photo";
   if (input.domain === "汽车") return "car vehicle road automotive real photo";
@@ -163,7 +174,18 @@ function buildImageScene(input: {
 
   if (input.domain === "科技") return "现代感静物或人物场景，克制冷色调，真实摄影感，不做海报";
   if (input.domain === "教育") return "书桌、纸页或人物专注场景，温和自然光，安静干净";
-  if (input.domain === "旅游") return "真实地点或在途场景，开阔通透，空气感强";
+  if (input.domain === "旅游") {
+    // 根据标题关键词动态调整场景描述
+    if (/(古镇|古城|古村|苗寨|藏寨)/i.test(text)) return "古朴的建筑街道，有历史感的场景，温暖的光线";
+    if (/(海边|海岛|沙滩|潜水|冲浪|邮轮)/i.test(text)) return "碧海蓝天，热带海岛风光，清澈的海水";
+    if (/(雪山|冰川|滑雪|温泉)/i.test(text)) return "壮丽的雪山冰川，冬季运动场景，清冷的空气";
+    if (/(草原|沙漠|戈壁|梯田)/i.test(text)) return "辽阔的自然地貌，金色的光线，壮美的地形";
+    if (/(赏花|红叶|银杏|樱花|花海|薰衣草)/i.test(text)) return "绚烂的花卉场景，柔和的自然光，色彩丰富";
+    if (/(自驾|公路|环线|国道)/i.test(text)) return "开阔的公路，远方的地平线，自由驰骋的感觉";
+    if (/(博物馆|美术馆|展览|世界遗产)/i.test(text)) return "文化场馆内部，建筑细节，自然采光";
+    if (/(亲子|遛娃|主题乐园)/i.test(text)) return "欢乐的家庭出游场景，明亮的色彩，活泼的氛围";
+    return "真实地点或在途场景，开阔通透，空气感强";
+  }
   if (input.domain === "情感") return "人物或生活化室内场景，情绪克制，柔和留白";
   if (input.domain === "社会") return "纪实摄影感的人物或现实场景，不做信息图和说明卡";
   if (input.domain === "汽车") return "车辆与道路场景，线条清晰，质感克制";
@@ -184,7 +206,18 @@ function buildImageStyle(input: { domain: ArticleDomain; title: string; summary:
 
   if (input.domain === "科技") return "editorial photography, modern, minimal, clean composition, cool muted tones, realistic";
   if (input.domain === "教育") return "editorial photography, warm natural light, calm, clean desk scene, realistic";
-  if (input.domain === "旅游") return "editorial travel photography, airy atmosphere, natural light, open composition, realistic";
+  if (input.domain === "旅游") {
+    // 根据标题关键词动态调整图片风格
+    if (/(古镇|古城|古村|苗寨|藏寨)/i.test(text)) return "editorial travel photography, traditional architecture, warm tones, historic atmosphere, realistic";
+    if (/(海边|海岛|沙滩|潜水|冲浪|邮轮)/i.test(text)) return "editorial travel photography, tropical beach, turquoise water, bright airy atmosphere, realistic";
+    if (/(雪山|冰川|滑雪|温泉)/i.test(text)) return "editorial travel photography, mountain landscape, snow, crisp air, dramatic scenery, realistic";
+    if (/(草原|沙漠|戈壁|梯田)/i.test(text)) return "editorial travel photography, vast landscape, natural terrain, golden hour light, realistic";
+    if (/(赏花|红叶|银杏|樱花|花海|薰衣草)/i.test(text)) return "editorial travel photography, floral garden, soft natural light, vibrant colors, realistic";
+    if (/(自驾|公路|环线|国道)/i.test(text)) return "editorial travel photography, open road, wide landscape, freedom feeling, realistic";
+    if (/(博物馆|美术馆|展览|世界遗产)/i.test(text)) return "editorial travel photography, cultural interior, architectural details, natural light, realistic";
+    if (/(亲子|遛娃|主题乐园)/i.test(text)) return "editorial travel photography, family friendly, fun atmosphere, bright colors, realistic";
+    return "editorial travel photography, airy atmosphere, natural light, open composition, realistic";
+  }
   if (input.domain === "情感") return "editorial photography, intimate, soft natural light, quiet mood, realistic";
   if (input.domain === "社会") return "documentary editorial photography, realistic, restrained, human-centered scene";
   if (input.domain === "汽车") return "editorial automotive photography, sleek lines, realistic light, minimal background";

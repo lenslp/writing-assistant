@@ -80,6 +80,7 @@ export type AIWriteWordCountStatus = {
   target: number;
   adjusted: boolean;
   inRange: boolean;
+  deviation?: "short" | "long" | "none";
 };
 
 export type AIWriteResponse = {

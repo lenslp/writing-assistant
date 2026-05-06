@@ -68,7 +68,7 @@ const domainUiThemes: Record<
 const domainArticleTypeOptions: Record<keyof typeof domainConfigs, string[]> = {
   科技: ["趋势解读", "观点文", "产品解读", "盘点文"],
   教育: ["方法文", "解读文", "指南文", "观点文"],
-  旅游: ["攻略文", "体验文", "清单文", "路线文"],
+  旅游: ["攻略文", "体验文", "清单文", "路线文", "小众推荐", "城市指南", "季节游"],
   情感: ["共鸣文", "故事文", "观点文", "关系解读"],
   社会: ["热点解读", "事件观察", "观点文", "案例文"],
   汽车: ["评测文", "对比文", "解读文", "购车指南"],
@@ -384,12 +384,20 @@ export function WritingPage() {
     scope: AIWriteScope,
     label: string,
     bodyChangedByImageInsert: boolean,
+    wordCountStatus?: AIWriteResponse["wordCountStatus"],
   ) {
+    const wordCountHint =
+      wordCountStatus && (scope === "body" || scope === "full") && !wordCountStatus.inRange
+        ? `，正文已生成（当前 ${wordCountStatus.actual} 字，目标 ${wordCountStatus.target} 字）`
+        : "";
+
     if (scope === "full") {
-      return bodyChangedByImageInsert ? "AI 已生成全文并自动插入配图" : "AI 已生成公众号完整草稿";
+      return bodyChangedByImageInsert
+        ? `AI 已生成全文并自动插入配图${wordCountHint}`
+        : `AI 已生成公众号完整草稿${wordCountHint}`;
     }
 
-    return bodyChangedByImageInsert ? `${label}完成，已自动插入配图` : `${label}完成`;
+    return bodyChangedByImageInsert ? `${label}完成，已自动插入配图${wordCountHint}` : `${label}完成${wordCountHint}`;
   }
 
   async function maybeAutoInsertImage(targetDraft: Draft, result: AIWriteResult, scope: AIWriteScope) {
@@ -618,7 +626,7 @@ export function WritingPage() {
       }
 
       syncAiResult(targetDraft, generatedResult);
-      const baseNotice = buildGenerationSuccessNotice(scope, label, false);
+      const baseNotice = buildGenerationSuccessNotice(scope, label, false, payload.wordCountStatus);
       setSaveNotice(baseNotice);
       window.setTimeout(() => setSaveNotice(""), 2400);
       resetGenerationState();
@@ -626,7 +634,7 @@ export function WritingPage() {
       void maybeAutoInsertImage(targetDraft, generatedResult, scope)
         .then((finalResult) => {
           if (finalResult.body === generatedResult.body) return;
-          setSaveNotice(buildGenerationSuccessNotice(scope, label, true));
+          setSaveNotice(buildGenerationSuccessNotice(scope, label, true, payload.wordCountStatus));
           window.setTimeout(() => setSaveNotice(""), 2400);
         })
         .catch(() => {
