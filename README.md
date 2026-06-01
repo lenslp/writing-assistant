@@ -2,6 +2,16 @@
 
 A full-stack writing assistant for Chinese content creators, integrating real-time trending topics from 9+ platforms with AI-powered writing, analysis, and publishing workflows.
 
+## 📸 Demo
+
+<!-- Add screenshots here -->
+
+| Hot Topics | AI Writing | Format Editor |
+|:---:|:---:|:---:|
+| ![Hot Topics](docshots/hot-topics.png) | ![AI Writing](docshots/ai-writing.png) | ![Format Editor](docshots/format-editor.png) |
+
+> 💡 Run `npm run dev` to see it in action!
+
 ## 🎯 What It Does
 
 Writing Assistant streamlines the entire content creation pipeline:
@@ -159,13 +169,7 @@ writing-assistant/
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## 📄 License
 
