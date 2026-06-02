@@ -6,9 +6,9 @@ A full-stack writing assistant for Chinese content creators, integrating real-ti
 
 <!-- Add screenshots here -->
 
-| Hot Topics | AI Writing | Format Editor |
-|:---:|:---:|:---:|
-| ![Hot Topics](docshots/hot-topics.png) | ![AI Writing](docshots/ai-writing.png) | ![Format Editor](docshots/format-editor.png) |
+| Hot Topics |
+|:---:|
+| ![Hot Topics](docshots/hot-topics.png) |
 
 > 💡 Run `npm run dev` to see it in action!
 
