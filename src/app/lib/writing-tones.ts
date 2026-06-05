@@ -82,6 +82,75 @@ export const writingTonePresets: WritingTonePreset[] = [
     transformFocus: "把表达改得更自然好懂，减少硬邦邦的报告腔。",
     aliases: ["朋友式", "轻松", "自然", "口语化", "聊天感"],
   },
+  // ── v2 新增 4 种预设 ──────────────────────────────────
+  {
+    id: "story",
+    label: "故事叙事",
+    description: "用讲故事的方式写，适合人物、事件、经历类内容。",
+    titleStrategy: "标题像故事名或悬念句，让读者想知道后来怎样了。",
+    openingStrategy: "开头直接进入场景或事件，像电影开场，不要背景介绍。",
+    paragraphRhythm: "节奏像讲故事：有铺垫、有转折、有高潮、有收尾。段落可以长一点。",
+    languageStyle: "用画面感强的动词和细节，少用抽象名词。像在给朋友讲一件刚发生的事。",
+    emotionalTexture: "允许有情绪起伏，但不要刻意煽情。",
+    closingStyle: "结尾回到故事本身，或者留一个开放式的思考，不要硬升华。",
+    transformFocus: "把内容改得更有故事感，增加场景细节和情绪转折，减少平铺直叙。",
+    aliases: ["故事型", "叙事", "讲故事", "有画面感"],
+    examples: {
+      titles: ["那个辞职去摆摊的同事，现在怎么样了", "我花了 3 万块买了一个教训"],
+      opening: "上个月底，我在咖啡店碰到一个前同事。他辞了大厂的工作，在街边摆了个摊。",
+    },
+  },
+  {
+    id: "comparison",
+    label: "对比评测",
+    description: "用对比和评测的方式写，适合产品对比、方案对比、选择类内容。",
+    titleStrategy: "标题直接点出对比对象，让读者一眼知道在比什么。",
+    openingStrategy: "开头先抛出读者的选择困境，再引出对比维度。",
+    paragraphRhythm: "结构清晰，按维度分段：维度 A → 维度 B → 结论。每段有明确判断。",
+    languageStyle: "客观但有态度，不回避优缺点。用数据和事实说话，但也要有主观判断。",
+    emotionalTexture: "理性为主，偶尔带一点个人偏好。",
+    closingStyle: "结尾给一个清晰的选择建议：什么人选 A，什么人选 B。",
+    transformFocus: "强化对比结构和判断感，让优缺点更清晰，减少模糊表述。",
+    aliases: ["评测型", "对比", "AB 对比", "怎么选"],
+    examples: {
+      titles: ["秦L vs 银河L7：10 万级插混到底选谁", "MacBook Air vs ThinkPad X1：打工人的笔记本怎么选"],
+      opening: "10 万预算买插混，绕不开两个名字：比亚迪秦L和吉利银河L7。一个轿车一个SUV，价格高度重叠。",
+    },
+  },
+  {
+    id: "listicle",
+    label: "清单体",
+    description: "用清单和列表的方式写，适合盘点、推荐、避坑类内容。",
+    titleStrategy: "标题带数字或“几个”“X 条”等量词，让读者知道信息量。",
+    openingStrategy: "开头简短交代背景，然后快速进入清单。不要长篇铺垫。",
+    paragraphRhythm: "每条独立成段，有标题 + 简短说明。节奏快，信息密度高。",
+    languageStyle: "简洁直接，每条说清楚一件事。允许用短句和符号。",
+    emotionalTexture: "轻松、实用，不啰嗦。",
+    closingStyle: "清单结束后给一句总结或提醒，不要强行升华。",
+    transformFocus: "把内容整理成更清晰的清单结构，每条更独立、更完整。",
+    aliases: ["清单型", "盘点", "推荐", "避坑", "X 条"],
+    examples: {
+      titles: ["买新能源车前一定要问销售的 8 个问题", "3 个工具让我的工作效率翻了一倍"],
+      opening: "最近帮朋友看了几款车，总结了 8 个一定要问销售的问题。",
+    },
+  },
+  {
+    id: "newsflash",
+    label: "快讯速报",
+    description: "快速传递信息，适合新闻、发布、热点事件类内容。",
+    titleStrategy: "标题直接说发生了什么，不要弯弯绕绕。",
+    openingStrategy: "开头第一句就说核心事实：谁做了什么、什么时候、结果怎样。",
+    paragraphRhythm: "段落极短，一段一个事实点。节奏快，不拖沓。",
+    languageStyle: "简洁、准确、不废话。像新闻稿但不要太官方。",
+    emotionalTexture: "中性偏轻，偶尔带一句作者判断。",
+    closingStyle: "结尾给一个简短的判断或后续关注点，不要长篇总结。",
+    transformFocus: "把内容改得更简洁、更直接，删除多余铺垫和重复信息。",
+    aliases: ["快讯型", "速报", "新闻", "热点"],
+    examples: {
+      titles: ["小米 YU7 正式上市：21.59 万起，对标 Model Y", "比亚迪 5 月销量破 38 万台，再创新高"],
+      opening: "今天下午，小米 YU7 正式上市，共推出 3 款车型，售价 21.59-27.59 万元。",
+    },
+  },
 ];
 
 export function resolveWritingTone(tone: string) {
@@ -114,11 +183,13 @@ export function recommendToneForArticleType(articleType: string, availableTones:
   if (/观点|评论|观察|舆论/.test(normalized)) {
     preferredPresetIds = ["sharp", "professional", "friendly"];
   } else if (/方法|指南|攻略|清单|路线|购车|增长|操盘/.test(normalized)) {
-    preferredPresetIds = ["growth", "friendly", "professional"];
+    preferredPresetIds = ["growth", "listicle", "friendly"];
   } else if (/故事|共鸣|关系|体验|生活/.test(normalized)) {
-    preferredPresetIds = ["emotional", "friendly", "professional"];
+    preferredPresetIds = ["emotional", "story", "friendly"];
   } else if (/解读|分析|趋势|复盘|评测|对比|盘点|人物|作品/.test(normalized)) {
-    preferredPresetIds = ["professional", "sharp", "friendly"];
+    preferredPresetIds = ["professional", "comparison", "sharp"];
+  } else if (/新闻|快讯|发布|热点|事件/.test(normalized)) {
+    preferredPresetIds = ["newsflash", "professional", "friendly"];
   }
 
   for (const presetId of preferredPresetIds) {

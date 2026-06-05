@@ -40,18 +40,18 @@ const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_MODEL = "qwen3.5-plus";
 const DEFAULT_FAST_MODEL = "qwen-turbo";
 const MODEL_REQUEST_MAX_RETRIES = 1;
-const MAX_TITLE_LENGTH = 30;
+const MAX_TITLE_LENGTH = 35;  // v2: 从 30 放宽到 35，给标题更多空间
 const MAX_SUMMARY_LENGTH = 120;
 const SOURCE_CONTEXT_SUMMARY_LIMIT = 140;
 const SOURCE_CONTEXT_PLANNING_CONTENT_LIMIT = 900;
-const SOURCE_CONTEXT_DRAFTING_CONTENT_LIMIT = 1400;
+const SOURCE_CONTEXT_DRAFTING_CONTENT_LIMIT = 800;  // v2: 从 1400 降到 800，避免热点细节带偏正文
 const MIN_GENERATED_BODY_WORDS = 650;
 const MIN_GENERATED_SUMMARY_WORDS = 36;
 const MIN_GENERATED_OUTLINE_ITEMS = 3;
 const MIN_GENERATED_GITHUB_OUTLINE_ITEMS = 2;
 const TITLE_LENGTH_ADJUSTMENT_MAX_PASSES = 2;
-const BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES = 2;
-const BODY_REGENERATION_MAX_ATTEMPTS = 2;
+const BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES = 1;  // v2: 从 2 降到 1，减少 API 调用
+const BODY_REGENERATION_MAX_ATTEMPTS = 1;  // v2: 从 2 降到 1，减少 API 调用
 const BODY_WORD_COUNT_TOLERANCE_RATIO = 0.02;
 const BODY_WORD_COUNT_TOLERANCE_MIN = 15;
 const BODY_WORD_COUNT_TOLERANCE_MAX = 80;
@@ -99,11 +99,36 @@ const TITLE_PLATFORM_NOISE_PATTERNS = [
   /\b(知乎|微博|抖音|百度|头条|今日头条)(热榜|热搜)?\b/gi,
   /\b(热榜|热搜)\b/gi,
 ] as const;
+/**
+ * AI 味检测（v2 优化版）
+ *
+ * v1 问题：
+ * - AIISH_SENTENCE_PATTERNS 误杀正常开头（如「这篇文章会介绍 X」）
+ * - META_WRITING_PATTERNS 误杀编辑批注
+ * - 「首先、其次、最后」被一刀切禁止，但这些是正常过渡词
+ *
+ * v2 改进：
+ * - AIISH_SENTENCE_PATTERNS 只检测最明显的 AI 模板句
+ * - META_WRITING_PATTERNS 仅在正文中检测，不在标题/大纲中检测
+ * - 「首先/其次/最后」只在连续出现 3 个以上时才判定为 AI 味
+ */
 const AIISH_SENTENCE_PATTERNS = [
-  /^(这篇文章会|本文会|这篇内容会|今天这篇内容|接下来我们就来|下面我们就来)/,
+  // v1 保留：最明显的 AI 模板句
+  /^(接下来我们就来|下面我们就来)/,
   /^(如果你也在持续做|如果你的账号想长期输出)/,
-  /^(本文|这篇文章|这篇内容)(主要|试图|想要|会从|将从)/,
+  // skill 高危句式：必须改的
+  /^(这才是正确的打开方式)/,
+  /^(接受缺点,?享受优点)/,
+  /^(让我们来看看)/,
+  /^(真香|绝绝子|yyds)/,
+  // skill 结构性 AI 味：每段开头都是过渡句
+  /^(因此|所以|由此可见|毫无疑问|可以说|不难发现|事实上|实际上)/,
 ] as const;
+
+/**
+ * 元写作检测：检测「写作说明」混入正文的情况。
+ * 仅在正文（body）中检测，标题和大纲中不检测。
+ */
 const META_WRITING_PATTERNS = [
   /这(篇|类)文章(最适合|适合|最好|可以|建议|需要)/,
   /具体写作时/,
@@ -117,6 +142,26 @@ const META_WRITING_PATTERNS = [
   /从内容结构上看/,
   /相比单纯追热/,
 ] as const;
+
+/**
+ * 过渡词连续检测：只在「首先+其次+最后」连续出现时才判定为 AI 味。
+ * 单独使用「首先」或「其次」是正常的。
+ */
+const TRANSITION_CHAIN_PATTERN = /首先[^。！？]*[。，]?\s*(其次|然后)[^。！？]*[。，]?\s*(最后|此外|另外)/;
+
+/**
+ * 结构性 AI 味检测（skill 规则）
+ * 检测「三词并列」「对仗工整」等 PPT 风格
+ */
+const STRUCTURAL_AI_PATTERNS = [
+  // 三词并列：XX、YY、ZZ（顿号分隔的三连）
+  /[^，。！？]{2,8}、[^，。！？]{2,8}、[^，。！？]{2,8}[。，！？]/,
+  // 对仗工整的结尾：不仅是…更是…
+  /不仅(是|仅)…更是…/,
+  // 完美正反对比：一方面…另一方面…
+  /一方面…另一方面…/,
+] as const;
+
 const PLACEHOLDER_OUTLINE_PATTERNS = [
   /^(开头|中段|结尾|总结|核心变化|影响判断|机会与风险|实操拆解|风险提醒)[:：]/m,
   /给读者一个明确行动建议/,
@@ -177,38 +222,47 @@ const SPECIFICITY_PATTERNS = [
  *   "planning"  — planning + generate (title, summary, outline)
  *   "drafting"  — drafting + generate (body writing)
  */
+/**
+ * 统一写作规则注册表（v2 精简版）。
+ *
+ * 从原来的 20+ 条精简到 12 条核心规则，按 scope 分层注入，
+ * 避免一次性塞太多规则导致模型无所适从。
+ *
+ * Scopes:
+ *   "universal" — 每个阶段都注入
+ *   "planning"  — 标题/摘要/大纲阶段
+ *   "drafting"  — 正文写作阶段
+ */
 type RuleScope = "universal" | "planning" | "drafting";
 
 const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
-  // ── universal: 通用写作规范 ──────────────────────────────
-  { scope: "universal", text: "把自己当成一个长期写公众号的人，不是内容生产机器人。写法要像编辑来回改过的成稿：有主次、有轻重、有判断，不追求每段一样完整。" },
+  // ── universal: 6 条通用铁律 ──────────────────────────────
+  { scope: "universal", text: "把自己当成一个长期写公众号的人，不是内容生产机器人。写法要像编辑来回改过的成稿：有主次、有轻重、有判断。" },
   { scope: "universal", text: "少写抽象空词（赋能、价值、趋势、认知升级、底层逻辑、方法论、启示），能写具体处境就写具体处境。" },
-  { scope: "universal", text: "不要自我介绍文章结构，不要写“本文将”“这篇文章会”“接下来我们聊”这种提示式句子。" },
-  { scope: "universal", text: "禁止使用明显 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见。" },
-  { scope: "universal", text: "不要把普通事实硬拔高成“标志某种趋势”“体现重要意义”“见证关键转折”。信息够具体时，直接写发生了什么、改了什么、影响了谁。" },
-  { scope: "universal", text: "少用宣传腔和万能褒义词：充满活力、深刻、关键性、令人惊叹、划时代、持续演变、格局、里程碑。能落到具体细节就不要喊口号。" },
-  { scope: "universal", text: "不要写模糊归因，如“专家认为”“有观察者指出”“行业报告显示”，除非能给出明确对象；不能明确时，就直接写作者判断，不要借空权威撑场面。" },
-  { scope: "universal", text: "不要编造具体数据、人物发言、采访、机构结论、案例细节和百分比；事实不足时用因果判断和经验推理补足。" },
-  { scope: "universal", text: "文章必须给出一个贯穿全文的核心判断，至少写一个“表面看是 A，实际更关键的是 B”的反差，但不要用“底层逻辑”“本质上”等模板词。" },
-  { scope: "universal", text: "深度不是堆术语。复杂概念先翻译成人话，再解释它为什么重要。默认读者不是行业从业者，写法要让普通读者顺着读懂。" },
-  { scope: "universal", text: "语气像见过很多类似事情的朋友在帮读者把复杂问题讲明白，不要像评论员发言或咨询报告。允许口语化停顿和自然转折，但不要油腻。" },
-  { scope: "universal", text: "每个重要观点都要往下追问一层：为什么现在发生、谁会被影响、代价是什么、接下来会改变什么。必须写出边界感：不该被过度解读的地方和真正需要关注的地方。" },
+  { scope: "universal", text: "禁止使用 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见、由此可见。直接说事，不要铺垫。" },
+  { scope: "universal", text: "不要编造具体数据、人物发言、采访、机构结论和百分比；事实不足时用因果判断和经验推理补足。" },
+  { scope: "universal", text: "深度不是堆术语。复杂概念先翻译成人话，再解释它为什么重要。默认读者不是行业从业者。" },
+  { scope: "universal", text: "语气像见过很多类似事情的朋友在帮读者把复杂问题讲明白，不要像评论员发言或咨询报告。" },
+  { scope: "universal", text: "有观点有态度，不要两头讨好。结尾可以俏皮或犀利，不要烂尾。" },
+  { scope: "universal", text: "标点必须用中文全角（，。！？：；），英文半角逗号会挤在一起，非常难看。" },
+  { scope: "universal", text: "不要在文章中展示数据来源/信息出处（不说“数据来源：XXX”“信息来自XXX”），数据要有来源感但不要暴露出处。" },
 
-  // ── planning: 标题 / 摘要 / 大纲阶段 ──────────────────
-  { scope: "planning", text: "标题要像编辑最后拍板的成品，优先使用具体对象、真实场景、冲突或后果。避免过于工整的对仗句和大词堆叠，宁可口语、具体一点。" },
+  // ── planning: 3 条标题/结构规则 ──────────────────
+  { scope: "planning", text: "标题要像编辑最后拍板的成品，优先使用具体对象、真实场景、冲突或后果。避免过于工整的对仗句和大词堆叠。" },
   { scope: "planning", text: "摘要不要以“这篇文章”“本文”“今天聊聊”开头，直接进入判断、场景或问题，像转发前的一段导语。" },
-  { scope: "planning", text: "大纲不能只是“背景-影响-建议”的流水账，至少 2 个小标题要像判断句而非栏目名，每条都能写出信息增量。" },
+  { scope: "planning", text: "大纲不能只是“背景-影响-建议”的流水账，至少 2 个小标题要像判断句而非栏目名。" },
 
-  // ── drafting: 正文阶段 ────────────────────────────────
-  { scope: "drafting", text: "开头不要解释文章要讲什么，直接进入读者当下的处境、事件冲突或核心判断。不要虚构人物故事，不要写“在这个信息爆炸的时代”这类悬浮开场。" },
-  { scope: "drafting", text: "同一篇文章里小标题句式要有变化，有判断句也有场景句。每段都应推动信息、判断或情绪，少写万能总结句。" },
-  { scope: "drafting", text: "多用短段落（每段 1-3 句），句子节奏有长有短、有停顿有转折。重要部分多写，次要部分收着写，不要机械平均展开。" },
-  { scope: "drafting", text: "尽量把抽象变化改写成具体影响：这对普通人、创作者、家长、用户、消费者意味着什么。用因果链和现实处境解释，不用黑话。" },
-  { scope: "drafting", text: "避免“这不仅是……而是……”“不仅……还……”这类否定式排比，也不要为了显得完整硬凑三连词。两点讲透，比三点堆满更像真人写作。" },
-  { scope: "drafting", text: "不要追求每段都像金句或结论。允许有些句子只是承接、追问、补充细节，让文章保留真实思考的呼吸感。" },
+  // ── drafting: 3 条正文规则 ────────────────────────────────
+  { scope: "drafting", text: "开头不要解释文章要讲什么，直接进入读者当下的处境、事件冲突或核心判断。不要写“在这个信息爆炸的时代”这类悬浮开场。" },
+  { scope: "drafting", text: "多用短段落（每段 1-3 句），句子节奏有长有短。重要部分多写，次要部分收着写，不要机械平均展开。" },
   { scope: "drafting", text: "结尾不要像社论收口，更像朋友把话说透后给一个清楚提醒，附 2-3 条可执行建议。" },
 ] as const;
 
+/**
+ * 根据阶段获取对应规则。
+ * v2 逻辑：universal 规则始终注入，planning/drawing 规则按需注入。
+ * generate 和 transform 阶段注入所有规则（因为它们可能涉及任意阶段的工作）。
+ */
 function getRulesForPhase(phase: "planning" | "drafting" | "generate" | "transform"): string[] {
   return CORE_WRITING_RULES
     .filter((rule) => {
@@ -676,6 +730,14 @@ function shouldDropAiishSentence(paragraph: string) {
   return AIISH_SENTENCE_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
+function hasTransitionChain(text: string) {
+  return TRANSITION_CHAIN_PATTERN.test(text);
+}
+
+function hasStructuralAI(text: string) {
+  return STRUCTURAL_AI_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function splitWechatParagraph(paragraph: string) {
   if (
     paragraph.length < 90 ||
@@ -814,31 +876,50 @@ function detectTitleArchetype(title: string) {
   return "statement";
 }
 
+/**
+ * 标题自然度评分（v2 优化版）
+ *
+ * v1 问题：
+ * - 太多扣分项导致模型只能选最安全的写法 → 标题同质化
+ * - 「逻辑」「深度」「信号」等词被扣分，但这些词在某些语境下是正常的
+ * - 「意味着什么」被扣 2 分太重
+ *
+ * v2 改进：
+ * - 减少扣分项，只保留最明显的模板词扣分
+ * - 增加更多加分项，鼓励多样化标题风格
+ * - 放宽长度限制，允许稍长的标题（≤35 字）
+ */
 function scoreTitleNaturalness(title: string) {
   let score = 0;
   const length = title.replace(/\s+/g, "").length;
 
-  if (length >= 12 && length <= 22) score += 4;
-  else if (length >= 9 && length <= 26) score += 2;
-  else if (length <= MAX_TITLE_LENGTH) score += 0;
+  // 长度评分：12-25 字最优
+  if (length >= 12 && length <= 25) score += 4;
+  else if (length >= 9 && length <= 30) score += 2;
+  else if (length <= 35) score += 0;
   else score -= 1;
 
-  if (!/[：:｜|]/.test(title)) score += 1;
-  if (/[？?]$/.test(title)) score += 1;
-  if (/普通人|打工人|家长|创作者|用户/.test(title)) score += 1;
-  if (/别只盯着|如果只把|真正会变的是|更该关心|更容易看漏/.test(title)) score += 1;
-  if (/^聊聊|^看看|^试试|^最近|^这次|^今天/.test(title)) score += 1;
-  if (/项目名 + 看点/.test(title)) score -= 3;
+  // 加分项：鼓励多样化风格
+  if (!/[：:｜|]/.test(title)) score += 1;  // 无冒号分隔更自然
+  if (/[？?]$/.test(title)) score += 1;  // 问句标题
+  if (/普通人|打工人|家长|创作者|用户/.test(title)) score += 1;  // 有具体受众
+  if (/别只盯着|如果只把|真正会变的是|更该关心|更容易看漏/.test(title)) score += 1;  // 有反差感
+  if (/^聊聊|^看看|^试试|^最近|^这次|^今天/.test(title)) score += 1;  // 口语化开头
+  if (/\d+/.test(title)) score += 1;  // 有具体数字
+  if (/[！!]$/.test(title)) score += 1;  // 感叹号结尾
+  if (/怎么|为什么|凭什么/.test(title)) score += 1;  // 疑问词
 
+  // 扣分项：只扣最明显的模板词
   AI_TITLE_BANNED_PATTERNS.forEach((pattern) => {
-    if (pattern.test(title)) score -= 4;
+    if (pattern.test(title)) score -= 3;
   });
 
-  if (/逻辑|方法|趋势拆解|综合观察|专业|深度|启示|信号|变量|真相|密码/.test(title)) score -= 1;
-  if (/背后的|意味着什么|给所有人|值得关注|最该关注|看反了/.test(title)) score -= 2;
+  // 轻微扣分：过度抽象的词
+  if (/逻辑|方法论|趋势拆解|综合观察|启示录/.test(title)) score -= 1;
+  if (/背后的|意味着什么|给所有人|值得关注|最该关注|看反了/.test(title)) score -= 1;  // v2: 从 -2 降到 -1
   if (/^关于|聊聊|说说/.test(title)) score -= 1;
   if (/(最近|值得|推荐|看点).*(最近|值得|推荐|看点)/.test(title)) score -= 1;
-  if (length > 24) score -= 1;
+  if (length > 30) score -= 1;  // v2: 从 24 放宽到 30
 
   return score;
 }
@@ -1058,7 +1139,10 @@ function polishBodyText(text: string) {
     .flatMap((section) => {
       const normalized = normalizeParagraphTone(section);
       if (!normalized) return [];
+      // v2: 只删除最明显的 AI 模板句，不再误杀正常开头
       if (shouldDropAiishSentence(normalized)) return [];
+      // v2: 检测「首先…其次…最后」连续结构，但不直接删除，只标记
+      // 让模型在后续校准中处理
       return splitWechatParagraph(normalized);
     });
 
@@ -1114,6 +1198,14 @@ function hasGeneratedBodyQuality(body: string, fallbackBody = "") {
     };
   }
 
+  // v2: 检测结构性 AI 味（三词并列、对仗工整等）
+  if (hasStructuralAI(articleText)) {
+    return {
+      ok: false,
+      reason: "正文有明显 AI 结构痕迹（三词并列/对仗工整），本次没有保存为成稿。",
+    };
+  }
+
   if (PLACEHOLDER_OUTLINE_PATTERNS.some((pattern) => pattern.test(articleText))) {
     return {
       ok: false,
@@ -1121,8 +1213,13 @@ function hasGeneratedBodyQuality(body: string, fallbackBody = "") {
     };
   }
 
-  const specificityScore = SPECIFICITY_PATTERNS.reduce((score, pattern) => score + (pattern.test(articleText) ? 1 : 0), 0);
-  if (specificityScore < 2) {
+  // v2: 加权 specificity 评分，不同指标给不同权重
+  const specificityScore = SPECIFICITY_PATTERNS.reduce((score, pattern, index) => {
+    if (!pattern.test(articleText)) return score;
+    // 数字和英文各 1 分，引号和领域词各 2 分（更具体）
+    return score + (index >= 2 ? 2 : 1);
+  }, 0);
+  if (specificityScore < 4) {
     return {
       ok: false,
       reason: "正文缺少足够具体的主体、事实或场景，本次没有保存为成稿。",
@@ -1247,11 +1344,10 @@ function extractChineseKeywordCandidates(token: string) {
   const normalized = token.trim();
   if (normalized.length <= 4) return [normalized];
 
+  // v2: 不再疯狂切子串，只保留原词 + 2-gram
   const chunks = new Set<string>([normalized]);
-  for (let size = 2; size <= 4; size += 1) {
-    for (let index = 0; index <= normalized.length - size; index += 1) {
-      chunks.add(normalized.slice(index, index + size));
-    }
+  for (let index = 0; index <= normalized.length - 2; index += 1) {
+    chunks.add(normalized.slice(index, index + 2));
   }
 
   return Array.from(chunks);
@@ -1307,7 +1403,7 @@ function assertResultConsistency(
   const planningMatches = summaryMatches + outlineMatches;
   const isGithubTrending = topic.source?.includes("GitHub Trending") || topic.title.includes("/");
 
-  if (planningMatches === 0) {
+  if (planningMatches < 2) {
     if (!isGithubTrending) {
       throw new Error("生成结果和当前选题的关联度太弱，请重新生成。");
     }
@@ -1315,7 +1411,7 @@ function assertResultConsistency(
 
   if (options?.requireBody) {
     const bodyMatches = countMatchedKeywords(stripNonArticleText(result.body), keywords);
-    if (!isGithubTrending && bodyMatches === 0 && planningMatches === 0) {
+    if (!isGithubTrending && bodyMatches < 2 && planningMatches < 2) {
       throw new Error("正文和当前选题的关联度太弱，请重新生成。");
     }
   }
