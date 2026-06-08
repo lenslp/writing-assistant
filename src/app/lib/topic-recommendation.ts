@@ -225,6 +225,39 @@ function buildDomainRecommendationPrompt(topics: TopicRecommendationCandidate[])
   });
 }
 
+function buildSingleDomainRecommendationPrompt(topics: TopicRecommendationCandidate[], domain: ActiveArticleDomain) {
+  const focus = domainConfigs[domain].writingFocus;
+  const candidates = topics
+    .filter((topic) => topic.domain === domain)
+    .sort((left, right) => right.heat - left.heat)
+    .slice(0, DOMAIN_RECOMMENDATION_CANDIDATE_LIMIT)
+    .map((topic, index) => ({
+      index: index + 1,
+      id: topic.id,
+      title: topic.title,
+      source: topic.source,
+      sourceType: topic.sourceType,
+      heatIndex: topic.heat,
+      trend: topic.trend,
+      tags: topic.tags,
+      summary: topic.summary || "",
+      time: topic.time,
+    }));
+
+  return JSON.stringify({
+    date: new Date().toISOString().slice(0, 10),
+    domain,
+    focus,
+    candidates,
+    scoring: {
+      writingValue: "是否能写出有判断、有信息量、读者愿意点开的内容",
+      freshness: "是否仍在传播窗口内，是否适合今天写",
+      informationDensity: "标题、摘要、标签是否足够支撑成文",
+      risk: "敏感、事实不足、过于碎片化、只适合快讯的内容要扣分",
+    },
+  });
+}
+
 function sanitizeDomainRecommendationGroups(
   parsed: Record<string, unknown>,
   topics: TopicRecommendationCandidate[],
@@ -394,5 +427,68 @@ export async function recommendDailyTopicsByDomainWithAI(
       ...group,
       message: error instanceof Error ? error.message : "AI 推荐选题失败，已使用规则推荐。",
     }));
+  }
+}
+
+export async function recommendTopicsForDomainWithAI(
+  topics: TopicRecommendationCandidate[],
+  domain: ActiveArticleDomain,
+): Promise<DomainTopicRecommendationGroup> {
+  const domainTopics = topics.filter((topic) => topic.domain === domain);
+  const fallbackGroup = buildFallbackDomainRecommendations(topics).find((group) => group.domain === domain) ?? {
+    domain,
+    items: [],
+    source: "fallback" as const,
+  };
+
+  if (!domainTopics.length) {
+    return fallbackGroup;
+  }
+
+  const config = await getAIProviderConfig();
+  if (!config.configured) {
+    return {
+      ...fallbackGroup,
+      message: "AI 写作模型未配置，已使用规则推荐。",
+    };
+  }
+
+  try {
+    const response = await completeAIText({
+      task: "title",
+      temperature: 0.12,
+      systemPrompt: [
+        "你是资深中文内容主编，负责从一个领域的实时热点中挑选最值得写的选题。",
+        `本次只评估「${domain}」领域，最多选 5 条。`,
+        "优先选择能写出清晰观点、具体信息、读者收益和传播标题的选题。",
+        "避开敏感、事实不足、纯情绪、只适合短视频快讯、不适合长文展开的题。",
+        "只输出 JSON，不要解释，不要 Markdown。",
+      ].join("\n"),
+      userPrompt: [
+        `请为「${domain}」领域选出今天最值得写的 5 个选题。候选不足 5 个时按实际数量返回。`,
+        "输出格式：",
+        "{\"groups\":[{\"domain\":\"AI\",\"items\":[{\"topicId\":\"候选 id\",\"score\":0-100,\"reason\":\"40字内中文理由\",\"angle\":\"一个具体写作切入角度\",\"risks\":[\"风险1\"]}]}]}",
+        "候选数据：",
+        buildSingleDomainRecommendationPrompt(domainTopics, domain),
+      ].join("\n"),
+    });
+
+    const parsed = extractJsonPayload(response.content);
+    return sanitizeDomainRecommendationGroups(parsed, domainTopics, {
+      source: "ai",
+      model: response.model,
+      provider: response.config.provider,
+    }).find((group) => group.domain === domain) ?? {
+      ...fallbackGroup,
+      source: "ai",
+      model: response.model,
+      provider: response.config.provider,
+    };
+  } catch (error) {
+    console.error("Failed to recommend topics for domain with AI:", error);
+    return {
+      ...fallbackGroup,
+      message: error instanceof Error ? error.message : "AI 推荐选题失败，已使用规则推荐。",
+    };
   }
 }

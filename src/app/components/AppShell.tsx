@@ -9,8 +9,8 @@ import { useAuth } from "../providers/auth-provider";
 
 function AppLoading() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f7f8fa]">
-      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-[13px] text-slate-500 shadow-sm">
+    <main className="flex min-h-screen items-center justify-center bg-[#fffaf5]">
+      <div className="rounded-2xl border border-[#eadfd4] bg-white/86 px-5 py-4 text-[13px] text-[#8c8178] shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
         正在确认登录状态...
       </div>
     </main>

@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { WritingPage } from "../components/WritingPage";
 
 function WritingPageFallback() {
-  return <div className="p-8 text-sm text-gray-500">正在加载写作工作台...</div>;
+  return <div className="p-8 text-sm text-[#8c8178]">正在加载写作工作台...</div>;
 }
 
 export default function Page() {

@@ -15,11 +15,11 @@ export function ReviewCenter() {
   const highlightedDraftId = searchParams.get("draftId");
 
   return (
-    <div className="max-w-[1200px] mx-auto space-y-6">
+    <div className="mx-auto max-w-[1200px] space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[20px]" style={{ fontWeight: 600 }}>审核中心</h1>
-          <p className="text-[13px] text-gray-500 mt-1">集中处理待修改与审核中的稿件，确保发布前内容完整。</p>
+          <h1 className="lens-title text-[20px]">审核中心</h1>
+          <p className="mt-1 text-[13px] text-[#6f665d]">集中处理待修改与审核中的稿件，确保发布前内容完整。</p>
         </div>
       </div>
 
@@ -29,83 +29,83 @@ export function ReviewCenter() {
             label: "待修改",
             value: drafts.filter((draft) => draft.status === "待修改").length,
             icon: FilePenLine,
-            color: "text-amber-600",
-            bg: "bg-amber-50",
+            color: "text-[#d65f2b]",
+            bg: "bg-[#fff0e6]",
           },
           {
             label: "审核中",
             value: drafts.filter((draft) => draft.status === "审核中").length,
             icon: Clock3,
-            color: "text-purple-600",
-            bg: "bg-purple-50",
+            color: "text-[#6f665d]",
+            bg: "bg-[#f1eadf]",
           },
           {
             label: "可发布",
             value: readyToPublishCount,
             icon: CheckCheck,
-            color: "text-blue-600",
-            bg: "bg-blue-50",
+            color: "text-[#d65f2b]",
+            bg: "bg-[#fff7ef]",
           },
         ].map((item) => (
-          <div key={item.label} className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl ${item.bg} flex items-center justify-center`}>
-              <item.icon className={`w-5 h-5 ${item.color}`} />
+          <div key={item.label} className="lens-card flex items-center gap-3 p-4">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${item.bg}`}>
+              <item.icon className={`h-5 w-5 ${item.color}`} />
             </div>
             <div>
-              <div className="text-[20px]" style={{ fontWeight: 600 }}>{item.value}</div>
-              <div className="text-[12px] text-gray-500">{item.label}</div>
+              <div className="text-[20px] text-[#181715]" style={{ fontWeight: 850 }}>{item.value}</div>
+              <div className="text-[12px] text-[#8c8178]">{item.label}</div>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-        <div className="grid grid-cols-[1fr_90px_120px_150px] px-5 py-3 border-b border-gray-100 text-[12px] text-gray-400" style={{ fontWeight: 500 }}>
+      <div className="overflow-hidden rounded-[22px] border border-[#eadfd4] bg-white/86 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+        <div className="grid grid-cols-[1fr_90px_120px_150px] border-b border-[#f0e5da] px-5 py-3 text-[12px] text-[#8c8178]" style={{ fontWeight: 700 }}>
           <span>稿件</span>
           <span>状态</span>
           <span>更新时间</span>
           <span className="text-right">操作</span>
         </div>
-        <div className="divide-y divide-gray-50">
+        <div className="divide-y divide-[#f0e5da]">
           {reviewingDrafts.length ? reviewingDrafts.map((draft) => (
             <div
               key={draft.id}
-              className={`grid grid-cols-[1fr_90px_120px_150px] items-center px-5 py-4 hover:bg-gray-50/60 ${
-                draft.id === highlightedDraftId ? "bg-purple-50/70" : ""
+              className={`grid grid-cols-[1fr_90px_120px_150px] items-center px-5 py-4 transition-colors hover:bg-[#fffaf5] ${
+                draft.id === highlightedDraftId ? "bg-[#fff0e6]" : ""
               }`}
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="text-[13px] truncate" style={{ fontWeight: 500 }}>{draft.title}</div>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[10px] text-white">
+                  <div className="truncate text-[13px] text-[#181715]" style={{ fontWeight: 700 }}>{draft.title}</div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[#181715] px-2 py-0.5 text-[10px] text-white">
                     <span>{domainConfigs[draft.domain].icon}</span>
                     {draft.domain}
                   </span>
                   {draft.id === highlightedDraftId ? (
-                    <span className="rounded-full bg-purple-600 px-2 py-0.5 text-[10px] text-white" style={{ fontWeight: 600 }}>
+                    <span className="rounded-full bg-[#d65f2b] px-2 py-0.5 text-[10px] text-white" style={{ fontWeight: 700 }}>
                       当前稿件
                     </span>
                   ) : null}
                 </div>
-                <div className="text-[11px] text-gray-400 mt-1">{draft.topic}</div>
+                <div className="mt-1 text-[11px] text-[#8c8178]">{draft.topic}</div>
               </div>
-              <span className={`text-[11px] px-2 py-0.5 rounded-full w-fit ${
-                draft.status === "审核中" ? "bg-purple-50 text-purple-600" : "bg-amber-50 text-amber-600"
+              <span className={`w-fit rounded-full px-2 py-0.5 text-[11px] ${
+                draft.status === "审核中" ? "bg-[#f1eadf] text-[#6f665d]" : "bg-[#fff0e6] text-[#d65f2b]"
               }`}>
                 {draft.status}
               </span>
-              <span className="text-[12px] text-gray-500">{formatDraftTime(draft.updatedAt)}</span>
+              <span className="text-[12px] text-[#6f665d]">{formatDraftTime(draft.updatedAt)}</span>
               <div className="flex items-center justify-end gap-2">
                 <Link
                   href={`/writing?draftId=${draft.id}`}
-                  className="text-[12px] text-gray-500 hover:text-blue-600"
+                  className="text-[12px] text-[#8c8178] hover:text-[#d65f2b]"
                 >
                   编辑
                 </Link>
                 {draft.status === "待修改" ? (
                   <button
                     onClick={() => submitDraftReview(draft.id)}
-                    className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] text-white hover:bg-blue-700"
+                    className="lens-btn-primary flex items-center gap-1 px-3 py-1.5 text-[12px]"
                   >
                     <Send className="w-3.5 h-3.5" /> 提交审核
                   </button>
@@ -113,13 +113,13 @@ export function ReviewCenter() {
                   <>
                     <button
                       onClick={() => returnDraftToEditing(draft.id)}
-                      className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
+                      className="lens-btn-secondary flex items-center gap-1 px-3 py-1.5 text-[12px]"
                     >
                       <RefreshCcw className="w-3.5 h-3.5" /> 退回修改
                     </button>
                     <Link
                       href={`/format-editor?draftId=${draft.id}`}
-                      className="rounded-lg bg-green-600 px-3 py-1.5 text-[12px] text-white hover:bg-green-700"
+                      className="lens-btn-primary px-3 py-1.5 text-[12px]"
                     >
                       去排版发布
                     </Link>
@@ -129,8 +129,8 @@ export function ReviewCenter() {
             </div>
           )) : (
             <div className="px-6 py-12 text-center">
-              <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>当前没有待审核稿件</div>
-              <div className="text-[12px] text-gray-400 mt-1">先去写作页生成内容，或在草稿箱中推进状态。</div>
+              <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>当前没有待审核稿件</div>
+              <div className="mt-1 text-[12px] text-[#8c8178]">先去写作页生成内容，或在草稿箱中推进状态。</div>
             </div>
           )}
         </div>

@@ -8,7 +8,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import {
   ChevronDown, Quote, Sparkles,
   Bold, Italic, Underline, AlignLeft, List, Save,
-  Pause, Copy, Download, Send, LoaderCircle,
+  Pause, Copy, Download, Send, LoaderCircle, CheckCircle2,
   Smartphone, Monitor, ArrowUp, Undo2, Redo2, ListOrdered, Minus, Code2, Pilcrow,
 } from "lucide-react";
 import {
@@ -41,6 +41,7 @@ import { domainConfigs, resolveArticleDomain } from "../lib/content-domains";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
+import { Progress } from "./ui/progress";
 
 const generationLabels: Record<AIWriteScope, string> = {
   title: "AI 文章生成中",
@@ -496,7 +497,10 @@ export function WritingPage() {
 
   const [previewMode, setPreviewMode] = useState<"mobile" | "desktop">("mobile");
   const [publishChannel, setPublishChannel] = useState<"公众号" | "知乎" | "微博" | "头条" | "小红书">("公众号");
+  const editorScrollRef = useRef<HTMLDivElement>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const scrollSyncSourceRef = useRef<"editor" | "preview" | null>(null);
+  const scrollSyncTimerRef = useRef<number | null>(null);
 
   const domainPreviewStyle = useMemo(
     () => getWechatDomainPreviewStyle(selectedDomain, activeScheme.primary, activeScheme.accent),
@@ -531,6 +535,7 @@ export function WritingPage() {
     const htmlBody = stripTitleLineFromBody(body, selectedTitle);
     return extractContentBlocks(htmlBody);
   }, [body, selectedTitle]);
+  const editorBody = useMemo(() => stripTitleLineFromBody(body, selectedTitle), [body, selectedTitle]);
 
   const headingCount = useMemo(() => previewBlocks.filter((block) => block.type === "heading").length, [previewBlocks]);
   const estimatedCards = useMemo(() => Math.max(1, previewBlocks.filter((block) => block.type === "golden" || block.type === "highlight" || block.type === "quote").length), [previewBlocks]);
@@ -541,7 +546,41 @@ export function WritingPage() {
   );
 
   const handleScrollPreviewTop = () => {
+    editorScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     previewScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const syncScroll = (source: "editor" | "preview") => {
+    const sourceElement = source === "editor" ? editorScrollRef.current : previewScrollRef.current;
+    const targetElement = source === "editor" ? previewScrollRef.current : editorScrollRef.current;
+    if (!sourceElement || !targetElement) return;
+    if (scrollSyncSourceRef.current && scrollSyncSourceRef.current !== source) return;
+
+    scrollSyncSourceRef.current = source;
+
+    const sourceScrollable = sourceElement.scrollHeight - sourceElement.clientHeight;
+    const targetScrollable = targetElement.scrollHeight - targetElement.clientHeight;
+    const ratio = sourceScrollable > 0 ? sourceElement.scrollTop / sourceScrollable : 0;
+
+    targetElement.scrollTop = ratio * Math.max(0, targetScrollable);
+
+    if (scrollSyncTimerRef.current) {
+      window.clearTimeout(scrollSyncTimerRef.current);
+    }
+    scrollSyncTimerRef.current = window.setTimeout(() => {
+      scrollSyncSourceRef.current = null;
+    }, 120);
+  };
+
+  const handleTitleChange = (nextTitle: string) => {
+    const nextNormalizedTitle = normalizeArticleTitleLine(nextTitle);
+    const currentEditorBody = stripTitleLineFromBody(body, selectedTitle);
+    setSelectedTitle(nextNormalizedTitle);
+    setBody(composeBodyWithTitle(nextNormalizedTitle, currentEditorBody));
+  };
+
+  const handleEditorBodyChange = (nextEditorBody: string) => {
+    setBody(composeBodyWithTitle(selectedTitle, nextEditorBody));
   };
 
 
@@ -596,6 +635,9 @@ export function WritingPage() {
       if (autosaveTimerRef.current) {
         window.clearTimeout(autosaveTimerRef.current);
       }
+      if (scrollSyncTimerRef.current) {
+        window.clearTimeout(scrollSyncTimerRef.current);
+      }
     };
   }, []);
 
@@ -622,10 +664,20 @@ export function WritingPage() {
       status: index < activeIndex ? "done" : index === activeIndex ? "active" : "pending",
     }));
   }, [generationStage, isWritingBusy, visibleGenerationTask]);
+  const generationStageProgress = useMemo(() => {
+    if (!generationStageSteps.length) return 0;
+
+    const activeIndex = generationStageSteps.findIndex((step) => step.status === "active");
+    const resolvedIndex = activeIndex >= 0 ? activeIndex : generationStageSteps.length - 1;
+    const segmentCount = Math.max(1, generationStageSteps.length - 1);
+    const activeStageOffset = isWritingBusy ? 0.45 : 1;
+
+    return Math.min(100, ((resolvedIndex + activeStageOffset) / segmentCount) * 100);
+  }, [generationStageSteps, isWritingBusy]);
   const isBodyDraftGenerating =
     isWritingBusy &&
     (visibleGenerationTask === "body" || visibleGenerationTask === "full");
-  const hasGeneratedBody = Boolean(body.trim());
+  const hasGeneratedBody = Boolean(editorBody.trim());
 
   function buildDraftSnapshot(draft: Draft): DraftWritingSnapshot {
     const useLocalState = currentDraft?.id === draft.id;
@@ -1257,7 +1309,7 @@ export function WritingPage() {
 
     const hasMeaningfulContent = Boolean(
       summary.trim() ||
-      body.trim() ||
+      editorBody.trim() ||
       outline.some((item) => item.trim()),
     );
 
@@ -1319,6 +1371,7 @@ export function WritingPage() {
     body,
     createManualDraft,
     currentDraft,
+    editorBody,
     isWritingBusy,
     outline,
     router,
@@ -2042,11 +2095,11 @@ export function WritingPage() {
             {visiblePendingAction}
           </span>
         ) : null}
-        {!visiblePendingAction && saveNotice ? <span className="text-[12px] text-green-600">{saveNotice}</span> : null}
+        {!visiblePendingAction && saveNotice ? <span className="text-[12px] text-[#d65f2b]">{saveNotice}</span> : null}
         {isWritingBusy ? (
           <button
             onClick={handlePauseGeneration}
-            className="flex items-center gap-1.5 border border-orange-200 bg-orange-50 px-3.5 py-1.5 rounded-lg text-[12px] text-orange-600 hover:bg-orange-100"
+            className="flex items-center gap-1.5 rounded-lg border border-[#f0dfd0] bg-[#fff7ef] px-3.5 py-1.5 text-[12px] text-[#d65f2b] hover:bg-[#fff0e6]"
             style={{ fontWeight: 600 }}
           >
             <Pause className="w-3.5 h-3.5" /> 暂停生成
@@ -2062,8 +2115,8 @@ export function WritingPage() {
         </button>
         <button
           onClick={() => void handlePushToWechatDraft()}
-          disabled={isWritingBusy || isWechatPushing || !body.trim()}
-          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12px] text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+          disabled={isWritingBusy || isWechatPushing || !editorBody.trim()}
+          className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
           style={{ fontWeight: 600 }}
         >
           {isWechatPushing ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -2099,24 +2152,55 @@ export function WritingPage() {
       ) : null}
 
       {generationStageSteps.length ? (
-        <div className="border-b border-[#eadfd4] bg-white px-4 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            {generationStageSteps.map((step) => (
-              <span
-                key={step.key}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
-                  step.status === "active"
-                    ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
-                    : step.status === "done"
-                      ? "border-emerald-100 bg-emerald-50 text-emerald-600"
-                      : "border-[#eadfd4] bg-[#fffaf5] text-[#8c8178]"
-                }`}
-                style={{ fontWeight: step.status === "active" ? 800 : 650 }}
-              >
-                {step.status === "active" ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
-                {step.label}
+        <div className="border-b border-[#eadfd4] bg-[#fffaf5]/80 px-5 py-2.5">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-5">
+            <div className="flex min-w-[190px] items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#fff0e6] text-[#d65f2b] shadow-[0_6px_18px_rgba(214,95,43,0.12)]">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
               </span>
-            ))}
+              <div className="min-w-0">
+                <div className="text-[12px] text-[#181715]" style={{ fontWeight: 850 }}>
+                  {visiblePendingAction || "生成中"}
+                </div>
+                <div className="text-[10px] text-[#8c8178]">{Math.round(generationStageProgress)}% · 正在推进写作流程</div>
+              </div>
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <Progress
+                value={generationStageProgress}
+                className="h-2 bg-[#f1eadf]"
+                indicatorClassName="bg-[#d65f2b]"
+              />
+              <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
+                {generationStageSteps.map((step) => (
+                  <div
+                    key={step.key}
+                    className={`flex min-w-0 items-center gap-1.5 text-[10px] ${
+                      step.status === "active" ? "text-[#d65f2b]" : step.status === "done" ? "text-[#6f665d]" : "text-[#a5988c]"
+                    }`}
+                    style={{ fontWeight: step.status === "active" ? 850 : 700 }}
+                  >
+                    <span
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                        step.status === "active"
+                          ? "border-[#d65f2b] bg-white"
+                          : step.status === "done"
+                            ? "border-[#eadfd4] bg-[#fff7ef]"
+                            : "border-[#e4d8cc] bg-white"
+                      }`}
+                    >
+                      {step.status === "done" ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : (
+                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                      )}
+                    </span>
+                    <span className="truncate">{step.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
@@ -2265,7 +2349,7 @@ export function WritingPage() {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => applyToolbarAction(mode)}
                       disabled={isWritingBusy}
-                      className="flex h-7 w-7 items-center justify-center rounded text-[#8c8178] hover:bg-[#fff7ef] hover:text-[#d65f2b] disabled:cursor-not-allowed disabled:text-gray-300"
+                      className="flex h-7 w-7 items-center justify-center rounded text-[#8c8178] hover:bg-[#fff7ef] hover:text-[#d65f2b] disabled:cursor-not-allowed disabled:text-[#d8cfc5]"
                     >
                       <Icon className="h-3.5 w-3.5" />
                     </button>
@@ -2274,6 +2358,8 @@ export function WritingPage() {
               </div>
 
               <div
+                ref={editorScrollRef}
+                onScroll={() => syncScroll("editor")}
                 className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto bg-white px-5 py-5" : "min-h-0 flex-1 overflow-y-auto px-6 py-6"}
                 style={
                   isWechatChannel
@@ -2285,12 +2371,43 @@ export function WritingPage() {
                 }
               >
                 <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col">
-                  {isBodyDraftGenerating && !body.trim() ? (
+                  <div className="mb-5 border-b pb-5" style={{ borderColor: isDarkTemplate ? "#1f2937" : "#f1f1f1" }}>
+                    <textarea
+                      value={selectedTitle}
+                      onChange={(event) => handleTitleChange(event.target.value)}
+                      disabled={isWritingBusy}
+                      rows={1}
+                      placeholder="输入文章标题"
+                      className="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                      style={{
+                        fontSize: String(domainPreviewStyle.titleStyle.fontSize),
+                        lineHeight: Number(domainPreviewStyle.titleStyle.lineHeight),
+                        letterSpacing: String(domainPreviewStyle.titleStyle.letterSpacing),
+                        color: textPrimary,
+                        fontWeight: Number(domainPreviewStyle.titleStyle.fontWeight),
+                        textAlign: domainPreviewStyle.titleStyle.textAlign,
+                        fontFamily: String(domainPreviewStyle.titleStyle.fontFamily),
+                      }}
+                    />
+                    <div
+                      className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px]"
+                      style={{
+                        color: textMuted,
+                        justifyContent: domainPreviewStyle.metaAlign,
+                      }}
+                    >
+                      <span className="text-[15px]" style={{ fontWeight: 400, color: isDarkTemplate ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
+                      <span>·</span>
+                      <span>{articleDate}</span>
+                    </div>
+                  </div>
+
+                  {isBodyDraftGenerating && !editorBody.trim() ? (
                     <div className="space-y-3">
-                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-3 text-[12px] text-emerald-600">
+                      <div className="rounded-lg border border-[#f0dfd0] bg-[#fff7ef] px-3 py-3 text-[12px] text-[#d65f2b]">
                         {visiblePendingAction || "正文生成中，正在组织正文内容和段落细节…"}
                       </div>
-                      <div className="rounded-lg bg-gray-50 px-4 py-4">
+                      <div className="rounded-lg bg-[#fffaf5] px-4 py-4">
                         <div className="space-y-3">
                           {[
                             "w-[92%]",
@@ -2301,7 +2418,7 @@ export function WritingPage() {
                             "w-[94%]",
                             "w-[81%]",
                           ].map((widthClass, index) => (
-                            <div key={index} className={`h-4 animate-pulse rounded bg-gray-200 ${widthClass}`} />
+                            <div key={index} className={`h-4 animate-pulse rounded bg-[#f1eadf] ${widthClass}`} />
                           ))}
                         </div>
                       </div>
@@ -2309,8 +2426,8 @@ export function WritingPage() {
                   ) : (
                     <RichTextEditor
                       ref={richTextEditorRef}
-                      value={body}
-                      onChange={setBody}
+                      value={editorBody}
+                      onChange={handleEditorBodyChange}
                       disabled={isWritingBusy}
                       placeholder="请输入"
                       editorStyle={{
@@ -2332,7 +2449,7 @@ export function WritingPage() {
                   {previewMode === "mobile" ? "手机" : "桌面"}
                 </div>
               </div>
-              <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f8f4ef] p-5">
+              <div ref={previewScrollRef} onScroll={() => syncScroll("preview")} className="min-h-0 flex-1 overflow-y-auto bg-[#f8f4ef] p-5">
                 <div
                   className="mx-auto min-h-full overflow-hidden rounded-[24px] border shadow-lg"
                   style={{

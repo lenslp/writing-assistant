@@ -44,9 +44,9 @@ const moduleTools = [
 
 const draftStatusStyles: Record<DraftStatus, { chip: string; dot: string }> = {
   待生成: { chip: "bg-[#fff0e6] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
-  待修改: { chip: "bg-amber-50 text-amber-600", dot: "bg-amber-500" },
+  待修改: { chip: "bg-[#fff7ef] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
   审核中: { chip: "bg-[#f1eadf] text-[#6f665d]", dot: "bg-[#8c8178]" },
-  已发布: { chip: "bg-green-50 text-green-600", dot: "bg-green-500" },
+  已发布: { chip: "bg-[#fff0e6] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
 };
 
 type ContentBlock =
@@ -1129,12 +1129,12 @@ export function FormatEditor() {
     ? {
         label: "待保存",
         description: "当前内容有改动",
-        className: "border-amber-200 bg-amber-50 text-amber-700",
+        className: "border-[#f0dfd0] bg-[#fff7ef] text-[#d65f2b]",
       }
     : {
         label: "已同步",
         description: "草稿内容已落盘",
-        className: "border-emerald-200 bg-emerald-50 text-emerald-700",
+        className: "border-[#eadfd4] bg-[#fffaf5] text-[#6f665d]",
       };
 
   const openImagePanel = () => {
@@ -1656,19 +1656,19 @@ export function FormatEditor() {
               <select
                 value={selectedWechatAccountId ?? wechatAccounts[0]?.id ?? ""}
                 onChange={(event) => setSelectedWechatAccountId(event.target.value || null)}
-                className="w-[168px] appearance-none rounded-lg border border-emerald-200 bg-white px-3 py-1.5 pr-8 text-[12px] text-gray-700"
+                className="w-[168px] appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 pr-8 text-[12px] text-[#6f665d]"
               >
                 {wechatAccounts.map((account) => (
                   <option key={account.id} value={account.id}>{account.name}</option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
             </div>
           ) : null}
           <button
             onClick={() => void handleCheckWechatDraft()}
             disabled={wechatDraftChecking || wechatDraftLoading}
-            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-lg text-[12px] hover:bg-emerald-50 disabled:opacity-60"
+            className="lens-btn-secondary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:opacity-60"
             style={{ fontWeight: 500 }}
           >
             {wechatDraftChecking ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <RefreshCcw className="w-3.5 h-3.5" />}
@@ -1677,7 +1677,7 @@ export function FormatEditor() {
           <button
             onClick={() => void handlePushToWechatDraft()}
             disabled={wechatDraftLoading}
-            className="flex shrink-0 items-center gap-1.5 whitespace-nowrap bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed"
+            className="lens-btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
             style={{ fontWeight: 500 }}
           >
             {wechatDraftLoading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -1696,7 +1696,7 @@ export function FormatEditor() {
                 <option key={channel} value={channel}>{channel}</option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
           </div>
           <div ref={toolbarMoreRef} className="relative shrink-0">
             <button
@@ -1719,17 +1719,17 @@ export function FormatEditor() {
             </button>
           </div>
         </div>
-        {notice ? <span className="shrink-0 text-[12px] text-green-600 whitespace-nowrap px-1">{notice}</span> : null}
+        {notice ? <span className="shrink-0 whitespace-nowrap px-1 text-[12px] text-[#d65f2b]">{notice}</span> : null}
         </div>
       </div>
       {wechatDraftCheckItems.length ? (
-        <div className="border-b border-emerald-100 bg-emerald-50/70 px-4 py-2">
+        <div className="border-b border-[#eadfd4] bg-[#fff7ef] px-4 py-2">
           <div className="flex flex-wrap gap-2">
             {wechatDraftCheckItems.map((item) => (
               <span
                 key={item.key}
                 className={`rounded-full px-2.5 py-1 text-[11px] ${
-                  item.ok ? "bg-white text-emerald-700" : "bg-red-50 text-red-600"
+                  item.ok ? "bg-white text-[#d65f2b]" : "bg-red-50 text-red-600"
                 }`}
                 title={item.message}
               >
@@ -1742,7 +1742,7 @@ export function FormatEditor() {
       {isToolbarMoreOpen && toolbarMoreMenuPosition ? createPortal(
         <div
           ref={toolbarMoreMenuRef}
-          className="fixed z-50 min-w-[188px] rounded-xl border border-gray-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+          className="fixed z-50 min-w-[188px] rounded-xl border border-[#eadfd4] bg-white p-1.5 shadow-[0_18px_40px_rgba(85,57,34,0.12)]"
           style={{
             top: toolbarMoreMenuPosition.top,
             left: toolbarMoreMenuPosition.left,
@@ -1751,28 +1751,28 @@ export function FormatEditor() {
           <button
             type="button"
             onClick={handleRestoreDraft}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <RotateCcw className="h-3.5 w-3.5" /> 恢复原稿
           </button>
           <button
             type="button"
             onClick={() => void handleCopy()}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <Copy className="h-3.5 w-3.5" /> 复制公众号格式
           </button>
           <button
             type="button"
             onClick={() => handleExport("html")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <FileCode className="h-3.5 w-3.5" /> 导出 HTML
           </button>
           <button
             type="button"
             onClick={() => handleExport("md")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <Download className="h-3.5 w-3.5" /> 导出 Markdown
           </button>
@@ -1782,7 +1782,7 @@ export function FormatEditor() {
       {isToolbarActionOpen && toolbarActionMenuPosition ? createPortal(
         <div
           ref={toolbarActionMenuRef}
-          className="fixed z-50 min-w-[196px] rounded-xl border border-gray-200 bg-white p-1.5 shadow-[0_18px_40px_rgba(15,23,42,0.12)]"
+          className="fixed z-50 min-w-[196px] rounded-xl border border-[#eadfd4] bg-white p-1.5 shadow-[0_18px_40px_rgba(85,57,34,0.12)]"
           style={{
             top: toolbarActionMenuPosition.top,
             left: toolbarActionMenuPosition.left,
@@ -1791,14 +1791,14 @@ export function FormatEditor() {
           <button
             type="button"
             onClick={handlePublish}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <Save className="h-3.5 w-3.5" /> 直接发布
           </button>
           <button
             type="button"
             onClick={handleBackToWriting}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-gray-700 hover:bg-gray-50"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
           >
             <Palette className="h-3.5 w-3.5" /> 返回编辑
           </button>
@@ -1873,8 +1873,8 @@ export function FormatEditor() {
             <div
               className={`flex-1 min-h-0 overflow-hidden rounded-[28px] border p-5 ${
                 isWechatChannel
-                  ? "border-[#e5e7eb] bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)]"
-                  : "border-white/70 bg-gradient-to-br from-white/80 to-slate-100/70 shadow-[0_20px_80px_rgba(15,23,42,0.08)]"
+                  ? "border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.06)]"
+                  : "border-[#eadfd4]/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(255,250,245,0.76))] shadow-[0_20px_80px_rgba(85,57,34,0.08)]"
               }`}
             >
               <div className="flex h-full min-h-0 justify-center overflow-hidden">
@@ -2603,9 +2603,9 @@ export function FormatEditor() {
                 <div className="grid grid-cols-4 gap-2">
                   {[
                     { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-[#d65f2b]" },
-                    { key: "link" as const, label: "图片链接", icon: Link2, color: "text-emerald-600" },
-                    { key: "search" as const, label: "联网搜图", icon: Search, color: "text-amber-600" },
-                    { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-purple-600" },
+                    { key: "link" as const, label: "图片链接", icon: Link2, color: "text-[#d65f2b]" },
+                    { key: "search" as const, label: "联网搜图", icon: Search, color: "text-[#d65f2b]" },
+                    { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-[#d65f2b]" },
                   ].map(({ key, label, icon: Icon, color }) => (
                     <button
                       key={key}
@@ -2664,11 +2664,11 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "search" ? (
-                <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>联网搜图</div>
-                  <div className="mt-2 rounded-xl border border-amber-100 bg-amber-50/70 p-3">
-                    <div className="text-[12px] text-amber-700" style={{ fontWeight: 600 }}>更真实的配图</div>
-                    <p className="mt-1 text-[12px] leading-6 text-amber-700/80">所有领域默认优先找真实摄影图；默认不加文字，找不到再回退 AI。</p>
+                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
+                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>联网搜图</div>
+                  <div className="mt-2 rounded-xl border border-[#f0dfd0] bg-[#fff7ef] p-3">
+                    <div className="text-[12px] text-[#d65f2b]" style={{ fontWeight: 800 }}>更真实的配图</div>
+                    <p className="mt-1 text-[12px] leading-6 text-[#8c8178]">所有领域默认优先找真实摄影图；默认不加文字，找不到再回退 AI。</p>
                   </div>
                   <div className="mt-3 space-y-3">
                     <input
@@ -2681,8 +2681,8 @@ export function FormatEditor() {
                       type="button"
                       disabled={imageLoading === "search"}
                       onClick={handleSearchImage}
-                      className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-[12px] text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-300"
-                      style={{ fontWeight: 500 }}
+                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+                      style={{ fontWeight: 800 }}
                     >
                       {imageLoading === "search" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
                       搜索真实图片
@@ -2701,8 +2701,8 @@ export function FormatEditor() {
                           >
                             <img src={item.thumbnailUrl || item.url} alt="真实图片候选" className="h-28 w-full object-cover" loading="lazy" />
                             <div className="space-y-1 px-3 py-2">
-                              <div className="line-clamp-2 text-[11px] text-gray-700">{item.title || "真实图片候选"}</div>
-                              <div className="text-[11px] text-gray-500">点击插入</div>
+                              <div className="line-clamp-2 text-[11px] text-[#5d544c]">{item.title || "真实图片候选"}</div>
+                              <div className="text-[11px] text-[#8c8178]">点击插入</div>
                             </div>
                           </button>
                         ))}
@@ -2742,8 +2742,8 @@ export function FormatEditor() {
                       type="button"
                       disabled={imageLoading === "generate" || imageLoading === "search"}
                       onClick={handleGenerateImage}
-                      className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-3 py-2 text-[12px] text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-purple-300"
-                      style={{ fontWeight: 500 }}
+                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+                      style={{ fontWeight: 800 }}
                     >
                       {imageLoading === "generate" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <WandSparkles className="h-3.5 w-3.5" />}
                       AI 生成并插入
@@ -2752,9 +2752,9 @@ export function FormatEditor() {
                 </div>
               ) : null}
 
-              <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-4">
+              <div className="space-y-4 rounded-2xl border border-[#eadfd4] bg-white p-4">
                 <div>
-                  <div className="mb-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>图注</div>
+                  <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>图注</div>
                   <input
                     value={imageCaption}
                     onChange={(event) => setImageCaption(event.target.value)}
@@ -2764,7 +2764,7 @@ export function FormatEditor() {
                 </div>
 
                 <div>
-                  <div className="mb-2 text-[13px] text-gray-900" style={{ fontWeight: 600 }}>插入位置</div>
+                  <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>插入位置</div>
                   <div className="flex flex-wrap gap-2">
                     {[
                       { value: "auto" as const, label: "智能插入" },
@@ -2786,7 +2786,7 @@ export function FormatEditor() {
                       </button>
                     ))}
                   </div>
-                  <p className="mt-2 text-[12px] leading-6 text-gray-500">默认优先替换图片占位；如果没有占位，就插入到正文当前光标位置。</p>
+                  <p className="mt-2 text-[12px] leading-6 text-[#8c8178]">默认优先替换图片占位；如果没有占位，就插入到正文当前光标位置。</p>
                 </div>
               </div>
             </>
@@ -2794,7 +2794,7 @@ export function FormatEditor() {
             <>
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>当前草稿</div>
-            <div className="rounded-[24px] border border-slate-200 bg-white shadow-[0_10px_28px_rgba(15,23,42,0.05)]">
+            <div className="rounded-[22px] border border-[#eadfd4] bg-white shadow-[0_10px_28px_rgba(85,57,34,0.05)]">
               <div className="space-y-4 px-4 py-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -2820,37 +2820,37 @@ export function FormatEditor() {
                   </span>
                 </div>
 
-                <div className="text-[16px] leading-7 text-slate-900" style={{ fontWeight: 700 }}>
+                <div className="text-[16px] leading-7 text-[#181715]" style={{ fontWeight: 750 }}>
                   {title || currentDraft.title}
                 </div>
 
-                <div className="flex items-center justify-between text-[12px] text-slate-500">
+                <div className="flex items-center justify-between text-[12px] text-[#8c8178]">
                   <span>{draftSyncBadge.description}</span>
                   <span className="whitespace-nowrap">更新于 {articleDate}</span>
                 </div>
 
-                <div className="rounded-2xl bg-slate-50 px-3 py-3">
-                  <div className="line-clamp-3 text-[12px] leading-6 text-slate-600">
+                <div className="rounded-2xl bg-[#fffaf5] px-3 py-3">
+                  <div className="line-clamp-3 text-[12px] leading-6 text-[#6f665d]">
                     {currentDraftPreview}
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 border-t border-slate-100 px-4 py-4">
+              <div className="grid grid-cols-2 gap-2 border-t border-[#f0e5da] px-4 py-4">
                 {currentDraftMetrics.map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-slate-200/80 bg-white px-3 py-3">
+                  <div key={item.label} className="rounded-2xl border border-[#eadfd4]/80 bg-white px-3 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-[11px] text-slate-400">{item.label}</div>
-                      <div className="text-[11px] text-slate-400">{item.hint}</div>
+                      <div className="text-[11px] text-[#8c8178]">{item.label}</div>
+                      <div className="text-[11px] text-[#8c8178]">{item.hint}</div>
                     </div>
-                    <div className="mt-2 text-[16px] text-slate-900" style={{ fontWeight: 700 }}>
+                    <div className="mt-2 text-[16px] text-[#181715]" style={{ fontWeight: 750 }}>
                       {item.value}
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="border-t border-slate-100 px-4 py-3 text-[12px] leading-6 text-slate-500">
+              <div className="border-t border-[#f0e5da] px-4 py-3 text-[12px] leading-6 text-[#8c8178]">
                 {domainMeta.description}
               </div>
             </div>
@@ -2859,13 +2859,13 @@ export function FormatEditor() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="text-[13px]" style={{ fontWeight: 600 }}>内容编辑</div>
-              <span className="text-[11px] text-gray-400">{isDirty ? "未保存修改" : "已同步"}</span>
+              <span className="text-[11px] text-[#8c8178]">{isDirty ? "未保存修改" : "已同步"}</span>
             </div>
             <div className="space-y-3">
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="block text-[11px] text-gray-500">标题</label>
-                  <span className={`text-[11px] ${isWechatTitleTooLong ? "text-red-500" : "text-gray-400"}`}>
+                  <label className="block text-[11px] text-[#8c8178]">标题</label>
+                  <span className={`text-[11px] ${isWechatTitleTooLong ? "text-red-500" : "text-[#8c8178]"}`}>
                     {titleLength} / {WECHAT_TITLE_LIMIT}
                   </span>
                 </div>
@@ -2873,7 +2873,7 @@ export function FormatEditor() {
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   aria-invalid={isWechatTitleTooLong}
-                  className={`w-full rounded-lg bg-gray-50 px-3 py-2 text-[13px] outline-none focus:bg-white ${
+                  className={`w-full rounded-lg bg-[#fffaf5] px-3 py-2 text-[13px] outline-none focus:bg-white ${
                     isWechatTitleTooLong
                       ? "border border-red-200 text-red-600 focus:border-red-300"
                       : "border border-[#eadfd4] focus:border-[#d65f2b]"
@@ -2884,7 +2884,7 @@ export function FormatEditor() {
                 ) : null}
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-gray-500">导读摘要</label>
+                <label className="mb-1 block text-[11px] text-[#8c8178]">导读摘要</label>
                 <textarea
                   value={summary}
                   onChange={(event) => setSummary(event.target.value)}
@@ -2892,7 +2892,7 @@ export function FormatEditor() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-gray-500">正文内容</label>
+                <label className="mb-1 block text-[11px] text-[#8c8178]">正文内容</label>
                 <textarea
                   ref={bodyTextareaRef}
                   value={body}
@@ -2945,7 +2945,7 @@ export function FormatEditor() {
                 >
                   <div className="w-6 h-6 rounded-full" style={{ background: scheme.primary }} />
                   <div className="w-6 h-6 rounded-full" style={{ background: scheme.accent }} />
-                  <span className="text-[12px] text-gray-600" style={{ fontWeight: 500 }}>{scheme.name}</span>
+                  <span className="text-[12px] text-[#6f665d]" style={{ fontWeight: 500 }}>{scheme.name}</span>
                 </button>
               ))}
             </div>
@@ -3016,18 +3016,18 @@ function SelectField({
 }) {
   return (
     <div>
-      <label className="text-[11px] text-gray-500 mb-1 block">{label}</label>
+      <label className="mb-1 block text-[11px] text-[#8c8178]">{label}</label>
       <div className="relative">
         <select
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-[12px] appearance-none"
+          className="w-full appearance-none rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-1.5 text-[12px]"
         >
           {options.map((option) => (
             <option key={option}>{option}</option>
           ))}
         </select>
-        <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
       </div>
     </div>
   );
@@ -3044,7 +3044,7 @@ function ToggleField({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <label className="text-[12px] text-gray-500">{label}</label>
+      <label className="text-[12px] text-[#8c8178]">{label}</label>
       <button
         type="button"
         onClick={onChange}

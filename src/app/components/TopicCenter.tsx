@@ -7,16 +7,16 @@ import {
   Clock,
   Edit3,
   Flame,
+  LoaderCircle,
   PenLine,
-  PenTool,
   Plus,
-  RefreshCw,
   Search,
   Sparkles,
   TrendingUp,
 } from "lucide-react";
 import { useAppStore } from "../providers/app-store";
 import { articleDomains, domainConfigs, resolveArticleDomain, type ActiveArticleDomain } from "../lib/content-domains";
+import type { DomainTopicRecommendationGroup, TopicRecommendationItem } from "../lib/topic-recommendation";
 
 const heatColors: Record<string, string> = {
   极高: "bg-red-50 text-red-600",
@@ -39,9 +39,22 @@ const heatRank: Record<string, number> = {
   中: 1,
 };
 
+type AISelectionState = {
+  loading: boolean;
+  groups: DomainTopicRecommendationGroup[];
+  source: "ai" | "fallback" | null;
+  message: string;
+};
+
 export function TopicCenter() {
   const [activeDomain, setActiveDomain] = useState<ActiveArticleDomain>(articleDomains[0]);
   const [keyword, setKeyword] = useState("");
+  const [aiSelection, setAISelection] = useState<AISelectionState>({
+    loading: false,
+    groups: [],
+    source: null,
+    message: "",
+  });
   const router = useRouter();
   const searchParams = useSearchParams();
   const { topics, drafts, selectedTopic, writingTasks, selectTopic, createManualDraft } = useAppStore();
@@ -84,9 +97,100 @@ export function TopicCenter() {
     return grouped;
   }, [drafts]);
 
-  const filteredTopics = useMemo(
+  const aiSelectionCandidates = useMemo(
     () =>
       topics
+        .filter((topic) => resolveArticleDomain(topic.domain) === activeDomain)
+        .sort((left, right) => right.fit - left.fit || (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0))
+        .slice(0, 8),
+    [activeDomain, topics],
+  );
+
+  const aiSelectionRequestKey = useMemo(
+    () => `${activeDomain}:${aiSelectionCandidates.map((topic) => `${topic.id}:${topic.fit}:${topic.heat}`).join("|")}`,
+    [activeDomain, aiSelectionCandidates],
+  );
+
+  useEffect(() => {
+    if (!aiSelectionCandidates.length) {
+      setAISelection({ loading: false, groups: [], source: null, message: "" });
+      return;
+    }
+
+    let cancelled = false;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      setAISelection({
+        loading: false,
+        groups: [],
+        source: "fallback",
+        message: "AI 筛选超时，已使用规则排序。",
+      });
+    }, 65000);
+
+    setAISelection((current) => ({ ...current, loading: true, message: "" }));
+
+    const loadAISelection = async () => {
+      try {
+        const response = await fetch("/api/topic-recommendations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topics: aiSelectionCandidates, domain: activeDomain }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (cancelled || timedOut) return;
+
+        if (!response.ok || !Array.isArray(payload?.groups)) {
+          throw new Error(payload?.recommendation?.message || payload?.message || "AI 筛选暂不可用");
+        }
+
+        const groups = payload.groups as DomainTopicRecommendationGroup[];
+        setAISelection({
+          loading: false,
+          groups,
+          source: groups.some((group) => group.source === "ai") ? "ai" : "fallback",
+          message: groups.find((group) => group.message)?.message ?? "",
+        });
+      } catch (error) {
+        if (cancelled || timedOut) return;
+        console.error("Failed to filter topics with AI:", error);
+        setAISelection({
+          loading: false,
+          groups: [],
+          source: "fallback",
+          message: error instanceof Error ? error.message : "AI 筛选暂不可用，已使用规则排序。",
+        });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    void loadAISelection();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeDomain, aiSelectionCandidates, aiSelectionRequestKey]);
+
+  const aiRecommendationsByTopicId = useMemo(() => {
+    const map = new Map<string, TopicRecommendationItem & { domain: ActiveArticleDomain; rank: number }>();
+
+    aiSelection.groups.forEach((group) => {
+      group.items.forEach((item, index) => {
+        if (!map.has(item.topicId)) {
+          map.set(item.topicId, { ...item, domain: group.domain, rank: index });
+        }
+      });
+    });
+
+    return map;
+  }, [aiSelection.groups]);
+
+  const filteredTopics = useMemo(
+    () => {
+      const domainTopics = topics
         .filter((topic) => resolveArticleDomain(topic.domain) === activeDomain)
         .filter((topic) => {
           const normalizedKeyword = keyword.trim();
@@ -98,8 +202,20 @@ export function TopicCenter() {
             topic.tags.some((tag) => tag.includes(normalizedKeyword)) ||
             topic.angles.some((angle) => angle.includes(normalizedKeyword))
           );
-        })
-        .sort((left, right) => {
+        });
+      const aiRankedTopics = domainTopics.filter((topic) => aiRecommendationsByTopicId.has(topic.id));
+      const list = aiRankedTopics.length ? aiRankedTopics : domainTopics;
+
+      return list.sort((left, right) => {
+          const leftRecommendation = aiRecommendationsByTopicId.get(left.id);
+          const rightRecommendation = aiRecommendationsByTopicId.get(right.id);
+          if (leftRecommendation || rightRecommendation) {
+            return (
+              (rightRecommendation?.score ?? 0) - (leftRecommendation?.score ?? 0) ||
+              (leftRecommendation?.rank ?? Number.MAX_SAFE_INTEGER) - (rightRecommendation?.rank ?? Number.MAX_SAFE_INTEGER)
+            );
+          }
+
           const leftDraft = draftsByTopicId.get(left.id);
           const rightDraft = draftsByTopicId.get(right.id);
           const leftHasDraft = leftDraft ? 1 : 0;
@@ -110,16 +226,10 @@ export function TopicCenter() {
             right.fit - left.fit ||
             (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0)
           );
-        }),
-    [activeDomain, draftsByTopicId, keyword, topics],
+        });
+    },
+    [activeDomain, aiRecommendationsByTopicId, draftsByTopicId, keyword, topics],
   );
-
-  const totalTopicCount = topics.filter((topic) => articleDomains.includes(resolveArticleDomain(topic.domain))).length;
-  const draftTopicCount = useMemo(
-    () => topics.filter((topic) => draftsByTopicId.has(topic.id)).length,
-    [draftsByTopicId, topics],
-  );
-  const activeWritingTaskCount = Object.keys(writingTasks).length;
 
   const openWriting = (topicId: string, autoGenerate = false) => {
     selectTopic(topicId);
@@ -133,52 +243,6 @@ export function TopicCenter() {
 
   return (
     <div className="mx-auto flex max-w-[1200px] flex-col gap-5">
-      <div className="lens-card-strong flex items-start justify-between gap-4 p-5">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#f0dfd0] bg-white/78 px-3 py-1.5 text-[12px] text-[#d65f2b] shadow-sm">
-            <Sparkles className="h-3.5 w-3.5" /> Topic Lens
-          </div>
-          <h1 className="lens-title mt-3 text-[22px]">选题中心</h1>
-          <p className="mt-1 text-[13px] text-[#6f665d]">把已入库热点整理成可直接开写的多平台选题队列。</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => router.push("/hot-topics")}
-            className="lens-btn-secondary inline-flex items-center gap-1.5 px-3.5 py-2 text-[12px]"
-            style={{ fontWeight: 750 }}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            热点中心
-          </button>
-          <button
-            type="button"
-            onClick={openManualWriting}
-            className="lens-btn-primary inline-flex items-center gap-1.5 px-3.5 py-2 text-[12px]"
-            style={{ fontWeight: 850 }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            手动写文章
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: "可写选题", value: totalTopicCount, hint: "来自热点中心" },
-          { label: "已有草稿", value: draftTopicCount, hint: "可继续编辑" },
-          { label: "生成中", value: activeWritingTaskCount, hint: "离开页面后仍可恢复状态" },
-        ].map((item) => (
-          <div key={item.label} className="lens-card-subtle px-4 py-3">
-            <div className="text-[12px] text-[#8c8178]">{item.label}</div>
-            <div className="mt-1 flex items-end gap-2">
-              <span className="text-[22px] leading-none text-[#d65f2b]" style={{ fontWeight: 850 }}>{item.value}</span>
-              <span className="text-[11px] text-[#8c8178]">{item.hint}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
       <div className="lens-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           {articleDomains.map((domain) => {
@@ -207,7 +271,20 @@ export function TopicCenter() {
               </button>
             );
           })}
-          <div className="lens-input ml-auto flex min-w-[260px] items-center gap-2 px-3 py-2">
+          <button
+            type="button"
+            onClick={openManualWriting}
+            className="lens-btn-primary ml-auto inline-flex items-center gap-1.5 px-3.5 py-2 text-[12px]"
+            style={{ fontWeight: 850 }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            手动写文章
+          </button>
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-[#fff0e6] px-3 py-1.5 text-[11px] text-[#d65f2b]" style={{ fontWeight: 750 }}>
+            {aiSelection.loading ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+            {aiSelection.loading ? "AI 筛选中" : aiSelection.source === "ai" ? "AI 已筛选" : "规则兜底"}
+          </div>
+          <div className="lens-input flex min-w-[260px] items-center gap-2 px-3 py-2">
             <Search className="h-4 w-4 text-[#9a9086]" />
             <input
               value={keyword}
@@ -217,6 +294,9 @@ export function TopicCenter() {
             />
           </div>
         </div>
+        {aiSelection.message ? (
+          <div className="mt-2 text-[11px] text-[#8c8178]">{aiSelection.message}</div>
+        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -224,7 +304,10 @@ export function TopicCenter() {
           const draft = draftsByTopicId.get(topic.id);
           const writingTask = draft ? writingTasks[draft.id] : undefined;
           const isHighlighted = topic.id === highlightedTopicId;
-          const primaryAngle = topic.angles.find((angle) => angle.trim()) ?? topic.reason;
+          const aiRecommendation = aiRecommendationsByTopicId.get(topic.id);
+          const primaryAngle = aiRecommendation?.angle || topic.angles.find((angle) => angle.trim()) || topic.reason;
+          const recommendationReason = aiRecommendation?.reason || topic.reason;
+          const recommendationScore = aiRecommendation?.score ?? topic.fit;
           const statusLabel = writingTask ? "生成中" : draft ? draft.status : "未开写";
           const statusClass = writingTask
             ? statusStyles.generating
@@ -241,7 +324,7 @@ export function TopicCenter() {
                 isHighlighted ? "border-[#d65f2b] shadow-[0_0_0_3px_rgba(214,95,43,0.12)]" : "border-[#eadfd4] hover:border-[#d65f2b]/35"
               }`}
             >
-              <div className="flex items-start gap-4">
+              <div className="flex items-stretch gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="min-w-0 text-[15px] leading-6 text-[#181715]" style={{ fontWeight: 800 }}>{topic.title}</h2>
@@ -271,8 +354,13 @@ export function TopicCenter() {
                   </div>
 
                   <div className="mt-3 rounded-xl bg-[#fffaf5] px-3 py-2.5">
-                    <div className="mb-1 text-[11px] text-[#8c8178]" style={{ fontWeight: 700 }}>推荐切入角度</div>
+                    <div className="mb-1 text-[11px] text-[#8c8178]" style={{ fontWeight: 700 }}>
+                      {aiRecommendation ? "AI 推荐切入" : "推荐切入角度"}
+                    </div>
                     <p className="text-[13px] leading-6 text-[#5d544c]">{primaryAngle}</p>
+                    {aiRecommendation ? (
+                      <p className="mt-1 text-[12px] leading-5 text-[#8c8178]">{recommendationReason}</p>
+                    ) : null}
                   </div>
 
                   {topic.tags.length ? (
@@ -284,43 +372,27 @@ export function TopicCenter() {
                   ) : null}
                 </div>
 
-                <div className="flex w-[210px] flex-col items-end gap-2">
-                  <div className="flex items-center gap-1 text-[#d65f2b]">
+                <div className="flex w-[150px] shrink-0 flex-col items-end justify-center gap-3">
+                  <div className="flex items-baseline gap-1 text-[#d65f2b]">
                     <Sparkles className="h-4 w-4" />
-                    <span className="text-[20px] leading-none" style={{ fontWeight: 750 }}>{topic.fit}%</span>
-                    <span className="text-[11px] text-[#8c8178]">匹配</span>
+                    <span className="text-[20px] leading-none" style={{ fontWeight: 750 }}>{recommendationScore}%</span>
+                    <span className="text-[11px] text-[#8c8178]">{aiRecommendation ? "AI 评分" : "匹配"}</span>
                   </div>
-
-                  {draft ? (
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/writing?draftId=${draft.id}`)}
-                      className="lens-btn-primary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-[12px]"
-                      style={{ fontWeight: 850 }}
-                    >
-                      <Edit3 className="h-3.5 w-3.5" />
-                      {writingTask ? "查看生成" : "继续编辑"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => openWriting(topic.id, true)}
-                      className="lens-btn-primary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-[12px]"
-                      style={{ fontWeight: 850 }}
-                    >
-                      <PenTool className="h-3.5 w-3.5" />
-                      一键成文
-                    </button>
-                  )}
 
                   <button
                     type="button"
-                    onClick={() => openWriting(topic.id, false)}
-                    className="lens-btn-secondary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-[12px]"
-                    style={{ fontWeight: 750 }}
+                    onClick={() => {
+                      if (draft) {
+                        router.push(`/writing?draftId=${draft.id}`);
+                        return;
+                      }
+                      openWriting(topic.id, false);
+                    }}
+                    className="group inline-flex h-10 w-[132px] items-center justify-center gap-2 rounded-full border border-[#d65f2b]/20 bg-[#d65f2b] px-4 text-[12px] text-white shadow-[0_10px_22px_rgba(214,95,43,0.16)] transition-all hover:-translate-y-0.5 hover:bg-[#c94f1f] hover:shadow-[0_14px_26px_rgba(214,95,43,0.2)]"
+                    style={{ fontWeight: 850 }}
                   >
-                    <PenLine className="h-3.5 w-3.5" />
-                    打开编辑
+                    {draft ? <Edit3 className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" /> : <PenLine className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" />}
+                    {draft ? (writingTask ? "查看生成" : "继续编辑") : "开始写作"}
                   </button>
                 </div>
               </div>

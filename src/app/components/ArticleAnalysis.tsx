@@ -61,32 +61,32 @@ function writeArticleAnalysisCache(payload: ApiState) {
 
 function ArticleAnalysisLoadingShell() {
   return (
-    <div className="max-w-[1200px] mx-auto space-y-5">
+    <div className="mx-auto max-w-[1200px] space-y-5">
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <Skeleton className="h-7 w-28 rounded-lg bg-blue-100/80" />
-          <Skeleton className="h-4 w-80 rounded-lg bg-gray-100" />
+          <Skeleton className="h-7 w-28 rounded-lg bg-[#fff0e6]" />
+          <Skeleton className="h-4 w-80 rounded-lg bg-[#f1eadf]" />
         </div>
-        <div className="rounded-2xl border border-emerald-100 bg-linear-to-r from-emerald-50 via-teal-50 to-cyan-50 px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2 text-[13px] text-emerald-700" style={{ fontWeight: 600 }}>
+        <div className="rounded-2xl border border-[#f0dfd0] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_100%)] px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2 text-[13px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
             <LoaderCircle className="h-4 w-4 animate-spin" />
             爆文拆解生成中
           </div>
-          <div className="mt-1.5 text-[12px] text-emerald-700/80">正在根据真实热点生成结构、节奏和情绪点分析。</div>
+          <div className="mt-1.5 text-[12px] text-[#8c8178]">正在根据真实热点生成结构、节奏和情绪点分析。</div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="lens-card p-4">
         <div className="grid gap-3 md:grid-cols-3">
           {analysisLoadingStages.map((stage, index) => (
-            <div key={stage} className="rounded-2xl border border-gray-100 bg-gray-50/80 p-4">
+            <div key={stage} className="rounded-2xl border border-[#f0e5da] bg-[#fffaf5] p-4">
               <div className="flex items-center gap-3">
                 <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] ${
-                  index === 0 ? "bg-emerald-600 text-white" : "bg-white text-gray-400"
+                  index === 0 ? "bg-[#d65f2b] text-white" : "bg-white text-[#8c8178]"
                 }`} style={{ fontWeight: 600 }}>
                   {index + 1}
                 </div>
-                <div className="text-[12px] text-gray-700" style={{ fontWeight: 500 }}>{stage}</div>
+                <div className="text-[12px] text-[#5d544c]" style={{ fontWeight: 600 }}>{stage}</div>
               </div>
               <Skeleton className="mt-3 h-2.5 w-full rounded-full" />
             </div>
@@ -95,11 +95,11 @@ function ArticleAnalysisLoadingShell() {
       </div>
 
       <div className="flex gap-5">
-        <div className="w-[340px] flex-shrink-0 rounded-xl border border-gray-100 bg-white">
-          <div className="border-b border-gray-50 px-4 py-3">
+        <div className="w-[340px] flex-shrink-0 rounded-[22px] border border-[#eadfd4] bg-white/86">
+          <div className="border-b border-[#f0e5da] px-4 py-3">
             <Skeleton className="h-9 w-full rounded-xl" />
           </div>
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-[#f0e5da]">
             {Array.from({ length: 6 }).map((_, index) => (
               <div key={`analysis-item-${index}`} className="space-y-3 px-4 py-4">
                 <Skeleton className="h-4 w-[86%] rounded-md" />
@@ -117,7 +117,7 @@ function ArticleAnalysisLoadingShell() {
         </div>
 
         <div className="flex-1 space-y-4">
-          <div className="rounded-xl border border-gray-100 bg-white p-5">
+          <div className="rounded-[22px] border border-[#eadfd4] bg-white/86 p-5">
             <Skeleton className="h-6 w-[72%] rounded-md" />
             <div className="mt-3 flex gap-3">
               <Skeleton className="h-4 w-20 rounded-md" />
@@ -135,7 +135,7 @@ function ArticleAnalysisLoadingShell() {
 
           <div className="grid grid-cols-2 gap-4">
             {Array.from({ length: 2 }).map((_, index) => (
-              <div key={`top-card-${index}`} className="rounded-xl border border-gray-100 bg-white p-4">
+              <div key={`top-card-${index}`} className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
                 <Skeleton className="h-5 w-32 rounded-md" />
                 <div className="mt-4 space-y-3">
                   {Array.from({ length: 3 }).map((__, rowIndex) => (
@@ -146,11 +146,11 @@ function ArticleAnalysisLoadingShell() {
             ))}
           </div>
 
-          <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
             <Skeleton className="h-5 w-28 rounded-md" />
             <div className="mt-4 flex gap-3">
               {Array.from({ length: 4 }).map((_, index) => (
-                <div key={`rhythm-${index}`} className="flex-1 rounded-lg bg-gray-50 p-3">
+                <div key={`rhythm-${index}`} className="flex-1 rounded-lg bg-[#fffaf5] p-3">
                   <Skeleton className="h-4 w-12 rounded-md mx-auto" />
                   <Skeleton className="mt-2 h-3 w-14 rounded-md mx-auto" />
                   <Skeleton className="mt-2 h-5 w-16 rounded-full mx-auto" />
@@ -161,7 +161,7 @@ function ArticleAnalysisLoadingShell() {
 
           <div className="grid grid-cols-2 gap-4">
             {Array.from({ length: 2 }).map((_, index) => (
-              <div key={`bottom-card-${index}`} className="rounded-xl border border-gray-100 bg-white p-4">
+              <div key={`bottom-card-${index}`} className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
                 <Skeleton className="h-5 w-28 rounded-md" />
                 <div className="mt-4 space-y-3">
                   {Array.from({ length: 4 }).map((__, rowIndex) => (
@@ -336,23 +336,23 @@ export function ArticleAnalysis({ initialData }: { initialData?: ArticleAnalysis
 
   if (!apiState.items.length) {
     return (
-      <div className="max-w-[920px] mx-auto py-16">
-        <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-14 text-center">
-          <div className="text-[18px] text-gray-900" style={{ fontWeight: 600 }}>暂时还没有可分析的真实热点</div>
-          <div className="text-[13px] text-gray-400 mt-2">
+      <div className="mx-auto max-w-[920px] py-16">
+        <div className="lens-card px-6 py-14 text-center">
+          <div className="text-[18px] text-[#181715]" style={{ fontWeight: 750 }}>暂时还没有可分析的真实热点</div>
+          <div className="mt-2 text-[13px] text-[#8c8178]">
             先去热点中心抓取一次数据，抓到真实热点后这里会自动生成对应的爆文拆解视图。
           </div>
           {error ? <div className="text-[12px] text-red-500 mt-3">{error}</div> : null}
           <div className="flex items-center justify-center gap-3 mt-6">
             <button
               onClick={() => router.push("/hot-topics")}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-[13px] text-white hover:bg-blue-700"
+              className="lens-btn-primary px-4 py-2 text-[13px]"
             >
               去抓热点
             </button>
             <button
               onClick={() => void loadArticles()}
-              className="rounded-lg border border-gray-200 px-4 py-2 text-[13px] text-gray-600 hover:bg-gray-50"
+              className="lens-btn-secondary px-4 py-2 text-[13px]"
             >
               重新加载
             </button>
@@ -369,48 +369,48 @@ export function ArticleAnalysis({ initialData }: { initialData?: ArticleAnalysis
   const analysis = selectedArticle.analysis;
 
   return (
-    <div className="max-w-[1200px] mx-auto space-y-5">
+    <div className="mx-auto max-w-[1200px] space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[20px]" style={{ fontWeight: 600 }}>爆文分析</h1>
-          <p className="text-[13px] text-gray-500 mt-1">基于真实热点生成拆解视图，快速提炼可复用的公众号写法</p>
+          <h1 className="lens-title text-[20px]">爆文分析</h1>
+          <p className="mt-1 text-[13px] text-[#6f665d]">基于真实热点生成拆解视图，快速提炼可复用的公众号写法</p>
         </div>
         <div className="flex items-center gap-3">
           {showDevDiagnostics ? (
-            <div className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-500">
-              <DatabaseZap className="w-3.5 h-3.5 text-blue-500" />
+            <div className="flex items-center gap-1.5 rounded-lg border border-[#eadfd4] bg-white/86 px-3 py-1.5 text-[12px] text-[#8c8178]">
+              <DatabaseZap className="h-3.5 w-3.5 text-[#d65f2b]" />
               {apiState.source === "database" ? "来自数据库热点" : "来自实时抓取"}
             </div>
           ) : null}
-          {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
+          {notice ? <span className="text-[12px] text-[#d65f2b]">{notice}</span> : null}
         </div>
       </div>
 
       <div className="flex gap-5">
-        <div className="w-[340px] flex-shrink-0 bg-white rounded-xl border border-gray-100">
-          <div className="px-4 py-3 border-b border-gray-50">
+        <div className="w-[340px] flex-shrink-0 rounded-[22px] border border-[#eadfd4] bg-white/86">
+          <div className="border-b border-[#f0e5da] px-4 py-3">
             <input
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
               type="text"
               placeholder="搜索爆文..."
-              className="w-full bg-gray-50 rounded-lg px-3 py-1.5 text-[13px] border-none outline-none placeholder:text-gray-400"
+              className="w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-1.5 text-[13px] text-[#181715] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b] focus:bg-white"
             />
           </div>
-          <div className="divide-y divide-gray-50 max-h-[calc(100vh-220px)] overflow-y-auto">
+          <div className="max-h-[calc(100vh-220px)] divide-y divide-[#f0e5da] overflow-y-auto">
             {filteredArticles.map((article) => (
               <div
                 key={article.id}
                 onClick={() => setSelectedId(article.id)}
-                className={`px-4 py-3.5 cursor-pointer transition-colors ${
-                  selectedArticle.id === article.id ? "bg-blue-50 border-l-2 border-l-blue-600" : "hover:bg-gray-50 border-l-2 border-l-transparent"
+                className={`cursor-pointer border-l-2 px-4 py-3.5 transition-colors ${
+                  selectedArticle.id === article.id ? "border-l-[#d65f2b] bg-[#fff0e6]" : "border-l-transparent hover:bg-[#fffaf5]"
                 }`}
               >
-                <div className="text-[13px]" style={{ fontWeight: selectedArticle.id === article.id ? 600 : 500 }}>{article.title}</div>
-                <div className="text-[11px] text-blue-600 mt-1">{article.angle}</div>
+                <div className="text-[13px] text-[#181715]" style={{ fontWeight: selectedArticle.id === article.id ? 750 : 600 }}>{article.title}</div>
+                <div className="mt-1 text-[11px] text-[#d65f2b]">{article.angle}</div>
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-[11px] text-gray-400">{article.source} · {article.time}</span>
-                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                  <span className="text-[11px] text-[#8c8178]">{article.source} · {article.time}</span>
+                  <div className="flex items-center gap-2 text-[11px] text-[#8c8178]">
                     <span className="flex items-center gap-0.5"><Eye className="w-3 h-3" />{article.metrics.reads}</span>
                     <span className="flex items-center gap-0.5"><Heart className="w-3 h-3" />{article.metrics.likes}</span>
                   </div>
@@ -421,108 +421,108 @@ export function ArticleAnalysis({ initialData }: { initialData?: ArticleAnalysis
         </div>
 
         <div className="flex-1 space-y-4">
-          <div className="bg-white rounded-xl border border-gray-100 p-5">
-            <h2 className="text-[16px]" style={{ fontWeight: 600 }}>{selectedArticle.title}</h2>
-            <div className="flex items-center gap-4 mt-2 text-[12px] text-gray-500">
+          <div className="rounded-[22px] border border-[#eadfd4] bg-white/86 p-5 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+            <h2 className="text-[16px] text-[#181715]" style={{ fontWeight: 750 }}>{selectedArticle.title}</h2>
+            <div className="mt-2 flex items-center gap-4 text-[12px] text-[#6f665d]">
               <span>{selectedArticle.source}</span>
               <span>{selectedArticle.time}</span>
               <span className="flex items-center gap-1"><Eye className="w-3.5 h-3.5" />{selectedArticle.metrics.reads}</span>
               <span className="flex items-center gap-1"><Heart className="w-3.5 h-3.5" />{selectedArticle.metrics.likes}</span>
               <span className="flex items-center gap-1"><MessageCircle className="w-3.5 h-3.5" />{selectedArticle.metrics.comments}</span>
             </div>
-            <div className="mt-2 text-[12px] text-gray-400">
+            <div className="mt-2 text-[12px] text-[#8c8178]">
               传播指标基于真实热点热度折算，用于辅助判断仿写优先级。
             </div>
-            <div className="mt-3 text-[12px] text-gray-600 bg-blue-50/60 rounded-lg px-3 py-2">
-              适合提炼为：<span className="text-blue-600" style={{ fontWeight: 600 }}>{selectedArticle.topic.title}</span>
+            <div className="mt-3 rounded-lg bg-[#fff0e6] px-3 py-2 text-[12px] text-[#6f665d]">
+              适合提炼为：<span className="text-[#d65f2b]" style={{ fontWeight: 750 }}>{selectedArticle.topic.title}</span>
             </div>
             {selectedArticle.summary ? (
-              <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-[12px] text-gray-600 leading-relaxed">
+              <div className="mt-3 rounded-lg bg-[#fffaf5] px-3 py-2 text-[12px] leading-relaxed text-[#6f665d]">
                 {selectedArticle.summary}
               </div>
             ) : null}
             <div className="flex items-center gap-2 mt-3">
-              <button onClick={handleGenerateFramework} className="flex items-center gap-1.5 bg-blue-600 text-white px-3.5 py-1.5 rounded-lg text-[12px] hover:bg-blue-700" style={{ fontWeight: 500 }}>
+              <button onClick={handleGenerateFramework} className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]" style={{ fontWeight: 750 }}>
                 <Copy className="w-3.5 h-3.5" /> 生成仿写框架
               </button>
-              <button onClick={handleExtractTopic} className="flex items-center gap-1.5 border border-gray-200 px-3.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50" style={{ fontWeight: 500 }}>
+              <button onClick={handleExtractTopic} className="lens-btn-secondary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]" style={{ fontWeight: 750 }}>
                 <Lightbulb className="w-3.5 h-3.5" /> 提炼选题角度
               </button>
-              <button onClick={handleCopyInsights} className="flex items-center gap-1.5 border border-gray-200 px-3.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50" style={{ fontWeight: 500 }}>
+              <button onClick={handleCopyInsights} className="lens-btn-secondary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]" style={{ fontWeight: 750 }}>
                 <Zap className="w-3.5 h-3.5" /> 复制拆解要点
               </button>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Type className="w-4 h-4 text-blue-500" />
-                <span className="text-[13px]" style={{ fontWeight: 600 }}>标题结构分析</span>
+            <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <Type className="h-4 w-4 text-[#d65f2b]" />
+                <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>标题结构分析</span>
               </div>
               <div className="space-y-2.5">
                 {Object.entries(analysis.titleStructure).map(([key, value]) => (
                   <div key={key} className="flex items-center gap-2">
-                    <span className="text-[11px] text-gray-400 w-14">{key === "pattern" ? "模式" : key === "hook" ? "钩子" : "情绪"}</span>
-                    <span className="text-[12px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded" style={{ fontWeight: 500 }}>{value}</span>
+                    <span className="w-14 text-[11px] text-[#8c8178]">{key === "pattern" ? "模式" : key === "hook" ? "钩子" : "情绪"}</span>
+                    <span className="rounded bg-[#fff0e6] px-2 py-0.5 text-[12px] text-[#d65f2b]" style={{ fontWeight: 700 }}>{value}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <BookOpen className="w-4 h-4 text-green-500" />
-                <span className="text-[13px]" style={{ fontWeight: 600 }}>开头方式分析</span>
+            <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-[#d65f2b]" />
+                <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>开头方式分析</span>
               </div>
-              <p className="text-[12.5px] text-gray-600 leading-relaxed">{analysis.opening}</p>
+              <p className="text-[12.5px] leading-relaxed text-[#6f665d]">{analysis.opening}</p>
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <AlignLeft className="w-4 h-4 text-purple-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>段落节奏分析</span>
+          <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <AlignLeft className="h-4 w-4 text-[#d65f2b]" />
+              <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>段落节奏分析</span>
             </div>
             <div className="flex items-center gap-2">
               {analysis.rhythm.map((item) => (
-                <div key={item.section} className="flex-1 bg-gray-50 rounded-lg p-3 text-center">
-                  <div className="text-[12px]" style={{ fontWeight: 600 }}>{item.section}</div>
-                  <div className="text-[11px] text-gray-500 mt-1">{item.length}</div>
-                  <div className="text-[10px] text-blue-500 bg-blue-50 rounded px-1.5 py-0.5 mt-1.5 inline-block">{item.style}</div>
+                <div key={item.section} className="flex-1 rounded-lg bg-[#fffaf5] p-3 text-center">
+                  <div className="text-[12px] text-[#181715]" style={{ fontWeight: 700 }}>{item.section}</div>
+                  <div className="mt-1 text-[11px] text-[#8c8178]">{item.length}</div>
+                  <div className="mt-1.5 inline-block rounded bg-[#fff0e6] px-1.5 py-0.5 text-[10px] text-[#d65f2b]">{item.style}</div>
                 </div>
               ))}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4 text-orange-500" />
-                <span className="text-[13px]" style={{ fontWeight: 600 }}>情绪点分析</span>
+            <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-[#d65f2b]" />
+                <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>情绪点分析</span>
               </div>
               <div className="space-y-2.5">
                 {analysis.emotions.map((emotion) => (
                   <div key={emotion.point} className="flex items-center gap-3">
-                    <span className="text-[12px] w-16 flex-shrink-0" style={{ fontWeight: 500 }}>{emotion.point}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-2">
-                      <div className="bg-orange-400 rounded-full h-2 transition-all" style={{ width: `${emotion.intensity}%` }} />
+                    <span className="w-16 flex-shrink-0 text-[12px] text-[#181715]" style={{ fontWeight: 650 }}>{emotion.point}</span>
+                    <div className="h-2 flex-1 rounded-full bg-[#f1eadf]">
+                      <div className="h-2 rounded-full bg-[#d65f2b] transition-all" style={{ width: `${emotion.intensity}%` }} />
                     </div>
-                    <span className="text-[11px] text-gray-500 w-8">{emotion.intensity}%</span>
+                    <span className="w-8 text-[11px] text-[#8c8178]">{emotion.intensity}%</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Zap className="w-4 h-4 text-amber-500" />
-                <span className="text-[13px]" style={{ fontWeight: 600 }}>可借鉴方法</span>
+            <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <Zap className="h-4 w-4 text-[#d65f2b]" />
+                <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>可借鉴方法</span>
               </div>
               <div className="space-y-2">
                 {analysis.methods.map((method, index) => (
-                  <div key={method} className="flex items-start gap-2 text-[12.5px] text-gray-600">
-                    <span className="w-5 h-5 rounded bg-amber-50 text-amber-600 flex items-center justify-center text-[11px] flex-shrink-0 mt-0.5" style={{ fontWeight: 600 }}>{index + 1}</span>
+                  <div key={method} className="flex items-start gap-2 text-[12.5px] text-[#6f665d]">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded bg-[#fff0e6] text-[11px] text-[#d65f2b]" style={{ fontWeight: 700 }}>{index + 1}</span>
                     {method}
                   </div>
                 ))}
@@ -530,14 +530,14 @@ export function ArticleAnalysis({ initialData }: { initialData?: ArticleAnalysis
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart3 className="w-4 h-4 text-indigo-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>排版特征总结</span>
+          <div className="rounded-[18px] border border-[#eadfd4] bg-white/86 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-[#d65f2b]" />
+              <span className="text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>排版特征总结</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {analysis.format.map((item) => (
-                <span key={item} className="text-[12px] bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full" style={{ fontWeight: 500 }}>{item}</span>
+                <span key={item} className="rounded-full bg-[#fff0e6] px-3 py-1 text-[12px] text-[#d65f2b]" style={{ fontWeight: 700 }}>{item}</span>
               ))}
             </div>
           </div>

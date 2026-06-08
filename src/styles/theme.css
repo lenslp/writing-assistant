@@ -2,43 +2,43 @@
 
 :root {
   --font-size: 16px;
-  --background: #ffffff;
-  --foreground: oklch(0.145 0 0);
+  --background: #fffaf5;
+  --foreground: #181715;
   --card: #ffffff;
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #030213;
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.95 0.0058 264.53);
-  --secondary-foreground: #030213;
-  --muted: #ececf0;
-  --muted-foreground: #717182;
-  --accent: #e9ebef;
-  --accent-foreground: #030213;
+  --card-foreground: #181715;
+  --popover: #ffffff;
+  --popover-foreground: #181715;
+  --primary: #d65f2b;
+  --primary-foreground: #ffffff;
+  --secondary: #fff0e6;
+  --secondary-foreground: #5d544c;
+  --muted: #f1eadf;
+  --muted-foreground: #8c8178;
+  --accent: #fff7ef;
+  --accent-foreground: #181715;
   --destructive: #d4183d;
   --destructive-foreground: #ffffff;
-  --border: rgba(0, 0, 0, 0.1);
+  --border: #eadfd4;
   --input: transparent;
-  --input-background: #f3f3f5;
-  --switch-background: #cbced4;
+  --input-background: #fffaf5;
+  --switch-background: #d8cfc5;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: oklch(0.708 0 0);
+  --ring: rgba(214, 95, 43, 0.34);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: #030213;
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #fff7ef;
+  --sidebar-foreground: #181715;
+  --sidebar-primary: #d65f2b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fff0e6;
+  --sidebar-accent-foreground: #181715;
+  --sidebar-border: #eadfd4;
+  --sidebar-ring: rgba(214, 95, 43, 0.34);
 }
 
 .dark {
@@ -137,14 +137,14 @@
 
   .article-rich-editor {
     display: flex;
-    min-height: 520px;
+    min-height: 430px;
     width: 100%;
   }
 
   .article-rich-editor .tiptap {
     flex: 1;
     width: 100%;
-    min-height: 520px;
+    min-height: 430px;
     border: 0;
     background: transparent;
     outline: none;

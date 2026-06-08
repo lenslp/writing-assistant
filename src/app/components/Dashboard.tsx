@@ -56,6 +56,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
   const [activeHotDomain, setActiveHotDomain] = useState<ActiveArticleDomain | null>(null);
   const [latestFetchJob, setLatestFetchJob] = useState<FetchJob | null>(null);
   const [aiProviderStatus, setAIProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
+  const [aiImageProviderStatus, setAIImageProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
   const [recommendationGroups, setRecommendationGroups] = useState<DomainTopicRecommendationGroup[]>([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(false);
 
@@ -67,11 +68,13 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           : fetch("/api/hot-topics?limit=360", { cache: "no-store" });
         const fetchJobsPromise = fetch("/api/fetch-jobs?limit=1", { cache: "no-store" });
         const aiProviderPromise = fetch("/api/ai/provider", { cache: "no-store" });
+        const aiImageProviderPromise = fetch("/api/ai/image-provider", { cache: "no-store" });
 
-        const [hotTopicsResponse, fetchJobsResponse, aiProviderResponse] = await Promise.all([
+        const [hotTopicsResponse, fetchJobsResponse, aiProviderResponse, aiImageProviderResponse] = await Promise.all([
           hotTopicsPromise,
           fetchJobsPromise,
           aiProviderPromise,
+          aiImageProviderPromise,
         ]);
 
         if (hotTopicsResponse) {
@@ -91,6 +94,13 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         setAIProviderStatus({
           configured: Boolean(activeProfile?.hasApiKey),
           label: activeProfile?.name || "未配置写作模型",
+        });
+
+        const imageProviderPayload = await aiImageProviderResponse.json().catch(() => null);
+        const activeImageProfile = imageProviderPayload?.config?.activeProfile;
+        setAIImageProviderStatus({
+          configured: Boolean(activeImageProfile?.hasApiKey),
+          label: activeImageProfile?.name || activeImageProfile?.model || "未配置图片模型",
         });
       } catch (error) {
         console.error("Failed to load dashboard data:", error);
@@ -243,8 +253,13 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     }
 
     let cancelled = false;
+    let requestFinished = false;
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+    const timeoutId = window.setTimeout(() => {
+      if (!controller.signal.aborted) {
+        controller.abort(new DOMException("Recommendation request timed out", "TimeoutError"));
+      }
+    }, 65000);
 
     const loadRecommendations = async () => {
       setRecommendationsLoading(true);
@@ -264,11 +279,13 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           setRecommendationGroups(payload.groups as DomainTopicRecommendationGroup[]);
         }
       } catch (error) {
-        console.error("Failed to load recommended topics:", error);
-        if (!cancelled) {
-          setRecommendationGroups([]);
+        if (cancelled || controller.signal.aborted) {
+          return;
         }
+        console.error("Failed to load recommended topics:", error);
+        setRecommendationGroups([]);
       } finally {
+        requestFinished = true;
         window.clearTimeout(timeoutId);
         if (!cancelled) {
           setRecommendationsLoading(false);
@@ -280,7 +297,9 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
     return () => {
       cancelled = true;
-      controller.abort();
+      if (!requestFinished && !controller.signal.aborted) {
+        controller.abort(new DOMException("Recommendation request cancelled", "AbortError"));
+      }
       window.clearTimeout(timeoutId);
     };
   }, [recommendationCandidates, recommendationRequestKey]);
@@ -293,7 +312,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
   return (
     <div className="mx-auto max-w-[1200px] space-y-5">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
         <section className="rounded-[22px] border border-[#eadfd4] bg-white/86 p-5 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -350,6 +369,15 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
               </div>
               <span className={`rounded-full px-2 py-0.5 text-[11px] ${aiProviderStatus.configured ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>
                 {aiProviderStatus.configured ? "可用" : "待配置"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-2xl bg-[#fffaf5] px-3 py-2.5">
+              <div>
+                <div className="text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>图片模型</div>
+                <div className="mt-0.5 text-[11px] text-[#8c8178]">{aiImageProviderStatus.label}</div>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] ${aiImageProviderStatus.configured ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>
+                {aiImageProviderStatus.configured ? "可用" : "待配置"}
               </span>
             </div>
             <div className="flex items-center justify-between rounded-2xl bg-[#fffaf5] px-3 py-2.5">

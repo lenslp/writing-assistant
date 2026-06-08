@@ -7,7 +7,7 @@ import { ARTICLE_ANALYSIS_CACHE_TAG, HOT_TOPICS_CACHE_TAG, getHotTopicsSnapshot 
 export const dynamic = "force-dynamic";
 
 function ArticleAnalysisFallback() {
-  return <div className="p-8 text-sm text-gray-500">正在加载爆文分析...</div>;
+  return <div className="p-8 text-sm text-[#8c8178]">正在加载爆文分析...</div>;
 }
 
 const getInitialArticleAnalysis = unstable_cache(
