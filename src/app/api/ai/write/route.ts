@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   generateWechatArticle,
   getAIProviderConfig,
+  isQualityRetryError,
   transformWechatText,
 } from "../../../lib/ai-writing";
 import { getRestrictedReason } from "../../../lib/content-policy";
@@ -146,13 +147,20 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Failed to write article with AI:", error);
+    const message = isQualityRetryError(error)
+      ? "AI 正在自动调整稿件质量，请再试一次。"
+      : error instanceof Error
+        ? error.message
+        : "AI 写作失败，请稍后重试。";
+    const isQualityRetry = isQualityRetryError(error);
 
     return NextResponse.json(
       {
         configured: true,
         provider: config.provider,
         model: "request-failed",
-        message: error instanceof Error ? error.message : "AI 写作失败，请稍后重试。",
+        message,
+        qualityRetry: isQualityRetry,
       },
       { status: 500 },
     );

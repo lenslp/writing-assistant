@@ -5,7 +5,8 @@ declare global {
 }
 
 export function hasDatabaseUrl() {
-  return Boolean(process.env.DATABASE_URL);
+  const url = process.env.DATABASE_URL;
+  return Boolean(url && !url.includes("your-project.supabase.co") && !url.includes("[YOUR-PASSWORD]"));
 }
 
 export const prisma =

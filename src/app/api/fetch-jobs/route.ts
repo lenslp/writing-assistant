@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { hasPersistenceBackend } from "../../lib/persistence";
-import { hasDatabaseUrl, prisma } from "../../lib/prisma";
+import { hasPersistenceBackend, shouldUseSupabaseAdmin } from "../../lib/persistence";
+import { prisma } from "../../lib/prisma";
 import { getSupabaseAdmin } from "../../lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   const limit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
 
   try {
-    if (!hasDatabaseUrl()) {
+    if (shouldUseSupabaseAdmin()) {
       const supabase = getSupabaseAdmin();
       const { data, error } = await supabase
         .from("fetch_jobs")

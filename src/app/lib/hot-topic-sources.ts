@@ -43,6 +43,20 @@ type GitHubTrendingRepo = {
   forks: number;
 };
 
+type AihotPublicItem = {
+  id?: string;
+  title?: string;
+  url?: string;
+  source?: string;
+  publishedAt?: string;
+  summary?: string;
+  category?: string;
+};
+
+type AihotPublicItemsPayload = {
+  items?: AihotPublicItem[];
+};
+
 function hashId(source: string, input: string) {
   return createHash("sha1").update(`${source}:${input}`).digest("hex");
 }
@@ -72,10 +86,14 @@ function normalizeHeat(rawValue: number | null, fallbackValue: number) {
 
 type RequestOptions = {
   headers?: Record<string, string>;
+  method?: string;
+  body?: string;
 };
 
 async function fetchResponse(url: string, options: RequestOptions = {}) {
   const response = await fetch(url, {
+    method: options.method || "GET",
+    body: options.body,
     headers: {
       "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       accept: "*/*",
@@ -834,6 +852,55 @@ async function scrapeRssFeed(source: string, sourceUrl: string, defaultTags: str
   }).filter((item) => item.title);
 }
 
+async function scrapeAihotSelectedItems(): Promise<ScrapedHotTopic[]> {
+  const payload = await fetchJson<AihotPublicItemsPayload>(
+    "https://aihot.virxact.com/api/public/items?mode=selected&take=80",
+    {
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 aihot-skill/0.2.0",
+      },
+    },
+  );
+  const items = payload.items ?? [];
+
+  if (!items.length) {
+    throw new Error("AI HOT returned empty payload");
+  }
+
+  return items.slice(0, HOT_TOPIC_SOURCE_FETCH_LIMIT).flatMap((item, index) => {
+    const title = normalizeTitle(String(item.title ?? ""));
+    if (!title) return [];
+
+    const url = String(item.url ?? "").trim();
+    const source = String(item.source ?? "").trim();
+    const category = String(item.category ?? "").trim();
+    const publishedAt = item.publishedAt ? new Date(item.publishedAt) : null;
+    const freshnessBoost = publishedAt && !Number.isNaN(publishedAt.getTime())
+      ? Math.max(0, 24 - Math.floor((Date.now() - publishedAt.getTime()) / (1000 * 60 * 60))) * 16
+      : 0;
+
+    return [{
+      id: `aihot-${hashId("AI HOT", item.id || url || title)}`,
+      externalId: hashId("AI HOT", item.id || url || title),
+      title,
+      source: "AI HOT",
+      sourceType: "api",
+      domain: "AI",
+      heat: Math.max(4200, 9200 - index * 90 + freshnessBoost),
+      trend: normalizeTrend(Math.max(18, 62 - index)),
+      tags: ["AI", category || "精选", source].filter(Boolean).slice(0, 3),
+      url,
+      summary: String(item.summary ?? "").trim().slice(0, 180),
+      sourcePublishedAt: publishedAt && !Number.isNaN(publishedAt.getTime()) ? publishedAt.toISOString() : undefined,
+      fetchedAt: new Date().toISOString(),
+      raw: {
+        ...item,
+        domain: "AI",
+      },
+    } satisfies ScrapedHotTopic];
+  });
+}
+
 function buildTwitterRssBridgeUrl(baseUrl: string, country: string, limit: number) {
   const normalized = baseUrl.trim();
   const url = normalized.includes("://")
@@ -944,16 +1011,89 @@ async function scrapeGithubTrending(): Promise<ScrapedHotTopic[]> {
   });
 }
 
+type Three36KrHotItem = {
+  itemId: number;
+  route: string;
+  publishTime: number;
+  templateMaterial: {
+    itemId: number;
+    widgetTitle: string;
+    widgetImage?: string;
+    authorName?: string;
+    statRead?: number;
+    statCollect?: number;
+    statPraise?: number;
+  };
+};
+
+type Three36KrHotResponse = {
+  code: number;
+  data?: {
+    hotRankList?: Three36KrHotItem[];
+  };
+};
+
+async function scrape36KrHot(): Promise<ScrapedHotTopic[]> {
+  const payload = await fetchJson<Three36KrHotResponse>(
+    "https://gateway.36kr.com/api/mis/nav/home/nav/rank/hot",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        partner_id: "web",
+        param: {
+          siteId: 1,
+          platformId: 2,
+        },
+      }),
+    }
+  );
+
+  const list = payload.data?.hotRankList;
+  if (!list || !list.length) {
+    throw new Error("36氪 hot API returned empty payload");
+  }
+
+  return list.slice(0, HOT_TOPIC_SOURCE_FETCH_LIMIT).map((item, index) => {
+    const material = item.templateMaterial || {};
+    const title = material.widgetTitle || "";
+    const itemId = item.itemId || material.itemId;
+    const url = itemId ? `https://36kr.com/p/${itemId}` : "https://36kr.com/hot-list/";
+    
+    const readCount = material.statRead || 0;
+    const heat = readCount > 0 ? normalizeHeat(readCount, 8000 - index * 200) : 8000 - index * 200;
+
+    return {
+      id: `36kr-${hashId("36kr", String(itemId || title))}`,
+      externalId: hashId("36kr", String(itemId || title)),
+      title,
+      source: "36氪",
+      sourceType: "api",
+      heat,
+      trend: normalizeTrend(35 - index),
+      tags: ["科技", "商业"],
+      url,
+      summary: material.authorName ? `作者: ${material.authorName}` : "来自36氪热榜",
+      sourcePublishedAt: item.publishTime ? new Date(item.publishTime).toISOString() : new Date().toISOString(),
+      fetchedAt: new Date().toISOString(),
+      raw: item,
+    } satisfies ScrapedHotTopic;
+  }).filter((item) => item.title);
+}
+
 export async function scrapeHotTopics() {
   const batchFetchedAt = new Date().toISOString();
   const sourceFetchers: SourceFetcher[] = [
+    { source: "AI HOT", fetch: scrapeAihotSelectedItems },
     { source: "微博", fetch: scrapeWeiboHotFromApi },
     { source: "GitHub Trending", fetch: scrapeGithubTrending },
     { source: "抖音", fetch: scrapeDouyinHot },
     { source: "知乎", fetch: scrapeZhihuHot },
     { source: "今日头条", fetch: scrapeToutiaoHot },
     { source: "百度", fetch: scrapeBaiduHot },
-    { source: "36氪", fetch: () => scrapeRssFeed("36氪", "https://36kr.com/feed", ["科技", "商业"]) },
+    { source: "36氪", fetch: scrape36KrHot },
     { source: "少数派", fetch: () => scrapeRssFeed("少数派", "https://sspai.com/feed", ["效率", "工具"]) },
     { source: "爱范儿", fetch: () => scrapeRssFeed("爱范儿", "https://www.ifanr.com/feed", ["科技", "产品"]) },
   ];

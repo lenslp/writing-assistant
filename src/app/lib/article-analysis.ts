@@ -148,6 +148,7 @@ function buildTopicReasonFromSignals(input: {
   }
 
   const domainFallback: Record<TopicSuggestion["domain"], string> = {
+    AI: `这条热点有时效，也有延展空间，适合从 AI 变化和现实影响两个层面立住判断。`,
     科技: `这条热点有时效，也有延展空间，适合从技术变化和现实影响两个层面立住判断。`,
     教育: `这类题容易引发家长和学生共鸣，适合把情绪卡点、误区和能马上做的动作一起讲清楚。`,
     旅游: `这类出行话题如果只写热闹很快就过去，真正有价值的是把体验、预算、小众推荐和避坑写具体。`,
@@ -166,6 +167,7 @@ function buildTopicReasonFromSignals(input: {
 
 function pickDomainAudience(domain: TopicSuggestion["domain"]) {
   const audienceMap: Record<TopicSuggestion["domain"], string> = {
+    AI: "普通用户和内容创作者",
     科技: "普通用户和内容创作者",
     教育: "家长、老师和学生",
     旅游: "准备出发的人",

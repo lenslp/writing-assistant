@@ -39,9 +39,7 @@ export type AIWriteGenerateRequest = {
   settings: AppSettings;
   domain: ArticleDomain;
   articleType: string;
-  targetReader: string;
   targetWordCount: number;
-  tone: string;
   draft?: DraftWritingSnapshot | null;
   sourceContext?: HotTopicSourceContext | null;
 };
@@ -53,9 +51,7 @@ export type AIWriteTransformRequest = {
   settings: AppSettings;
   domain: ArticleDomain;
   articleType: string;
-  targetReader: string;
   targetWordCount: number;
-  tone: string;
   draft?: DraftWritingSnapshot | null;
   body: string;
   selectedText?: string;
@@ -91,4 +87,5 @@ export type AIWriteResponse = {
   wordCountStatus?: AIWriteWordCountStatus;
   transformedText?: string;
   message?: string;
+  qualityRetry?: boolean;
 };

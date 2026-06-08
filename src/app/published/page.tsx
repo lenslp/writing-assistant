@@ -1,5 +1,5 @@
-import { PublishedCenter } from "../components/PublishedCenter";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <PublishedCenter />;
+  redirect("/drafts");
 }

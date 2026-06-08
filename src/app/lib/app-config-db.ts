@@ -3,7 +3,8 @@ import path from "node:path";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { hasDatabaseUrl } from "./prisma";
-import { getSupabaseAdmin, hasSupabaseAdminConfig } from "./supabase-admin";
+import { getSupabaseAdmin } from "./supabase-admin";
+import { shouldUseSupabaseAdmin } from "./persistence";
 import { defaultSettings, type AppSettings } from "./app-data";
 import { resolveArticleDomain } from "./content-domains";
 
@@ -690,19 +691,6 @@ async function writeLocalAIImageProviderCollection(collection: AIImageProviderCo
   applyLocalEnvValues(updates);
 }
 
-function normalizeReaderJobTraits(value: unknown) {
-  if (typeof value !== "string") {
-    return defaultSettings.readerJobTraits;
-  }
-
-  const normalized = value.trim();
-  if (!normalized || normalized === "产品经理") {
-    return defaultSettings.readerJobTraits;
-  }
-
-  return normalized;
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -818,7 +806,7 @@ function mergePublicSettingsWithSecrets(
 }
 
 async function readRawAppConfigRecord() {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("app_config")
@@ -854,7 +842,7 @@ async function saveRawAppConfigRecord(input: {
 }) {
   const updatedAt = input.updatedAt ?? new Date().toISOString();
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("app_config")
@@ -899,20 +887,20 @@ async function saveRawAppConfigRecord(input: {
 
 export function normalizeAppSettings(settings: unknown): AppSettings {
   const value = isPlainObject(settings) ? settings as Partial<AppSettings> : {};
+  const defaultTemplate =
+    typeof value.defaultTemplate === "string" && value.defaultTemplate !== "科技蓝"
+      ? value.defaultTemplate
+      : defaultSettings.defaultTemplate;
 
   return {
     accountName: typeof value.accountName === "string" ? value.accountName : defaultSettings.accountName,
     accountPosition: typeof value.accountPosition === "string" ? value.accountPosition : defaultSettings.accountPosition,
     contentAreas: normalizeStringArray(value.contentAreas, defaultSettings.contentAreas).map((item) => resolveArticleDomain(item)),
-    readerAgeRange: typeof value.readerAgeRange === "string" ? value.readerAgeRange : defaultSettings.readerAgeRange,
-    readerJobTraits: normalizeReaderJobTraits(value.readerJobTraits),
-    readerNeeds: typeof value.readerNeeds === "string" ? value.readerNeeds : defaultSettings.readerNeeds,
-    toneKeywords: normalizeStringArray(value.toneKeywords, defaultSettings.toneKeywords),
     bannedTopics: normalizeStringArray(value.bannedTopics, defaultSettings.bannedTopics),
     ctaFollow: typeof value.ctaFollow === "string" ? value.ctaFollow : defaultSettings.ctaFollow,
     ctaEngage: typeof value.ctaEngage === "string" ? value.ctaEngage : defaultSettings.ctaEngage,
     ctaShare: typeof value.ctaShare === "string" ? value.ctaShare : defaultSettings.ctaShare,
-    defaultTemplate: typeof value.defaultTemplate === "string" ? value.defaultTemplate : defaultSettings.defaultTemplate,
+    defaultTemplate,
     contentPreferences: normalizeStringArray(value.contentPreferences, defaultSettings.contentPreferences),
   };
 }
@@ -1125,7 +1113,7 @@ function getEnv(name: string) {
 }
 
 function hasAppConfigBackend() {
-  return hasDatabaseUrl() || hasSupabaseAdminConfig();
+  return hasDatabaseUrl();
 }
 
 export async function readAIProviderConfig() {

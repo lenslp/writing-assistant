@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import "../styles/index.css";
-import { Layout } from "./components/Layout";
+import { AppShell } from "./components/AppShell";
 import { Toaster } from "./components/ui/sonner";
-import { AppStoreProvider } from "./providers/app-store";
+import { AuthProvider } from "./providers/auth-provider";
 
 export const metadata: Metadata = {
   title: "写作助手",
@@ -17,10 +17,10 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <AppStoreProvider>
-          <Layout>{children}</Layout>
+        <AuthProvider>
+          <AppShell>{children}</AppShell>
           <Toaster richColors position="top-right" />
-        </AppStoreProvider>
+        </AuthProvider>
       </body>
     </html>
   );

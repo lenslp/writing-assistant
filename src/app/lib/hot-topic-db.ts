@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
-import { hasDatabaseUrl } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
+import { shouldUseSupabaseAdmin } from "./persistence";
 import type { TopicSuggestion } from "./app-data";
 import { detectArticleDomain, resolveArticleDomain } from "./content-domains";
 import { filterRestrictedTopics } from "./content-policy";
@@ -53,7 +53,7 @@ export function mapHotTopicRecord(item: {
 }
 
 export async function readHotTopics(limit: number) {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data: latestJobs, error: latestJobError } = await supabase
       .from("fetch_jobs")
@@ -170,7 +170,7 @@ export async function readHotTopics(limit: number) {
 }
 
 export async function readHotTopicRefreshMeta() {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data: latestJobs, error } = await supabase
       .from("fetch_jobs")
@@ -255,7 +255,7 @@ function mapHotTopicDetailRecord(item: {
 export async function readLatestHotTopicForTopic(topic: Pick<TopicSuggestion, "title" | "source">) {
   const sourceName = topic.source.split("·")[0]?.trim() || topic.source.trim();
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
 
     const queryByTitleAndSource = async () => {
@@ -349,7 +349,7 @@ export async function readLatestHotTopicForTopic(topic: Pick<TopicSuggestion, "t
 }
 
 export async function reclassifyHotTopicRecords(limit = 220) {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data: latestJobs, error: latestJobError } = await supabase
       .from("fetch_jobs")

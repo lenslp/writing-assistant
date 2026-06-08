@@ -135,6 +135,91 @@
     min-height: 100%;
   }
 
+  .article-rich-editor {
+    display: flex;
+    min-height: 520px;
+    width: 100%;
+  }
+
+  .article-rich-editor .tiptap {
+    flex: 1;
+    width: 100%;
+    min-height: 520px;
+    border: 0;
+    background: transparent;
+    outline: none;
+    white-space: pre-wrap;
+  }
+
+  .article-rich-editor .tiptap > *:first-child {
+    margin-top: 0;
+  }
+
+  .article-rich-editor .tiptap p {
+    min-height: 1.4em;
+    margin: 0 0 1.05em;
+    font-size: inherit;
+    line-height: inherit;
+    color: inherit;
+    font-weight: inherit;
+  }
+
+  .article-rich-editor .tiptap h2 {
+    margin: 1.35em 0 0.75em;
+    font-size: 1.16em;
+    line-height: 1.55;
+    font-weight: 700;
+    color: inherit;
+  }
+
+  .article-rich-editor .tiptap blockquote {
+    margin: 1.1em 0;
+    border-left: 3px solid #d1d5db;
+    padding-left: 0.9em;
+    color: inherit;
+  }
+
+  .article-rich-editor .tiptap ul,
+  .article-rich-editor .tiptap ol {
+    margin: 0 0 1.05em;
+    padding-left: 1.45em;
+  }
+
+  .article-rich-editor .tiptap li {
+    margin: 0.3em 0;
+    padding-left: 0.2em;
+  }
+
+  .article-rich-editor .tiptap li p {
+    margin: 0;
+  }
+
+  .article-rich-editor .tiptap hr {
+    margin: 1.5em 0;
+    border: 0;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .article-rich-editor .tiptap pre {
+    margin: 1.1em 0;
+    overflow-x: auto;
+    border-radius: 8px;
+    background: #0f172a;
+    padding: 0.85em 1em;
+    color: #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.86em;
+    line-height: 1.65;
+  }
+
+  .article-rich-editor .tiptap p.is-empty::before {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    color: #9ca3af;
+    pointer-events: none;
+  }
+
   /**
   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
   * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
@@ -184,5 +269,101 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+@layer components {
+  .lens-card {
+    border: 1px solid #eadfd4;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: 0 12px 36px rgba(85, 57, 34, 0.05);
+  }
+
+  .lens-card-strong {
+    border: 1px solid #eadfd4;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #fff4ea 0%, #ffffff 58%, #fffaf5 100%);
+    box-shadow: 0 24px 80px rgba(85, 57, 34, 0.1);
+  }
+
+  .lens-card-subtle {
+    border: 1px solid #f0e5da;
+    border-radius: 18px;
+    background: #fffaf5;
+  }
+
+  .lens-input {
+    border: 1px solid #eadfd4;
+    border-radius: 12px;
+    background: #fffaf5;
+    color: #181715;
+    transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  }
+
+  .lens-input:focus-within {
+    border-color: #d65f2b;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(214, 95, 43, 0.14);
+  }
+
+  .lens-btn-primary {
+    border-radius: 12px;
+    background: #d65f2b;
+    color: #ffffff;
+    box-shadow: 0 12px 26px rgba(214, 95, 43, 0.18);
+    transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  }
+
+  .lens-btn-primary:hover {
+    background: #bf4513;
+  }
+
+  .lens-btn-primary:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+    box-shadow: none;
+  }
+
+  .lens-btn-secondary {
+    border: 1px solid #eadfd4;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #6f665d;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+
+  .lens-btn-secondary:hover {
+    border-color: rgba(214, 95, 43, 0.32);
+    background: #fff7ef;
+    color: #d65f2b;
+  }
+
+  .lens-chip {
+    border-radius: 999px;
+    background: #fff7ef;
+    color: #6f665d;
+    transition: background 160ms ease, color 160ms ease;
+  }
+
+  .lens-chip:hover {
+    background: #fff0e6;
+    color: #181715;
+  }
+
+  .lens-chip-active {
+    border-radius: 999px;
+    background: #d65f2b;
+    color: #ffffff;
+  }
+
+  .lens-muted {
+    color: #8c8178;
+  }
+
+  .lens-title {
+    color: #181715;
+    font-weight: 850;
+    letter-spacing: 0;
   }
 }

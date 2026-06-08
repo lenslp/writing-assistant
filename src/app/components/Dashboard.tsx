@@ -4,98 +4,110 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Flame, TrendingUp, ArrowUpRight, Clock, FileText,
-  Lightbulb, Sparkles, ChevronRight, Zap, BarChart2, Palette, DatabaseZap,
+  AlertCircle,
+  ArrowRight,
+  Bot,
+  CheckCircle2,
+  Clock,
+  Edit3,
+  FileText,
+  Palette,
+  PenTool,
+  Sparkles,
+  TrendingUp,
 } from "lucide-react";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { formatDraftTime } from "../lib/app-data";
-import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import {
+  articleDomains,
+  domainConfigs,
+  type ActiveArticleDomain,
+} from "../lib/content-domains";
 import { type HotTopicItem } from "../lib/hot-topics";
-import { buildTopicIdentityKey } from "../lib/topic-utils";
+import { type DomainTopicRecommendationGroup } from "../lib/topic-recommendation";
+import { normalizeWorkbenchTopicCandidates } from "../lib/workbench-topics";
 import { useAppStore } from "../providers/app-store";
 
 const statusColors: Record<string, string> = {
   待修改: "bg-amber-50 text-amber-600",
-  待生成: "bg-blue-50 text-blue-600",
-  已发布: "bg-green-50 text-green-600",
+  待生成: "bg-[#fff0e6] text-[#d65f2b]",
+  审核中: "bg-[#f1eadf] text-[#6f665d]",
+  已发布: "bg-emerald-50 text-emerald-600",
 };
-const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
+
+type FetchJob = {
+  id: string;
+  status: string;
+  source: string | null;
+  insertedCount: number;
+  message: string | null;
+  createdAt: string;
+};
+
+type AIProviderStatus = {
+  configured: boolean;
+  label: string;
+};
 
 export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTopicItem[] }) {
   const router = useRouter();
-  const { drafts, topics, settings, selectTopic, upsertTopic } = useAppStore();
+  const { drafts, topics, selectTopic, upsertTopic } = useAppStore();
   const [dashboardHotTopics, setDashboardHotTopics] = useState<HotTopicItem[]>(initialHotTopics);
-  const [activeHotDomain, setActiveHotDomain] = useState<ArticleDomain | null>(null);
-  const [fetchJobs, setFetchJobs] = useState<Array<{
-    id: string;
-    status: string;
-    source: string | null;
-    insertedCount: number;
-    message: string | null;
-    createdAt: string;
-  }>>([]);
+  const [activeHotDomain, setActiveHotDomain] = useState<ActiveArticleDomain | null>(null);
+  const [latestFetchJob, setLatestFetchJob] = useState<FetchJob | null>(null);
+  const [aiProviderStatus, setAIProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
+  const [recommendationGroups, setRecommendationGroups] = useState<DomainTopicRecommendationGroup[]>([]);
+  const [recommendationsLoading, setRecommendationsLoading] = useState(false);
 
   useEffect(() => {
-    const loadDashboardHotTopics = async () => {
-      if (initialHotTopics.length) {
-        return;
-      }
-
+    const loadDashboardData = async () => {
       try {
-        const response = await fetch("/api/hot-topics?limit=24", { cache: "no-store" });
-        const payload = await response.json();
+        const hotTopicsPromise = initialHotTopics.length
+          ? Promise.resolve(null)
+          : fetch("/api/hot-topics?limit=360", { cache: "no-store" });
+        const fetchJobsPromise = fetch("/api/fetch-jobs?limit=1", { cache: "no-store" });
+        const aiProviderPromise = fetch("/api/ai/provider", { cache: "no-store" });
 
-        if (!response.ok || !Array.isArray(payload.items)) {
-          throw new Error("Failed to load dashboard hot topics");
+        const [hotTopicsResponse, fetchJobsResponse, aiProviderResponse] = await Promise.all([
+          hotTopicsPromise,
+          fetchJobsPromise,
+          aiProviderPromise,
+        ]);
+
+        if (hotTopicsResponse) {
+          const payload = await hotTopicsResponse.json().catch(() => null);
+          if (hotTopicsResponse.ok && Array.isArray(payload?.items) && payload.items.length) {
+            setDashboardHotTopics(payload.items as HotTopicItem[]);
+          }
         }
 
-        if ((payload.items as HotTopicItem[]).length) {
-          setDashboardHotTopics(payload.items as HotTopicItem[]);
+        const jobsPayload = await fetchJobsResponse.json().catch(() => null);
+        if (Array.isArray(jobsPayload?.items)) {
+          setLatestFetchJob((jobsPayload.items as FetchJob[])[0] ?? null);
         }
+
+        const providerPayload = await aiProviderResponse.json().catch(() => null);
+        const activeProfile = providerPayload?.config?.activeProfile;
+        setAIProviderStatus({
+          configured: Boolean(activeProfile?.hasApiKey),
+          label: activeProfile?.name || "未配置写作模型",
+        });
       } catch (error) {
-        console.error("Failed to load dashboard hot topics:", error);
+        console.error("Failed to load dashboard data:", error);
       }
     };
 
-    const loadFetchJobs = async () => {
-      try {
-        const response = await fetch("/api/fetch-jobs?limit=4", { cache: "no-store" });
-        const payload = await response.json();
-        if (Array.isArray(payload.items)) {
-          setFetchJobs(payload.items);
-        }
-      } catch (error) {
-        console.error("Failed to load fetch jobs:", error);
-      }
-    };
+    void loadDashboardData();
+  }, [initialHotTopics.length]);
 
-    void loadDashboardHotTopics();
-    void loadFetchJobs();
-  }, []);
-
-  const uniqueTopics = useMemo(
-    () => Array.from(new Map(topics.map((topic) => [buildTopicIdentityKey(topic), topic])).values()),
-    [topics],
-  );
-  const recommendedTopics = useMemo(
-    () =>
-      [...uniqueTopics]
-        .sort((left, right) => {
-          const heatRank: Record<string, number> = { 极高: 4, 高: 3, 中高: 2, 中: 1 };
-          if (right.fit !== left.fit) return right.fit - left.fit;
-          if (right.heat !== left.heat) return (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0);
-          return left.title.localeCompare(right.title, "zh-CN");
-        })
-        .slice(0, 10),
-    [uniqueTopics],
-  );
   const fallbackHotTopics = useMemo<HotTopicItem[]>(
     () =>
-      uniqueTopics.slice(0, 4).map((topic, index) => ({
+      topics.slice(0, 4).map((topic, index) => ({
         id: `topic-fallback-${topic.id}`,
         title: topic.title,
         source: topic.source.split(" · ")[0] ?? topic.source,
         sourceType: "derived",
+        domain: topic.domain,
         heat: Math.max(6000 - index * 350, 4200),
         trend: `+${Math.max(18, topic.fit - 52)}%`,
         time: "刚刚",
@@ -103,26 +115,20 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         summary: topic.reason,
         fetchedAt: new Date().toISOString(),
       })),
-    [uniqueTopics],
+    [topics],
   );
-  const recentDrafts = [...drafts].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 3);
-  const resolvedDashboardHotTopics = dashboardHotTopics.length ? dashboardHotTopics : fallbackHotTopics;
+  const resolvedHotTopics = dashboardHotTopics.length ? dashboardHotTopics : fallbackHotTopics;
   const hotTopics = useMemo(
-    () =>
-      resolvedDashboardHotTopics.map((topic) => ({
-        ...topic,
-        domain: topic.domain ?? "其他",
-        tags: topic.tags.slice(0, 2),
-      })),
-    [resolvedDashboardHotTopics],
+    () => normalizeWorkbenchTopicCandidates(resolvedHotTopics).map((topic) => ({ ...topic, tags: topic.tags.slice(0, 2) })),
+    [resolvedHotTopics],
   );
+  const recommendationRequestKey = useMemo(
+    () => hotTopics.slice(0, 120).map((topic) => `${topic.id}:${topic.heat}`).join("|"),
+    [hotTopics],
+  );
+  const recommendationCandidates = useMemo(() => hotTopics.slice(0, 120), [recommendationRequestKey]);
   const hotTopicsByDomain = useMemo(() => {
-    const orderedDomains = Array.from(new Set<ArticleDomain>([
-      ...settings.contentAreas,
-      ...hotTopics.map((topic) => topic.domain),
-    ])).sort((left, right) => (DOMAIN_ORDER.get(left) ?? 999) - (DOMAIN_ORDER.get(right) ?? 999));
-
-    return orderedDomains
+    return articleDomains
       .map((domain) => {
         const domainItems = hotTopics
           .filter((topic) => topic.domain === domain)
@@ -131,23 +137,91 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         return {
           domain,
           total: domainItems.length,
-          items: domainItems.slice(0, 5),
+          items: domainItems.slice(0, 6),
         };
       })
       .filter((section) => section.items.length);
-  }, [hotTopics, settings.contentAreas]);
+  }, [hotTopics]);
   const activeHotDomainSection = useMemo(() => {
     if (!hotTopicsByDomain.length) return null;
     if (activeHotDomain) {
       const matched = hotTopicsByDomain.find((section) => section.domain === activeHotDomain);
       if (matched) return matched;
     }
-    const techSection = hotTopicsByDomain.find((section) => section.domain === "科技");
-    if (techSection) return techSection;
-    return hotTopicsByDomain[0];
+    return hotTopicsByDomain.find((section) => section.domain === "AI") ?? hotTopicsByDomain[0];
   }, [activeHotDomain, hotTopicsByDomain]);
+
+  const recentDrafts = useMemo(
+    () => [...drafts].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 8),
+    [drafts],
+  );
+  const pendingDrafts = drafts.filter((draft) => draft.status === "待生成" || !draft.body.trim()).length;
+  const editableDrafts = drafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").length;
+  const formatReadyDrafts = drafts.filter((draft) => draft.body.trim() && draft.status !== "已发布").length;
   const publishedCount = drafts.filter((draft) => draft.status === "已发布").length;
-  const needsFormatting = drafts.filter((draft) => draft.status !== "已发布").length;
+  const taskTotal = Math.max(pendingDrafts + editableDrafts + formatReadyDrafts + publishedCount, 1);
+  const taskDone = Math.min(publishedCount, taskTotal);
+  const taskProgress = Math.round((taskDone / taskTotal) * 100);
+  const recommendationGroupsByDomain = useMemo(
+    () => new Map(recommendationGroups.map((group) => [group.domain, group])),
+    [recommendationGroups],
+  );
+  const activeRecommendationGroup = activeHotDomainSection
+    ? recommendationGroupsByDomain.get(activeHotDomainSection.domain)
+    : null;
+  const listedTopicRecommendations = useMemo(() => {
+    const rawItems = activeRecommendationGroup?.items ?? [];
+    const topicMap = new Map(hotTopics.map((topic) => [topic.id, topic]));
+
+    if (rawItems.length) {
+      return rawItems
+        .map((item) => {
+          const topic = topicMap.get(item.topicId);
+          return topic ? { topic, recommendation: item } : null;
+        })
+        .filter((item): item is { topic: typeof hotTopics[number]; recommendation: DomainTopicRecommendationGroup["items"][number] } => Boolean(item))
+        .slice(0, 5);
+    }
+
+    return (activeHotDomainSection?.items ?? []).slice(0, 5).map((topic, index) => ({
+      topic,
+      recommendation: {
+        topicId: topic.id,
+        score: Math.max(58, Math.min(88, Math.round(topic.heat / 100) - index)),
+        reason: "等待 AI 分析时，先按领域匹配和站内热度指数临时排序。",
+        angle: domainConfigs[topic.domain].writingFocus[index % domainConfigs[topic.domain].writingFocus.length] ?? "从读者最关心的问题切入",
+        risks: [],
+      },
+    }));
+  }, [activeHotDomainSection, activeRecommendationGroup, hotTopics]);
+
+  const draftWorkflowGroups = useMemo(() => {
+    const groups = [
+      {
+        key: "editing",
+        title: "正在编辑",
+        description: "需要继续打磨",
+        items: recentDrafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").slice(0, 2),
+        actionLabel: "继续编辑",
+      },
+      {
+        key: "formatting",
+        title: "待排版",
+        description: "正文已准备好",
+        items: recentDrafts.filter((draft) => draft.body.trim() && draft.status !== "已发布").slice(0, 2),
+        actionLabel: "进入排版",
+      },
+      {
+        key: "completed",
+        title: "已完成",
+        description: "可复用为新稿",
+        items: recentDrafts.filter((draft) => draft.status === "已发布").slice(0, 2),
+        actionLabel: "查看排版",
+      },
+    ];
+
+    return groups.filter((group) => group.items.length);
+  }, [recentDrafts]);
 
   useEffect(() => {
     if (!hotTopicsByDomain.length) {
@@ -158,331 +232,295 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     }
 
     if (!activeHotDomain || !hotTopicsByDomain.some((section) => section.domain === activeHotDomain)) {
-      setActiveHotDomain(hotTopicsByDomain.find((section) => section.domain === "科技")?.domain ?? hotTopicsByDomain[0].domain);
+      setActiveHotDomain(hotTopicsByDomain.find((section) => section.domain === "AI")?.domain ?? hotTopicsByDomain[0].domain);
     }
   }, [activeHotDomain, hotTopicsByDomain]);
 
+  useEffect(() => {
+    if (!recommendationCandidates.length) {
+      setRecommendationGroups([]);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+
+    const loadRecommendations = async () => {
+      setRecommendationsLoading(true);
+      try {
+        const response = await fetch("/api/topic-recommendations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            items: recommendationCandidates,
+          }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!cancelled && Array.isArray(payload?.groups)) {
+          setRecommendationGroups(payload.groups as DomainTopicRecommendationGroup[]);
+        }
+      } catch (error) {
+        console.error("Failed to load recommended topics:", error);
+        if (!cancelled) {
+          setRecommendationGroups([]);
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (!cancelled) {
+          setRecommendationsLoading(false);
+        }
+      }
+    };
+
+    void loadRecommendations();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [recommendationCandidates, recommendationRequestKey]);
+
+  const openHotTopicAsTopic = (topic: HotTopicItem & { domain: ActiveArticleDomain }, autogen = false) => {
+    const nextTopic = upsertTopic(buildTopicSuggestionFromHotTopic(topic));
+    selectTopic(nextTopic.id);
+    router.push(autogen ? `/writing?topicId=${nextTopic.id}&autogen=full` : `/topic-center?topicId=${nextTopic.id}`);
+  };
+
   return (
-    <div className="max-w-[1200px] mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[20px]" style={{ fontWeight: 600 }}>工作台</h1>
-          <p className="text-[13px] text-gray-500 mt-1">欢迎回来，{settings.accountName}。今天有 {hotTopics.length} 个新热点，先挑一个值得写的开始。</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => router.push("/topic-center")}
-            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-[13px] hover:bg-blue-700"
-            style={{ fontWeight: 500 }}
-          >
-            去选题写作
-          </button>
-          <button
-            onClick={() => router.push("/drafts")}
-            className="px-4 py-2 rounded-lg border border-gray-200 text-[13px] text-gray-600 hover:bg-gray-50"
-            style={{ fontWeight: 500 }}
-          >
-            查看草稿箱
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-4 gap-4">
-        {[
-          { label: "今日热点", value: String(hotTopics.length), icon: Flame, color: "text-orange-500", bg: "bg-orange-50", href: "/hot-topics" },
-          { label: "推荐选题", value: String(uniqueTopics.length), icon: Lightbulb, color: "text-blue-500", bg: "bg-blue-50", href: "/topic-center" },
-          { label: "草稿数量", value: String(drafts.length), icon: FileText, color: "text-purple-500", bg: "bg-purple-50", href: "/drafts" },
-          { label: "本周发布", value: String(publishedCount), icon: BarChart2, color: "text-green-500", bg: "bg-green-50", href: "/published" },
-        ].map((item) => (
-          <button
-            key={item.label}
-            onClick={() => router.push(item.href)}
-            className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 hover:border-blue-200 hover:shadow-sm transition-all text-left"
-          >
-            <div className={`w-10 h-10 rounded-lg ${item.bg} flex items-center justify-center`}>
-              <item.icon className={`w-5 h-5 ${item.color}`} />
-            </div>
+    <div className="mx-auto max-w-[1200px] space-y-5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <section className="rounded-[22px] border border-[#eadfd4] bg-white/86 p-5 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-[22px]" style={{ fontWeight: 600 }}>{item.value}</div>
-              <div className="text-[12px] text-gray-500">{item.label}</div>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-[#d65f2b]" />
+                <h2 className="text-[15px] text-[#181715]" style={{ fontWeight: 850 }}>今日任务</h2>
+              </div>
+              <p className="mt-1 text-[12px] text-[#8c8178]">完成 {taskDone} / {taskTotal}，优先推进可发布内容。</p>
             </div>
-          </button>
-        ))}
+            <Link href="/drafts" className="flex items-center gap-1 text-[12px] text-[#8c8178] hover:text-[#d65f2b]">
+              草稿箱 <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#f1eadf]">
+            <div className="h-full rounded-full bg-[#d65f2b]" style={{ width: `${taskProgress}%` }} />
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { label: "待生成", value: pendingDrafts, hint: "空正文或未完成", icon: PenTool, color: "text-[#d65f2b]", bg: "bg-[#fff0e6]", href: "/drafts" },
+              { label: "待编辑", value: editableDrafts, hint: "需要继续打磨", icon: Edit3, color: "text-amber-600", bg: "bg-amber-50", href: "/drafts" },
+              { label: "可排版", value: formatReadyDrafts, hint: "正文已存在", icon: Palette, color: "text-[#6f665d]", bg: "bg-[#f1eadf]", href: "/drafts" },
+              { label: "已发布", value: publishedCount, hint: "累计发布", icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50", href: "/drafts" },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={() => router.push(item.href)}
+                className="rounded-2xl border border-[#f0e5da] bg-[#fffaf5] p-3 text-left transition-all hover:border-[#d65f2b]/30 hover:bg-white hover:shadow-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${item.bg}`}>
+                    <item.icon className={`h-4.5 w-4.5 ${item.color}`} />
+                  </div>
+                  <div className="text-[22px] text-[#181715]" style={{ fontWeight: 850 }}>{item.value}</div>
+                </div>
+                <div className="mt-2 text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>{item.label}</div>
+                <div className="mt-0.5 text-[11px] text-[#8c8178]">{item.hint}</div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-[22px] border border-[#eadfd4] bg-white/72 p-5">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-[#d65f2b]" />
+            <h2 className="text-[15px] text-[#181715]" style={{ fontWeight: 850 }}>运行状态</h2>
+          </div>
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center justify-between rounded-2xl bg-[#fffaf5] px-3 py-2.5">
+              <div>
+                <div className="text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>写作模型</div>
+                <div className="mt-0.5 text-[11px] text-[#8c8178]">{aiProviderStatus.label}</div>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] ${aiProviderStatus.configured ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>
+                {aiProviderStatus.configured ? "可用" : "待配置"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-2xl bg-[#fffaf5] px-3 py-2.5">
+              <div>
+                <div className="text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>最近抓取</div>
+                <div className="mt-0.5 text-[11px] text-[#8c8178]">
+                  {latestFetchJob ? `${latestFetchJob.source ?? "全部来源"} · 入库 ${latestFetchJob.insertedCount} 条` : "暂无抓取记录"}
+                </div>
+              </div>
+              <span className="text-[11px] text-[#8c8178]">
+                {latestFetchJob ? formatDraftTime(latestFetchJob.createdAt) : "去热点中心"}
+              </span>
+            </div>
+          </div>
+        </section>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-6">
-          <div className="bg-white rounded-xl border border-gray-100">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <div className="flex items-center gap-2">
-                <Flame className="w-4 h-4 text-orange-500" />
-                <span className="text-[14px]" style={{ fontWeight: 600 }}>今日热点</span>
-              </div>
-              <Link href="/hot-topics" className="text-[12px] text-gray-400 hover:text-blue-600 flex items-center gap-0.5">
-                查看全部 <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="rounded-[22px] border border-[#eadfd4] bg-white/86 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+          <div className="flex items-center justify-between border-b border-[#f0e5da] px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <Bot className="h-4 w-4 text-[#d65f2b]" />
+              <h2 className="text-[14px] text-[#181715]" style={{ fontWeight: 850 }}>推荐选题</h2>
+              <span className="rounded-full bg-[#fff0e6] px-2 py-0.5 text-[11px] text-[#d65f2b]">
+                {recommendationsLoading ? "AI 分析中" : activeRecommendationGroup?.source === "ai" ? "AI 分析" : "规则兜底"}
+              </span>
             </div>
-            <div className="p-4">
-              {hotTopicsByDomain.length && activeHotDomainSection ? (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
-                    {hotTopicsByDomain.map(({ domain, total }) => (
-                      <button
-                        key={domain}
-                        onClick={() => setActiveHotDomain(domain)}
-                        className={`rounded-full px-3 py-1.5 text-[12px] transition-colors ${
-                          activeHotDomainSection.domain === domain
-                            ? "bg-blue-600 text-white"
-                            : "bg-gray-50 text-gray-600 hover:bg-gray-100"
-                        }`}
-                        style={{ fontWeight: 500 }}
-                      >
-                        {domainConfigs[domain].icon} {domain}
-                        <span className={`ml-1.5 ${activeHotDomainSection.domain === domain ? "text-blue-100" : "text-gray-400"}`}>
-                          {total}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+            <Link href="/hot-topics" className="flex items-center gap-1 text-[12px] text-[#8c8178] hover:text-[#d65f2b]">
+              查看全部 <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
 
-                  <div className="overflow-hidden rounded-xl border border-gray-100 bg-gray-50/40">
-                    <div className="flex items-center justify-between border-b border-gray-100 bg-white/80 px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-gray-900 px-2.5 py-1 text-[11px] text-white">
-                          {domainConfigs[activeHotDomainSection.domain].icon} {activeHotDomainSection.domain}
-                        </span>
-                        <span className="text-[11px] text-gray-400">Top 5 / 共 {activeHotDomainSection.total} 条</span>
-                      </div>
-                      <button
-                        onClick={() => router.push(`/hot-topics?category=${encodeURIComponent(activeHotDomainSection.domain)}`)}
-                        className="text-[11px] text-gray-500 hover:text-blue-600"
-                      >
-                        查看该领域
-                      </button>
-                    </div>
-                    <div className="divide-y divide-gray-100">
-                      {activeHotDomainSection.items.map((topic, index) => (
-                        <div key={topic.id} className="px-4 py-3 hover:bg-white/80 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => {
-                                const nextTopic = upsertTopic(buildTopicSuggestionFromHotTopic(topic));
-                                selectTopic(nextTopic.id);
-                                router.push(`/topic-center?topicId=${nextTopic.id}`);
-                              }}
-                              className="flex items-center gap-3 flex-1 min-w-0 text-left group"
-                            >
-                              <span className={`w-6 h-6 rounded flex items-center justify-center text-[12px] ${
-                                index < 3 ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-500"
-                              }`} style={{ fontWeight: 600 }}>{index + 1}</span>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13.5px] truncate group-hover:text-blue-600 transition-colors" style={{ fontWeight: 500 }}>{topic.title}</div>
-                                <div className="mt-1 flex items-center gap-2 overflow-hidden">
-                                  <span className="text-[11px] text-gray-400 bg-white px-1.5 py-0.5 rounded">{topic.source}</span>
-                                  {topic.tags.map((tag) => (
-                                    <span key={tag} className="text-[11px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">{tag}</span>
-                                  ))}
-                                </div>
+          <div className="p-4">
+            {activeHotDomainSection ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {hotTopicsByDomain.map(({ domain, total }) => (
+                    <button
+                      key={domain}
+                      onClick={() => setActiveHotDomain(domain)}
+                      className={`rounded-full px-3 py-1.5 text-[12px] transition-colors ${
+                        activeHotDomainSection.domain === domain
+                          ? "bg-[#d65f2b] text-white"
+                          : "bg-[#fff7ef] text-[#6f665d] hover:bg-[#fff0e6]"
+                      }`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      {domainConfigs[domain].icon} {domain}
+                      <span className={`ml-1.5 ${activeHotDomainSection.domain === domain ? "text-orange-100" : "text-[#9a9086]"}`}>{total}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-[#f0e5da]">
+                  {listedTopicRecommendations.length ? (
+                    <div className="divide-y divide-[#f0e5da]">
+                      {listedTopicRecommendations.map(({ topic, recommendation }, index) => (
+                        <div key={topic.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 transition-colors hover:bg-[#fffaf5]">
+                          <button onClick={() => openHotTopicAsTopic(topic)} className="group flex min-w-0 items-start gap-3 text-left">
+                            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[#f1eadf] text-[12px] text-[#8c8178]" style={{ fontWeight: 800 }}>
+                              {index + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="line-clamp-2 text-[13.5px] leading-5 text-[#181715] group-hover:text-[#d65f2b]" style={{ fontWeight: 750 }}>{topic.title}</div>
+                              <div className="mt-1 text-[12px] leading-5 text-[#6f665d]">{recommendation.reason}</div>
+                              <div className="mt-1 text-[11px] leading-5 text-[#8c8178]">
+                                <span className="text-[#181715]" style={{ fontWeight: 750 }}>切入：</span>{recommendation.angle}
                               </div>
-                            </button>
-                            <div className="text-right flex-shrink-0">
-                              <div className="text-[13px] text-gray-700" style={{ fontWeight: 500 }}>{topic.heat.toLocaleString()}</div>
-                              <div className="text-[11px] text-green-600 flex items-center justify-end gap-0.5">
-                                <TrendingUp className="w-3 h-3" />{topic.trend}
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="rounded bg-[#181715] px-1.5 py-0.5 text-[11px] text-white">推荐 {recommendation.score}</span>
+                                <span className="rounded bg-[#fff7ef] px-1.5 py-0.5 text-[11px] text-[#8c8178]">{topic.source}</span>
+                                {topic.tags.map((tag) => (
+                                  <span key={tag} className="rounded bg-[#fff0e6] px-1.5 py-0.5 text-[11px] text-[#d65f2b]">{tag}</span>
+                                ))}
                               </div>
                             </div>
+                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <div className="hidden text-right sm:block">
+                              <div className="text-[12px] text-[#5d544c]" style={{ fontWeight: 750 }}>{topic.heat.toLocaleString()}</div>
+                              <div className="flex items-center justify-end gap-0.5 text-[11px] text-green-600">
+                                <TrendingUp className="h-3 w-3" /> {topic.trend}
+                              </div>
+                            </div>
+                            <button onClick={() => openHotTopicAsTopic(topic)} className="rounded-xl border border-[#eadfd4] px-3 py-1.5 text-[12px] text-[#6f665d] hover:bg-white" style={{ fontWeight: 750 }}>
+                              选题
+                            </button>
+                            <button onClick={() => openHotTopicAsTopic(topic, true)} className="rounded-xl bg-[#d65f2b] px-3 py-1.5 text-[12px] text-white hover:bg-[#bf4513]" style={{ fontWeight: 850 }}>
+                              一键成文
+                            </button>
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="px-5 py-10 text-center">
-                  <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>还没有热点选题</div>
-                  <div className="text-[12px] text-gray-400 mt-1">先去热点中心抓取实时热点，再回来查看。</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-100">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <div className="flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-blue-500" />
-                <span className="text-[14px]" style={{ fontWeight: 600 }}>推荐选题</span>
-                <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-600">Top 10</span>
-              </div>
-              <Link href="/topic-center" className="text-[12px] text-gray-400 hover:text-blue-600 flex items-center gap-0.5">
-                查看全部 <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-            <div className="p-4 space-y-3">
-              {recommendedTopics.length ? recommendedTopics.map((topic) => (
-                <div key={topic.id} className="border border-gray-100 rounded-lg p-4 hover:border-blue-200 hover:shadow-sm transition-all">
-                  <div className="flex items-start justify-between gap-4">
-                    <button
-                      onClick={() => {
-                        selectTopic(topic.id);
-                        router.push(`/topic-center?topicId=${topic.id}`);
-                      }}
-                      className="flex-1 text-left group"
-                    >
-                      <div className="text-[13.5px] group-hover:text-blue-600 transition-colors" style={{ fontWeight: 500 }}>{topic.title}</div>
-                      <div className="text-[12px] text-gray-400 mt-1">{topic.reason}</div>
-                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                        <span className="text-[11px] bg-gray-900 text-white px-2 py-0.5 rounded-full">{domainConfigs[topic.domain].icon} {topic.domain}</span>
-                        {topic.angles.map((angle) => (
-                          <span key={angle} className="text-[11px] bg-gray-50 text-gray-600 px-2 py-0.5 rounded-full border border-gray-100">{angle}</span>
-                        ))}
-                      </div>
-                    </button>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="flex items-center gap-1 ml-4 flex-shrink-0">
-                        <Zap className="w-3.5 h-3.5 text-blue-500" />
-                        <span className="text-[13px] text-blue-600" style={{ fontWeight: 600 }}>{topic.fit}%</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          selectTopic(topic.id);
-                          router.push(`/writing?topicId=${topic.id}&autogen=full`);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] hover:bg-blue-700"
-                        style={{ fontWeight: 500 }}
-                      >
-                        一键成文
+                  ) : (
+                    <div className="px-5 py-10 text-center">
+                      <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>暂无推荐选题</div>
+                      <div className="mt-1 text-[12px] text-[#8c8178]">去热点中心抓取或切换领域后，AI 会自动分析每日推荐。</div>
+                      <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-[#d65f2b] px-4 py-2 text-[12px] text-white hover:bg-[#bf4513]" style={{ fontWeight: 850 }}>
+                        去抓热点
                       </button>
                     </div>
-                  </div>
+                  )}
                 </div>
-              )) : (
-                <div className="rounded-lg border border-dashed border-gray-200 px-4 py-10 text-center">
-                  <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>暂无可写选题</div>
-                  <div className="text-[12px] text-gray-400 mt-1">请先从热点中心抓取并点击“选题”或“生成”。</div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className="bg-white rounded-xl border border-gray-100">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-purple-500" />
-                <span className="text-[14px]" style={{ fontWeight: 600 }}>最近草稿</span>
               </div>
-              <Link href="/drafts" className="text-[12px] text-gray-400 hover:text-blue-600 flex items-center gap-0.5">
-                全部 <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {recentDrafts.length ? recentDrafts.map((draft) => (
-                <div key={draft.id} className="px-5 py-3 hover:bg-gray-50/50 transition-colors">
-                  <button onClick={() => router.push(`/writing?draftId=${draft.id}`)} className="block w-full text-left">
-                    <div className="flex items-center gap-2">
-                      <div className="text-[13px] truncate" style={{ fontWeight: 500 }}>{draft.title}</div>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-2 py-0.5 text-[10px] text-white flex-shrink-0">
-                        <span>{domainConfigs[draft.domain].icon}</span>
-                        {draft.domain}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${statusColors[draft.status]}`} style={{ fontWeight: 500 }}>{draft.status}</span>
-                      <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                        <span>{draft.words.toLocaleString()} 字</span>
-                        <span className="flex items-center gap-0.5"><Clock className="w-3 h-3" />{formatDraftTime(draft.updatedAt).split(" ")[1]}</span>
-                      </div>
-                    </div>
-                  </button>
-                  <div className="flex items-center gap-2 mt-3">
-                    <button
-                      onClick={() => router.push(`/writing?draftId=${draft.id}`)}
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-[12px] text-gray-600 hover:bg-gray-50"
-                    >
-                      继续编辑
-                    </button>
-                    <button
-                      onClick={() => router.push(`/format-editor?draftId=${draft.id}`)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] hover:bg-blue-700"
-                    >
-                      <Palette className="w-3.5 h-3.5" /> 排版
-                    </button>
-                  </div>
-                </div>
-              )) : (
-                <div className="px-5 py-10 text-center">
-                  <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>还没有草稿</div>
-                  <div className="text-[12px] text-gray-400 mt-1">从热点或选题开始，一键生成第一篇文章。</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-100">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span className="text-[14px]" style={{ fontWeight: 600 }}>创作建议</span>
-              </div>
-            </div>
-            <div className="p-4 space-y-3">
-              {[
-                "先在热点中心抓取真实热点，再筛选适合账号定位的选题。",
-                "对实时热点优先走“热点 → 选题 → 写作 → 排版 → 发布”的流程。",
-                `当前还有 ${needsFormatting} 篇草稿待排版，建议优先处理待修改中的文章`,
-              ].map((tip) => (
-                <div key={tip} className="flex items-start gap-2.5 text-[12.5px] text-gray-600 leading-relaxed">
-                  <ArrowUpRight className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  {tip}
-                </div>
-              ))}
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={() => router.push("/published")}
-                  className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700"
-                >
-                  查看发布管理
+            ) : (
+              <div className="px-5 py-12 text-center">
+                <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>还没有热点</div>
+                <div className="mt-1 text-[12px] text-[#8c8178]">先去热点中心抓取一次实时热点。</div>
+                <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-[#d65f2b] px-4 py-2 text-[12px] text-white hover:bg-[#bf4513]" style={{ fontWeight: 850 }}>
+                  去抓热点
                 </button>
               </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-[22px] border border-[#eadfd4] bg-white/86 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+          <div className="flex items-center justify-between border-b border-[#f0e5da] px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-[#d65f2b]" />
+              <h2 className="text-[14px] text-[#181715]" style={{ fontWeight: 850 }}>草稿工作流</h2>
             </div>
+            <Link href="/drafts" className="flex items-center gap-1 text-[12px] text-[#8c8178] hover:text-[#d65f2b]">
+              全部 <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <div className="flex items-center gap-2">
-                <DatabaseZap className="w-4 h-4 text-blue-500" />
-                <span className="text-[14px]" style={{ fontWeight: 600 }}>抓取任务</span>
+          <div className="divide-y divide-[#f0e5da]">
+            {draftWorkflowGroups.length ? draftWorkflowGroups.map((group) => (
+              <div key={group.key} className="px-5 py-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-[13px] text-[#181715]" style={{ fontWeight: 850 }}>{group.title}</div>
+                    <div className="mt-0.5 text-[11px] text-[#8c8178]">{group.description}</div>
+                  </div>
+                  <span className="rounded-full bg-[#fff0e6] px-2 py-0.5 text-[11px] text-[#d65f2b]">{group.items.length}</span>
+                </div>
+                <div className="space-y-3">
+                  {group.items.map((draft) => {
+                    const targetHref = group.key === "formatting" || group.key === "completed"
+                      ? `/format-editor?draftId=${draft.id}`
+                      : `/writing?draftId=${draft.id}`;
+
+                    return (
+                      <div key={`${group.key}-${draft.id}`} className="rounded-2xl bg-[#fffaf5] p-3">
+                        <button onClick={() => router.push(targetHref)} className="block w-full text-left">
+                          <div className="truncate text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>{draft.title}</div>
+                          <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-[#8c8178]">
+                            <span className={`rounded-full px-2 py-0.5 ${statusColors[draft.status]}`}>{draft.status}</span>
+                            <span className="flex items-center gap-0.5"><Clock className="h-3 w-3" />{formatDraftTime(draft.updatedAt).split(" ")[1]}</span>
+                          </div>
+                        </button>
+                        <button onClick={() => router.push(targetHref)} className="mt-3 w-full rounded-xl border border-[#eadfd4] bg-white px-3 py-1.5 text-[12px] text-[#6f665d] hover:bg-[#fff7ef]" style={{ fontWeight: 750 }}>
+                          {group.actionLabel}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {fetchJobs.length ? fetchJobs.map((job) => (
-                <div key={job.id} className="px-5 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] ${
-                      job.status === "success"
-                        ? "bg-green-50 text-green-600"
-                        : job.status === "failed"
-                          ? "bg-red-50 text-red-600"
-                          : "bg-blue-50 text-blue-600"
-                    }`}>
-                      {job.status}
-                    </span>
-                    <span className="text-[11px] text-gray-400">{formatDraftTime(job.createdAt)}</span>
-                  </div>
-                  <div className="mt-2 text-[12px] text-gray-700">{job.message ?? "热点抓取任务"}</div>
-                  <div className="mt-1 text-[11px] text-gray-400">
-                    来源：{job.source ?? "all"} · 入库 {job.insertedCount} 条
-                  </div>
-                </div>
-              )) : (
-                <div className="px-5 py-8 text-center text-[12px] text-gray-400">
-                  暂无抓取记录，先去热点中心执行一次抓取。
-                </div>
-              )}
-            </div>
+            )) : (
+              <div className="px-5 py-12 text-center">
+                <Sparkles className="mx-auto h-8 w-8 text-[#d8cfc5]" />
+                <div className="mt-3 text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>还没有草稿</div>
+                <div className="mt-1 text-[12px] text-[#8c8178]">从热点里选一条，或手动开始写。</div>
+              </div>
+            )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

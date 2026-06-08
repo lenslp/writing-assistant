@@ -1,14 +1,26 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import React, { startTransition, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Placeholder from "@tiptap/extension-placeholder";
 import {
-  Type, ListTree, FileText, RefreshCw, Maximize2, Minimize2,
-  Palette, ChevronDown, Flame, Eye, Quote, Sparkles,
+  ChevronDown, Quote, Sparkles,
   Bold, Italic, Underline, AlignLeft, List, Save,
-  LoaderCircle, Pause,
+  Pause, Copy, Download, Send, LoaderCircle,
+  Smartphone, Monitor, ArrowUp, Undo2, Redo2, ListOrdered, Minus, Code2, Pilcrow,
 } from "lucide-react";
-import { createBody, createFormattingForDomain, createOutline, createSummary, type Draft } from "../lib/app-data";
+import {
+  createBody, createFormattingForDomain, createOutline, createSummary,
+  colorSchemes, templates, formatDraftTime, migrateDefaultFormattingToMinimal,
+  type Draft, type DraftFormatting, type TemplateName,
+} from "../lib/app-data";
+import {
+  extractContentBlocks, collectInlineTokens,
+  getInlineHighlightStyle, getWechatDomainPreviewStyle, buildHtml,
+  getTemplatePreviewStyle, escapeHtml,
+} from "../lib/format-render";
 import {
   buildAutoImageCaption,
   buildAutoImagePrompt,
@@ -26,21 +38,331 @@ import type {
   DraftWritingSnapshot,
 } from "../lib/ai-writing-types";
 import { domainConfigs, resolveArticleDomain } from "../lib/content-domains";
-import { buildWritingToneOptions, recommendToneForArticleType, resolveWritingTone } from "../lib/writing-tones";
+import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
+import { useAuth } from "../providers/auth-provider";
 
 const generationLabels: Record<AIWriteScope, string> = {
-  title: "AI 标题生成中",
+  title: "AI 文章生成中",
   outline: "AI 大纲生成中",
   body: "AI 正文生成中",
   full: "AI 全文生成中",
 };
 
-const transformLabels: Record<AITransformAction, string> = {
+const generationStageLabels = {
+  material: "素材搜索中",
+  planning: "结构规划中",
+  drafting: "正文生成中",
+  quality: "质量校验中",
+  image: "配图搜索中",
+} as const;
+
+type GenerationStageKey = keyof typeof generationStageLabels;
+
+const transformLabels: Partial<Record<AITransformAction, string>> = {
   rewrite: "AI 改写中",
   expand: "AI 扩写中",
   shorten: "AI 缩写中",
 };
+
+const QUALITY_RETRY_MESSAGE = "AI 正在自动调整稿件质量，请再试一次。";
+
+type EditorToolbarMode =
+  | "undo"
+  | "redo"
+  | "paragraph"
+  | "heading"
+  | "bold"
+  | "italic"
+  | "underline"
+  | "list"
+  | "orderedList"
+  | "quote"
+  | "divider"
+  | "code";
+
+type RichTextEditorHandle = {
+  getSelectedText: () => string;
+  replaceSelection: (text: string) => string;
+  runCommand: (mode: EditorToolbarMode) => void;
+  focus: () => void;
+};
+
+type TiptapNode = {
+  type?: string;
+  text?: string;
+  attrs?: Record<string, unknown>;
+  marks?: Array<{ type?: string }>;
+  content?: TiptapNode[];
+};
+
+function renderEditorInlineHtml(text: string) {
+  return escapeHtml(text)
+    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+    .replace(/「([^」]+)」/g, "<em>「$1」</em>");
+}
+
+function renderPlainSectionAsEditorHtml(section: string) {
+  const lines = section.split("\n");
+  const trimmed = section.trim();
+  const codeMatch = trimmed.match(/^```(\w+)?\s*\n([\s\S]*?)\n```$/);
+
+  if (codeMatch) {
+    return `<pre><code>${escapeHtml(codeMatch[2])}</code></pre>`;
+  }
+
+  if (trimmed === "---") {
+    return "<hr />";
+  }
+
+  if (trimmed.startsWith("## ")) {
+    return `<h2>${renderEditorInlineHtml(trimmed.slice(3).trim())}</h2>`;
+  }
+
+  if (trimmed.startsWith(">")) {
+    const quote = lines.map((line) => line.replace(/^>\s?/, "")).join("\n");
+    return `<blockquote><p>${renderEditorInlineHtml(quote).replace(/\n/g, "<br />")}</p></blockquote>`;
+  }
+
+  if (lines.length > 1 && lines.every((line) => line.trim().startsWith("- "))) {
+    const items = lines
+      .map((line) => `<li><p>${renderEditorInlineHtml(line.trim().replace(/^- /, ""))}</p></li>`)
+      .join("");
+    return `<ul>${items}</ul>`;
+  }
+
+  if (lines.length > 1 && lines.every((line) => /^\d+[.)、]\s+/.test(line.trim()))) {
+    const items = lines
+      .map((line) => `<li><p>${renderEditorInlineHtml(line.trim().replace(/^\d+[.)、]\s+/, ""))}</p></li>`)
+      .join("");
+    return `<ol>${items}</ol>`;
+  }
+
+  return `<p>${renderEditorInlineHtml(trimmed).replace(/\n/g, "<br />")}</p>`;
+}
+
+function plainTextToEditorHtml(text: string) {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "";
+
+  const sections: string[] = [];
+  let buffer: string[] = [];
+  let inCodeBlock = false;
+
+  const flush = () => {
+    const section = buffer.join("\n").trim();
+    if (section) sections.push(section);
+    buffer = [];
+  };
+
+  for (const line of normalized.split("\n")) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      if (!inCodeBlock && buffer.length) flush();
+      buffer.push(line);
+      inCodeBlock = !inCodeBlock;
+      if (!inCodeBlock) flush();
+      continue;
+    }
+
+    if (!inCodeBlock && !trimmed) {
+      flush();
+      continue;
+    }
+
+    buffer.push(line);
+  }
+
+  flush();
+  return sections.map(renderPlainSectionAsEditorHtml).join("");
+}
+
+function extractInlineTextFromEditorNode(node?: TiptapNode): string {
+  if (!node) return "";
+
+  if (node.type === "hardBreak") return "\n";
+
+  if (typeof node.text === "string") {
+    const markTypes = node.marks?.map((mark) => mark.type).filter(Boolean) ?? [];
+    let text = node.text;
+
+    if (markTypes.includes("italic")) text = `「${text}」`;
+    if (markTypes.includes("bold") || markTypes.includes("underline")) text = `__${text}__`;
+
+    return text;
+  }
+
+  return node.content?.map(extractInlineTextFromEditorNode).join("") ?? "";
+}
+
+function extractListItemText(node: TiptapNode) {
+  return node.content
+    ?.map((child) => {
+      if (child.type === "paragraph") return extractInlineTextFromEditorNode(child).trim();
+      return extractBlockTextFromEditorNode(child).trim();
+    })
+    .filter(Boolean)
+    .join("\n") ?? "";
+}
+
+function extractBlockTextFromEditorNode(node: TiptapNode): string {
+  if (node.type === "heading") {
+    return `## ${extractInlineTextFromEditorNode(node).trim()}`;
+  }
+
+  if (node.type === "blockquote") {
+    const content = node.content?.map(extractBlockTextFromEditorNode).filter(Boolean).join("\n") ?? "";
+    return content
+      .split("\n")
+      .map((line) => `> ${line.replace(/^>\s?/, "")}`)
+      .join("\n");
+  }
+
+  if (node.type === "bulletList") {
+    return node.content?.map((item) => `- ${extractListItemText(item)}`).join("\n") ?? "";
+  }
+
+  if (node.type === "orderedList") {
+    return node.content?.map((item, index) => `${index + 1}. ${extractListItemText(item)}`).join("\n") ?? "";
+  }
+
+  if (node.type === "horizontalRule") {
+    return "---";
+  }
+
+  if (node.type === "codeBlock") {
+    const language = typeof node.attrs?.language === "string" ? node.attrs.language : "";
+    return [`\`\`\`${language}`, extractInlineTextFromEditorNode(node), "```"].join("\n");
+  }
+
+  return extractInlineTextFromEditorNode(node).trim();
+}
+
+function editorJsonToPlainText(json: TiptapNode) {
+  return json.content
+    ?.map(extractBlockTextFromEditorNode)
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join("\n\n") ?? "";
+}
+
+const RichTextEditor = React.forwardRef<
+  RichTextEditorHandle,
+  {
+    value: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+    placeholder: string;
+    editorStyle: React.CSSProperties;
+  }
+>(function RichTextEditor({ value, onChange, disabled, placeholder, editorStyle }, ref) {
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [2] },
+      }),
+      Placeholder.configure({
+        placeholder,
+        emptyEditorClass: "is-editor-empty",
+      }),
+    ],
+    content: plainTextToEditorHtml(value),
+    editable: !disabled,
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: "article-rich-editor__content",
+      },
+    },
+    onUpdate: ({ editor: activeEditor }) => {
+      onChange(editorJsonToPlainText(activeEditor.getJSON() as TiptapNode));
+    },
+  });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!disabled);
+  }, [disabled, editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const currentText = editorJsonToPlainText(editor.getJSON() as TiptapNode);
+    if (currentText === value.trim()) return;
+
+    editor.commands.setContent(plainTextToEditorHtml(value), { emitUpdate: false });
+  }, [editor, value]);
+
+  useImperativeHandle(ref, () => ({
+    getSelectedText() {
+      if (!editor) return "";
+      const { from, to } = editor.state.selection;
+      if (from === to) return "";
+      return editor.state.doc.textBetween(from, to, "\n").trim();
+    },
+    replaceSelection(text: string) {
+      if (!editor) return value;
+      editor.chain().focus().insertContent(plainTextToEditorHtml(text) || escapeHtml(text)).run();
+      return editorJsonToPlainText(editor.getJSON() as TiptapNode);
+    },
+    runCommand(mode: EditorToolbarMode) {
+      if (!editor) return;
+
+      if (mode === "undo") editor.chain().focus().undo().run();
+      if (mode === "redo") editor.chain().focus().redo().run();
+      if (mode === "paragraph") editor.chain().focus().setParagraph().run();
+      if (mode === "heading") editor.chain().focus().toggleHeading({ level: 2 }).run();
+      if (mode === "bold") editor.chain().focus().toggleBold().run();
+      if (mode === "italic") editor.chain().focus().toggleItalic().run();
+      if (mode === "underline") editor.chain().focus().toggleUnderline().run();
+      if (mode === "list") editor.chain().focus().toggleBulletList().run();
+      if (mode === "orderedList") editor.chain().focus().toggleOrderedList().run();
+      if (mode === "quote") editor.chain().focus().toggleBlockquote().run();
+      if (mode === "divider") editor.chain().focus().setHorizontalRule().run();
+      if (mode === "code") editor.chain().focus().toggleCodeBlock().run();
+    },
+    focus() {
+      editor?.chain().focus().run();
+    },
+  }), [editor, value]);
+
+  return (
+    <div className="article-rich-editor flex-1" style={editorStyle}>
+      <EditorContent editor={editor} />
+    </div>
+  );
+});
+
+function normalizeArticleTitleLine(title: string) {
+  return title.replace(/^#+\s*/, "").trim();
+}
+
+function composeBodyWithTitle(title: string, content: string) {
+  const normalizedTitle = normalizeArticleTitleLine(title);
+  const normalizedContent = content.trimStart();
+  if (!normalizedTitle) return normalizedContent;
+  if (normalizeArticleTitleLine(normalizedContent.split(/\r?\n/)[0] ?? "") === normalizedTitle) {
+    return normalizedContent;
+  }
+  return `${normalizedTitle}\n\n${normalizedContent}`.trim();
+}
+
+function inferTitleFromBody(content: string, fallback = "未命名文章") {
+  return normalizeArticleTitleLine(content.split(/\r?\n/).find((line) => line.trim()) ?? "") || fallback;
+}
+
+function stripTitleLineFromBody(content: string, title: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+  if (firstContentIndex === -1) return "";
+
+  if (normalizeArticleTitleLine(lines[firstContentIndex]) !== normalizeArticleTitleLine(title)) {
+    return content;
+  }
+
+  return lines.slice(firstContentIndex + 1).join("\n").replace(/^\n+/, "");
+}
 
 const domainUiThemes: Record<
   keyof typeof domainConfigs,
@@ -52,6 +374,7 @@ const domainUiThemes: Record<
     text: string;
   }
 > = {
+  AI: { primary: "#2563eb", accent: "#06b6d4", soft: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" },
   科技: { primary: "#2563eb", accent: "#06b6d4", soft: "#eff6ff", border: "#bfdbfe", text: "#1d4ed8" },
   教育: { primary: "#ea580c", accent: "#f59e0b", soft: "#fff7ed", border: "#fed7aa", text: "#c2410c" },
   旅游: { primary: "#0891b2", accent: "#14b8a6", soft: "#ecfeff", border: "#a5f3fc", text: "#0f766e" },
@@ -66,6 +389,7 @@ const domainUiThemes: Record<
 };
 
 const domainArticleTypeOptions: Record<keyof typeof domainConfigs, string[]> = {
+  AI: ["项目推荐", "产品解读", "趋势解读", "观点文", "盘点文"],
   科技: ["项目推荐", "产品解读", "趋势解读", "观点文", "盘点文"],
   教育: ["方法文", "解读文", "指南文", "观点文"],
   旅游: ["攻略文", "体验文", "清单文", "路线文", "小众推荐", "城市指南", "季节游"],
@@ -79,70 +403,30 @@ const domainArticleTypeOptions: Record<keyof typeof domainConfigs, string[]> = {
   其他: ["综合观察", "热点杂谈", "信息解读", "清单文"],
 };
 
-const generationStageMap: Record<
-  AIWriteScope | AITransformAction,
-  {
-    title: string;
-    hint: string;
-    steps: string[];
-    accent: string;
-  }
-> = {
-  title: {
-    title: "标题灵感生成中",
-    hint: "正在结合热点角度、账号定位和读者预期，提炼更像公众号的标题候选。",
-    steps: ["分析热点切口", "提炼传播钩子", "生成标题候选"],
-    accent: "from-blue-500 via-cyan-500 to-sky-500",
-  },
-  outline: {
-    title: "摘要与结构规划中",
-    hint: "正在梳理文章节奏和关键判断，让后续成文更顺、更适合公众号阅读。",
-    steps: ["理解核心冲突", "规划摘要导语", "输出文章大纲"],
-    accent: "from-violet-500 via-fuchsia-500 to-pink-500",
-  },
-  body: {
-    title: "正文成稿中",
-    hint: "会先校准结构和角度，再生成完整正文，通常比标题生成更耗时一些。",
-    steps: ["校准选题角度", "规划正文节奏", "生成可发布初稿"],
-    accent: "from-emerald-500 via-teal-500 to-cyan-500",
-  },
-  full: {
-    title: "全文生成中",
-    hint: "正在执行两段式生成：先出标题与结构，再写出完整公众号成稿。",
-    steps: ["分析热点与受众", "规划标题和大纲", "生成全文初稿"],
-    accent: "from-orange-500 via-amber-500 to-yellow-500",
-  },
-  rewrite: {
-    title: "局部改写中",
-    hint: "正在优化表达节奏和信息密度，尽量保留原有观点不跑偏。",
-    steps: ["理解原文语义", "重组表达方式", "输出润色结果"],
-    accent: "from-blue-500 via-indigo-500 to-violet-500",
-  },
-  expand: {
-    title: "内容扩写中",
-    hint: "正在补充解释、转折和行动建议，让段落更完整、更像公众号正文。",
-    steps: ["理解核心观点", "补强解释层次", "输出扩写结果"],
-    accent: "from-emerald-500 via-lime-500 to-green-500",
-  },
-  shorten: {
-    title: "内容缩写中",
-    hint: "正在收紧节奏、删除空话套话，保留主要判断和关键信息。",
-    steps: ["识别冗余表达", "压缩句段节奏", "输出精简结果"],
-    accent: "from-rose-500 via-orange-500 to-amber-500",
-  },
-};
-
 export function WritingPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user } = useAuth();
   const handledAutogenKey = useRef<string | null>(null);
-  const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const richTextEditorRef = useRef<RichTextEditorHandle>(null);
   const requestAbortControllerRef = useRef<AbortController | null>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   const autosaveInitializedRef = useRef(false);
-  const toneAutoManagedRef = useRef(true);
 
-  const { drafts, topics, selectedTopic, settings, selectTopic, generateDraftFromTopic, getDraftById, updateDraft } = useAppStore();
+  const {
+    drafts,
+    topics,
+    selectedTopic,
+    settings,
+    writingTasks,
+    selectTopic,
+    createManualDraft,
+    generateDraftFromTopic,
+    startWritingTask,
+    clearWritingTask,
+    getDraftById,
+    updateDraft,
+  } = useAppStore();
 
   const topicId = searchParams.get("topicId");
   const draftId = searchParams.get("draftId");
@@ -152,20 +436,30 @@ export function WritingPage() {
     () => [...drafts].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0],
     [drafts],
   );
+  const activeWritingTaskDraft = useMemo(() => {
+    const activeTaskDraftIds = Object.values(writingTasks)
+      .sort((left, right) => new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime())
+      .map((task) => task.draftId);
 
-  const currentDraft = draftId ? getDraftById(draftId) : !topicId ? latestDraft : undefined;
+    return activeTaskDraftIds
+      .map((activeDraftId) => getDraftById(activeDraftId))
+      .find((draft): draft is Draft => Boolean(draft));
+  }, [getDraftById, writingTasks]);
+
+  const currentDraft = draftId ? getDraftById(draftId) : !topicId ? activeWritingTaskDraft ?? latestDraft : undefined;
+  const activeWritingTask = currentDraft ? writingTasks[currentDraft.id] : undefined;
   const activeTopic =
     topics.find((topic) => topic.id === topicId) ??
     topics.find((topic) => topic.id === currentDraft?.topicId) ??
     selectedTopic ??
-    topics[0];
+    topics[0] ??
+    null;
   const defaultDomain = resolveArticleDomain(currentDraft?.domain ?? activeTopic?.domain ?? settings.contentAreas[0]);
   const [selectedDomain, setSelectedDomain] = useState(defaultDomain);
   const topicForWriting = useMemo(
     () => (activeTopic ? { ...activeTopic, domain: selectedDomain } : undefined),
     [activeTopic, selectedDomain],
   );
-  const activeDomainConfig = useMemo(() => domainConfigs[selectedDomain], [selectedDomain]);
   const isGithubTrendingTopic = useMemo(
     () => Boolean(topicForWriting?.source?.includes("GitHub Trending")),
     [topicForWriting],
@@ -174,34 +468,82 @@ export function WritingPage() {
   const fallbackOutline = useMemo(() => (topicForWriting ? createOutline(topicForWriting) : []), [topicForWriting]);
   const fallbackSummary = useMemo(() => (topicForWriting ? createSummary(topicForWriting, settings) : ""), [settings, topicForWriting]);
   const fallbackBody = useMemo(() => (topicForWriting ? createBody(topicForWriting, settings) : ""), [settings, topicForWriting]);
-  const toneOptions = useMemo(() => buildWritingToneOptions(settings.toneKeywords).slice(0, 6), [settings.toneKeywords]);
   const [articleType, setArticleType] = useState("观点文");
-  const defaultTone = useMemo(
-    () => recommendToneForArticleType("观点文", toneOptions),
-    [toneOptions],
-  );
-  const recommendedTone = useMemo(() => recommendToneForArticleType(articleType, toneOptions), [articleType, toneOptions]);
 
   const [selectedTitle, setSelectedTitle] = useState(currentDraft?.title ?? "");
   const [summary, setSummary] = useState(currentDraft?.summary ?? fallbackSummary);
   const [outline, setOutline] = useState<string[]>(currentDraft?.outline ?? fallbackOutline);
   const [body, setBody] = useState(currentDraft?.body ?? fallbackBody);
   const [saveNotice, setSaveNotice] = useState("");
-  const [targetReader, setTargetReader] = useState(settings.readerJobTraits);
   const [targetWordCount, setTargetWordCount] = useState(1200);
-  const [selectedTone, setSelectedTone] = useState(defaultTone);
   const [generationError, setGenerationError] = useState("");
   const [pendingAction, setPendingAction] = useState("");
+  const [generationStage, setGenerationStage] = useState<GenerationStageKey | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isWechatPushing, setIsWechatPushing] = useState(false);
   const [activeGenerationTask, setActiveGenerationTask] = useState<AIWriteScope | AITransformAction | null>(null);
-  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
-  const [generationNow, setGenerationNow] = useState(Date.now());
-  const activeTonePreset = useMemo(() => resolveWritingTone(selectedTone), [selectedTone]);
   const activeDomainTheme = useMemo(() => domainUiThemes[selectedDomain], [selectedDomain]);
   const articleTypeOptions = useMemo(() => domainArticleTypeOptions[selectedDomain], [selectedDomain]);
 
-  const titleCandidates = currentDraft?.titleCandidates ?? [];
+  const [formatting, setFormatting] = useState<DraftFormatting>(
+    migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createFormattingForDomain(selectedDomain, settings.defaultTemplate))
+  );
+  const activeScheme = useMemo(
+    () => colorSchemes.find((s) => s.name === formatting.colorScheme) ?? colorSchemes[0],
+    [formatting.colorScheme],
+  );
+
+  const [previewMode, setPreviewMode] = useState<"mobile" | "desktop">("mobile");
+  const [publishChannel, setPublishChannel] = useState<"公众号" | "知乎" | "微博" | "头条" | "小红书">("公众号");
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+
+  const domainPreviewStyle = useMemo(
+    () => getWechatDomainPreviewStyle(selectedDomain, activeScheme.primary, activeScheme.accent),
+    [activeScheme.accent, activeScheme.primary, selectedDomain]
+  );
+
+  const previewThemeStyle = useMemo(
+    () => getTemplatePreviewStyle(formatting.template, activeScheme.primary, activeScheme.accent),
+    [activeScheme.accent, activeScheme.primary, formatting.template]
+  );
+
+  const isWechatChannel = publishChannel === "公众号";
+  const isDarkTemplate = formatting.template === "深色";
+
+  const textPrimary = isWechatChannel ? "rgba(0,0,0,0.9)" : isDarkTemplate ? "#f9fafb" : "#111827";
+  const textSecondary = isWechatChannel ? "#4a4a4a" : isDarkTemplate ? "#d1d5db" : "#4b5563";
+  const textMuted = isWechatChannel ? "#8c8c8c" : isDarkTemplate ? "#94a3b8" : "#9ca3af";
+  const surfaceBackground = isWechatChannel ? "#ffffff" : isDarkTemplate ? "#0f172a" : "#ffffff";
+  const phoneShellBackground = isWechatChannel ? "#ffffff" : isDarkTemplate ? "#0b1120" : "#ffffff";
+
+  const previewAccountName = getUserDisplayName(user, settings.accountName || "公众号");
+  const previewAccountInitials = previewAccountName.slice(0, 2);
+  const articleDate = currentDraft ? formatDraftTime(currentDraft.updatedAt).split(" ")[0] : formatDraftTime(new Date().toISOString()).split(" ")[0];
+
+  const highlightBackground = isWechatChannel
+    ? domainPreviewStyle.highlightBackground
+    : isDarkTemplate
+      ? "rgba(59,130,246,0.12)"
+      : `${activeScheme.primary}08`;
+
+  const previewBlocks = useMemo(() => {
+    const htmlBody = stripTitleLineFromBody(body, selectedTitle);
+    return extractContentBlocks(htmlBody);
+  }, [body, selectedTitle]);
+
+  const headingCount = useMemo(() => previewBlocks.filter((block) => block.type === "heading").length, [previewBlocks]);
+  const estimatedCards = useMemo(() => Math.max(1, previewBlocks.filter((block) => block.type === "golden" || block.type === "highlight" || block.type === "quote").length), [previewBlocks]);
+
+  const inlineHighlightStyle = useMemo(
+    () => getInlineHighlightStyle(activeScheme.primary, activeScheme.accent),
+    [activeScheme.accent, activeScheme.primary]
+  );
+
+  const handleScrollPreviewTop = () => {
+    previewScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
 
   useEffect(() => {
     if (topicId) {
@@ -223,13 +565,8 @@ export function WritingPage() {
     setOutline(currentDraft?.outline ?? fallbackOutline);
     setBody(currentDraft?.body ?? fallbackBody);
     setSelectedDomain(defaultDomain);
-  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary]);
-
-  useEffect(() => {
-    setTargetReader(settings.readerJobTraits);
-    setSelectedTone(defaultTone);
-    toneAutoManagedRef.current = true;
-  }, [defaultTone, settings.readerJobTraits]);
+    setFormatting(migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createFormattingForDomain(defaultDomain, settings.defaultTemplate)));
+  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary, settings.defaultTemplate]);
 
   useEffect(() => {
     if (!articleTypeOptions.includes(articleType)) {
@@ -241,15 +578,6 @@ export function WritingPage() {
     if (!isGithubTrendingTopic) return;
     setArticleType((current) => (current === "观点文" || current === "趋势解读" || !current ? "项目推荐" : current));
   }, [isGithubTrendingTopic]);
-
-  useEffect(() => {
-    if (!toneOptions.length) return;
-
-    if (toneAutoManagedRef.current || !toneOptions.includes(selectedTone)) {
-      setSelectedTone(recommendedTone);
-      toneAutoManagedRef.current = true;
-    }
-  }, [recommendedTone, selectedTone, toneOptions]);
 
   useEffect(() => {
     if (!autogenKey) {
@@ -264,17 +592,6 @@ export function WritingPage() {
   }, [activeTopic, autogen, autogenKey]);
 
   useEffect(() => {
-    if (!isGenerating) return;
-
-    setGenerationNow(Date.now());
-    const timer = window.setInterval(() => {
-      setGenerationNow(Date.now());
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [isGenerating]);
-
-  useEffect(() => {
     return () => {
       if (autosaveTimerRef.current) {
         window.clearTimeout(autosaveTimerRef.current);
@@ -282,23 +599,32 @@ export function WritingPage() {
     };
   }, []);
 
-  const generationElapsedSeconds =
-    isGenerating && generationStartedAt ? Math.max(1, Math.floor((generationNow - generationStartedAt) / 1000)) : 0;
-  const isTitleGenerating =
-    isGenerating &&
-    (activeGenerationTask === "title" || activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
-  const hasGeneratedTitles = titleCandidates.length > 0;
-  const isSummaryGenerating =
-    isGenerating &&
-    (activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
-  const hasGeneratedSummary = Boolean(summary.trim());
-  const isOutlineGenerating =
-    isGenerating &&
-    (activeGenerationTask === "outline" || activeGenerationTask === "body" || activeGenerationTask === "full");
-  const hasGeneratedOutline = outline.some((item) => item.trim());
+  const visibleGenerationTask = activeGenerationTask ?? activeWritingTask?.scope ?? null;
+  const isWritingBusy = isGenerating || Boolean(activeWritingTask);
+  const visiblePendingAction =
+    (generationStage ? generationStageLabels[generationStage] : "") ||
+    pendingAction ||
+    activeWritingTask?.label ||
+    "";
+  const generationStageSteps = useMemo(() => {
+    if ((!isWritingBusy && !generationStage) || (!visibleGenerationTask && generationStage !== "image")) return [];
+
+    const baseStages: GenerationStageKey[] =
+      visibleGenerationTask === "title" || visibleGenerationTask === "outline"
+        ? ["material", "planning", "quality"]
+        : ["material", "planning", "drafting", "quality", "image"];
+    const activeStage = generationStage ?? baseStages[0];
+    const activeIndex = Math.max(0, baseStages.indexOf(activeStage));
+
+    return baseStages.map((stage, index) => ({
+      key: stage,
+      label: generationStageLabels[stage],
+      status: index < activeIndex ? "done" : index === activeIndex ? "active" : "pending",
+    }));
+  }, [generationStage, isWritingBusy, visibleGenerationTask]);
   const isBodyDraftGenerating =
-    isGenerating &&
-    (activeGenerationTask === "body" || activeGenerationTask === "full");
+    isWritingBusy &&
+    (visibleGenerationTask === "body" || visibleGenerationTask === "full");
   const hasGeneratedBody = Boolean(body.trim());
 
   function buildDraftSnapshot(draft: Draft): DraftWritingSnapshot {
@@ -308,7 +634,7 @@ export function WritingPage() {
       id: draft.id,
       domain: useLocalState ? selectedDomain : draft.domain,
       title: useLocalState ? selectedTitle : draft.title,
-      titleCandidates: useLocalState ? titleCandidates : draft.titleCandidates,
+      titleCandidates: draft.titleCandidates,
       selectedAngle: draft.selectedAngle,
       status: draft.status,
       topic: draft.topic,
@@ -322,8 +648,10 @@ export function WritingPage() {
   }
 
   function ensureDraft(scope: AIWriteScope): Draft | null {
-    if (!activeTopic) return null;
     if (currentDraft) return currentDraft;
+    if (!activeTopic) {
+      return createManualDraft(selectedDomain);
+    }
 
     const placeholderScope = scope === "title" ? "title" : "outline";
     const generatedDraft = generateDraftFromTopic(activeTopic.id, placeholderScope);
@@ -336,21 +664,23 @@ export function WritingPage() {
   }
 
   function syncAiResult(targetDraft: Draft, result: AIWriteResult) {
-    const nextStatus = targetDraft.status === "已发布" ? "已发布" : result.body.trim() ? "待修改" : "待生成";
+    const nextBody = composeBodyWithTitle(result.title, result.body);
+    const nextTitle = inferTitleFromBody(nextBody, result.title || targetDraft.title || "未命名文章");
+    const nextStatus = targetDraft.status === "已发布" ? "已发布" : nextBody.trim() ? "待修改" : "待生成";
 
-    setSelectedTitle(result.title);
+    setSelectedTitle(nextTitle);
     setSummary(result.summary);
     setOutline(result.outline);
-    setBody(result.body);
+    setBody(nextBody);
 
     updateDraft(targetDraft.id, {
       domain: selectedDomain,
-      title: result.title,
+      title: nextTitle,
       titleCandidates: result.titleCandidates,
       selectedAngle: result.selectedAngle,
       summary: result.summary,
       outline: result.outline,
-      body: result.body,
+      body: nextBody,
       status: nextStatus,
     });
   }
@@ -360,6 +690,7 @@ export function WritingPage() {
     targetDraft: Draft,
     signal: AbortSignal,
     draftSnapshot?: DraftWritingSnapshot,
+    options: { retryOnQualityAdjust?: boolean } = {},
   ) {
     const response = await fetch("/api/ai/write", {
       method: "POST",
@@ -374,16 +705,23 @@ export function WritingPage() {
         settings,
         domain: selectedDomain,
         articleType,
-        targetReader,
         targetWordCount,
-        tone: selectedTone,
         draft: draftSnapshot ?? buildDraftSnapshot(targetDraft),
       }),
     });
 
     const payload = (await response.json()) as AIWriteResponse;
     if (!response.ok || !payload.result) {
-      throw new Error(payload.message || "AI 写作暂时不可用");
+      if (payload.qualityRetry && options.retryOnQualityAdjust !== false) {
+        setGenerationStage("quality");
+        setPendingAction("质量校验中，正在重写稿件");
+        return requestAiGeneration(scope, targetDraft, signal, draftSnapshot, { retryOnQualityAdjust: false });
+      }
+
+      const message = payload.message === QUALITY_RETRY_MESSAGE
+        ? "稿件质量校验仍未通过，我已经停止本次生成，请稍后重新生成。"
+        : payload.message || "AI 写作暂时不可用";
+      throw new Error(message);
     }
 
     return payload;
@@ -410,12 +748,13 @@ export function WritingPage() {
   }
 
   async function maybeAutoInsertImage(targetDraft: Draft, result: AIWriteResult, scope: AIWriteScope) {
-    if ((scope !== "body" && scope !== "full") || !result.body.trim()) {
+    const sourceBody = composeBodyWithTitle(result.title, result.body);
+    if ((scope !== "body" && scope !== "full") || !sourceBody.trim()) {
       return result;
     }
 
     const imageLimit = getAutoImageInsertLimit(selectedDomain);
-    const existingImageCount = countArticleImages(result.body);
+    const existingImageCount = countArticleImages(sourceBody);
     const remainingImageCount = Math.max(0, imageLimit - existingImageCount);
     if (remainingImageCount <= 0) {
       return result;
@@ -424,13 +763,13 @@ export function WritingPage() {
     const query = buildAutoImageSearchQuery({
       title: result.title,
       summary: result.summary,
-      body: result.body,
+      body: sourceBody,
       domain: selectedDomain,
     });
     const prompt = buildAutoImagePrompt({
       title: result.title,
       summary: result.summary,
-      body: result.body,
+      body: sourceBody,
       domain: selectedDomain,
     });
     const caption = buildAutoImageCaption({
@@ -454,7 +793,7 @@ export function WritingPage() {
         body: JSON.stringify({
           title: result.title,
           summary: result.summary,
-          body: result.body,
+          body: sourceBody,
           domain: selectedDomain,
           source: topicForWriting?.source || targetDraft.source || "",
           query,
@@ -474,20 +813,23 @@ export function WritingPage() {
         }));
 
       if (searchResponse.ok && realImages.length) {
-        const nextBody = insertAutoImagesIntoBody(result.body, realImages, imageLimit);
-        if (nextBody === result.body) {
+        const nextBody = insertAutoImagesIntoBody(sourceBody, realImages, imageLimit);
+        if (nextBody === sourceBody) {
           return result;
         }
+        const nextTitle = inferTitleFromBody(nextBody, result.title);
 
         const nextResult = {
           ...result,
+          title: nextTitle,
           body: nextBody,
         };
 
+        setSelectedTitle(nextTitle);
         setBody(nextBody);
         updateDraft(targetDraft.id, {
           domain: selectedDomain,
-          title: result.title,
+          title: nextTitle,
           titleCandidates: result.titleCandidates,
           selectedAngle: result.selectedAngle,
           summary: result.summary,
@@ -525,21 +867,24 @@ export function WritingPage() {
 
       const nextBody =
         remainingImageCount > 1
-          ? insertAutoImagesIntoBody(result.body, [{ url: payload.url as string, caption }], imageLimit)
-          : insertAutoImageIntoBody(result.body, payload.url as string, caption);
-      if (nextBody === result.body) {
+          ? insertAutoImagesIntoBody(sourceBody, [{ url: payload.url as string, caption }], imageLimit)
+          : insertAutoImageIntoBody(sourceBody, payload.url as string, caption);
+      if (nextBody === sourceBody) {
         return result;
       }
+      const nextTitle = inferTitleFromBody(nextBody, result.title);
 
       const nextResult = {
         ...result,
+        title: nextTitle,
         body: nextBody,
       };
 
+      setSelectedTitle(nextTitle);
       setBody(nextBody);
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
-        title: result.title,
+        title: nextTitle,
         titleCandidates: result.titleCandidates,
         selectedAngle: result.selectedAngle,
         summary: result.summary,
@@ -555,7 +900,8 @@ export function WritingPage() {
   }
 
   async function retryGithubTrendingImageInsert(targetDraft: Draft, result: AIWriteResult) {
-    if (!topicForWriting?.source?.includes("GitHub Trending") || !result.body.trim()) {
+    const sourceBody = composeBodyWithTitle(result.title, result.body);
+    if (!topicForWriting?.source?.includes("GitHub Trending") || !sourceBody.trim()) {
       return result;
     }
 
@@ -568,7 +914,7 @@ export function WritingPage() {
         body: JSON.stringify({
           title: result.title,
           summary: result.summary,
-          body: result.body,
+          body: sourceBody,
           domain: selectedDomain,
           source: topicForWriting.source,
           query: `${result.title} ${targetDraft.topic}`.trim(),
@@ -580,20 +926,22 @@ export function WritingPage() {
         return result;
       }
 
-      const nextBody = insertAutoImageIntoBody(result.body, imageUrl, buildAutoImageCaption({
+      const nextBody = insertAutoImageIntoBody(sourceBody, imageUrl, buildAutoImageCaption({
         title: result.title,
         summary: result.summary,
         domain: selectedDomain,
       }));
 
-      if (nextBody === result.body) {
+      if (nextBody === sourceBody) {
         return result;
       }
+      const nextTitle = inferTitleFromBody(nextBody, result.title);
 
+      setSelectedTitle(nextTitle);
       setBody(nextBody);
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
-        title: result.title,
+        title: nextTitle,
         titleCandidates: result.titleCandidates,
         selectedAngle: result.selectedAngle,
         summary: result.summary,
@@ -602,7 +950,7 @@ export function WritingPage() {
         status: targetDraft.status === "已发布" ? "已发布" : "待修改",
       });
 
-      return { ...result, body: nextBody };
+      return { ...result, title: nextTitle, body: nextBody };
     } catch {
       return result;
     }
@@ -612,14 +960,21 @@ export function WritingPage() {
     requestAbortControllerRef.current = null;
     setIsGenerating(false);
     setPendingAction("");
+    setGenerationStage(null);
     setActiveGenerationTask(null);
-    setGenerationStartedAt(null);
   }
 
   function handlePauseGeneration() {
-    if (!requestAbortControllerRef.current) return;
-    requestAbortControllerRef.current.abort();
+    const activeTask = activeWritingTask;
+    const abortGeneration = requestAbortControllerRef.current?.abort.bind(requestAbortControllerRef.current) ?? activeTask?.abort;
+    if (!abortGeneration) return;
+
+    abortGeneration();
     requestAbortControllerRef.current = null;
+    if (activeTask) {
+      clearWritingTask(activeTask.draftId, activeTask.id);
+    }
+    resetGenerationState();
     setIsPaused(true);
     setGenerationError("");
     setSaveNotice("已暂停本次生成");
@@ -628,10 +983,11 @@ export function WritingPage() {
 
   function isSameAsCurrentDraft() {
     if (!currentDraft) return false;
+    const inferredTitle = inferTitleFromBody(body, selectedTitle || currentDraft.title);
 
     return (
       currentDraft.domain === selectedDomain &&
-      currentDraft.title === selectedTitle &&
+      currentDraft.title === inferredTitle &&
       currentDraft.summary === summary &&
       currentDraft.body === body &&
       JSON.stringify(currentDraft.outline) === JSON.stringify(outline)
@@ -639,7 +995,7 @@ export function WritingPage() {
   }
 
   async function handleGenerate(scope: AIWriteScope) {
-    if (!topicForWriting || isGenerating) return;
+    if (!topicForWriting || isWritingBusy) return;
 
     const targetDraft = ensureDraft(scope);
     if (!targetDraft) return;
@@ -647,18 +1003,25 @@ export function WritingPage() {
 
     setIsGenerating(true);
     setPendingAction(label);
+    setGenerationStage("material");
     setGenerationError("");
     setIsPaused(false);
     setActiveGenerationTask(scope);
-    setGenerationStartedAt(Date.now());
     const controller = new AbortController();
     requestAbortControllerRef.current = controller;
+    const writingTask = startWritingTask({
+      draftId: targetDraft.id,
+      scope,
+      label,
+      abort: () => controller.abort(),
+    });
 
     try {
       let payload: AIWriteResponse;
       let generatedResult: AIWriteResult;
 
-      if (scope === "body" || scope === "full") {
+      if (scope === "body") {
+        setGenerationStage("planning");
         setPendingAction("AI 正在规划摘要和大纲");
 
         const planningPayload = await requestAiGeneration("outline", targetDraft, controller.signal);
@@ -681,22 +1044,33 @@ export function WritingPage() {
           body: planningResult.body,
         };
 
-        setPendingAction(scope === "full" ? generationLabels.full : generationLabels.body);
+        setGenerationStage("drafting");
+        setPendingAction(generationLabels.body);
         payload = await requestAiGeneration(scope, targetDraft, controller.signal, plannedDraftSnapshot);
         generatedResult = payload.result as AIWriteResult;
       } else {
+        setGenerationStage(scope === "title" || scope === "outline" ? "planning" : "drafting");
         payload = await requestAiGeneration(scope, targetDraft, controller.signal);
         generatedResult = payload.result as AIWriteResult;
       }
 
+      setGenerationStage("quality");
       syncAiResult(targetDraft, generatedResult);
       const baseNotice = buildGenerationSuccessNotice(scope, label, false, payload.wordCountStatus);
       setSaveNotice(baseNotice);
       window.setTimeout(() => setSaveNotice(""), 2400);
+      clearWritingTask(targetDraft.id, writingTask.id);
       resetGenerationState();
+
+      if (scope === "body" || scope === "full") {
+        setGenerationStage("image");
+        setPendingAction("配图搜索中，正在匹配文章素材");
+      }
 
       void maybeAutoInsertImage(targetDraft, generatedResult, scope)
         .then((finalResult) => {
+          setGenerationStage(null);
+          setPendingAction("");
           if (finalResult.body !== generatedResult.body) {
             setSaveNotice(buildGenerationSuccessNotice(scope, label, true, payload.wordCountStatus));
             window.setTimeout(() => setSaveNotice(""), 2400);
@@ -710,11 +1084,14 @@ export function WritingPage() {
           });
         })
         .catch(() => {
+          setGenerationStage(null);
+          setPendingAction("");
           // Ignore background image insertion failures to keep generation responsive.
         });
 
       return;
     } catch (error) {
+      clearWritingTask(targetDraft.id, writingTask.id);
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
@@ -727,24 +1104,26 @@ export function WritingPage() {
   }
 
   async function handleTransform(mode: AITransformAction) {
-    if (!topicForWriting || !body.trim() || isGenerating) return;
+    if (!topicForWriting || !body.trim() || isWritingBusy) return;
 
     const targetDraft = ensureDraft("body");
     if (!targetDraft) return;
 
-    const textarea = bodyTextareaRef.current;
-    const selectionStart = textarea?.selectionStart ?? 0;
-    const selectionEnd = textarea?.selectionEnd ?? 0;
-    const selectedText = selectionEnd > selectionStart ? body.slice(selectionStart, selectionEnd).trim() : "";
+    const selectedText = richTextEditorRef.current?.getSelectedText() ?? "";
 
     setIsGenerating(true);
-    setPendingAction(transformLabels[mode]);
+    setPendingAction(transformLabels[mode] ?? "AI 处理中");
     setGenerationError("");
     setIsPaused(false);
     setActiveGenerationTask(mode);
-    setGenerationStartedAt(Date.now());
     const controller = new AbortController();
     requestAbortControllerRef.current = controller;
+    const writingTask = startWritingTask({
+      draftId: targetDraft.id,
+      scope: mode,
+      label: transformLabels[mode] ?? "AI 处理中",
+      abort: () => controller.abort(),
+    });
 
     try {
       const response = await fetch("/api/ai/write", {
@@ -760,9 +1139,7 @@ export function WritingPage() {
           settings,
           domain: selectedDomain,
           articleType,
-          targetReader,
           targetWordCount,
-          tone: selectedTone,
           draft: buildDraftSnapshot(targetDraft),
           body,
           selectedText: selectedText || undefined,
@@ -775,133 +1152,103 @@ export function WritingPage() {
       }
 
       const nextBody = selectedText
-        ? `${body.slice(0, selectionStart)}${payload.transformedText}${body.slice(selectionEnd)}`
+        ? richTextEditorRef.current?.replaceSelection(payload.transformedText) ?? payload.transformedText
         : payload.transformedText;
+      const nextTitle = inferTitleFromBody(nextBody, selectedTitle || targetDraft.title);
 
+      setSelectedTitle(nextTitle);
       setBody(nextBody);
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
-        title: selectedTitle,
+        title: nextTitle,
         summary,
         outline,
         body: nextBody,
         formatting: targetDraft.domain === selectedDomain ? targetDraft.formatting : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
         status: targetDraft.status === "已发布" ? "已发布" : "待修改",
       });
-      setSaveNotice(`${transformLabels[mode]}完成`);
+      setSaveNotice(`${transformLabels[mode] ?? "AI 处理"}完成`);
       window.setTimeout(() => setSaveNotice(""), 2000);
     } catch (error) {
+      clearWritingTask(targetDraft.id, writingTask.id);
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
       setGenerationError(error instanceof Error ? error.message : "AI 改写失败，请稍后重试");
     } finally {
+      clearWritingTask(targetDraft.id, writingTask.id);
       resetGenerationState();
     }
   }
 
-  const handleSaveDraft = () => {
-    const targetDraft = currentDraft ?? ensureDraft("body");
-    if (!targetDraft) return;
-
-    updateDraft(targetDraft.id, {
-      domain: selectedDomain,
-      title: selectedTitle,
-      summary,
-      outline,
-      body,
-      formatting: targetDraft.domain === selectedDomain ? targetDraft.formatting : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
-      status: targetDraft.status === "已发布" ? "已发布" : "待修改",
-    });
-
+  const saveCurrentDraft = (showNotice = true) => {
     if (!currentDraft) {
+      const nextTitle = inferTitleFromBody(body, selectedTitle || "未命名文章");
+      const targetDraft = createManualDraft(selectedDomain, {
+        title: nextTitle,
+        summary,
+        outline,
+        body,
+        formatting,
+        status: "待修改",
+      });
+
+      setSelectedTitle(nextTitle);
       startTransition(() => {
         router.replace(`/writing?draftId=${targetDraft.id}`);
       });
+
+      if (showNotice) {
+        setSaveNotice("已保存到草稿箱");
+        window.setTimeout(() => setSaveNotice(""), 2000);
+      }
+
+      return targetDraft;
     }
 
-    setSaveNotice("已保存到草稿箱");
-    window.setTimeout(() => setSaveNotice(""), 2000);
-  };
-
-  const handleOpenFormatEditor = () => {
-    const targetDraft = currentDraft ?? ensureDraft("body");
-    if (!targetDraft) return;
-
-    updateDraft(targetDraft.id, {
+    const nextTitle = inferTitleFromBody(body, selectedTitle || currentDraft.title);
+    const nextDraft: Draft = {
+      ...currentDraft,
       domain: selectedDomain,
-      title: selectedTitle,
+      title: nextTitle,
       summary,
       outline,
       body,
-      formatting: targetDraft.domain === selectedDomain ? targetDraft.formatting : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
-      status: targetDraft.status,
+      formatting,
+      status: currentDraft.status === "已发布" ? "已发布" : "待修改",
+    };
+
+    setSelectedTitle(nextTitle);
+    updateDraft(currentDraft.id, {
+      domain: nextDraft.domain,
+      title: nextDraft.title,
+      summary: nextDraft.summary,
+      outline: nextDraft.outline,
+      body: nextDraft.body,
+      formatting: nextDraft.formatting,
+      status: nextDraft.status,
     });
 
-    router.push(`/format-editor?draftId=${targetDraft.id}`);
+    if (showNotice) {
+      setSaveNotice("已保存到草稿箱");
+      window.setTimeout(() => setSaveNotice(""), 2000);
+    }
+
+    return nextDraft;
   };
 
-  const applyToolbarAction = (mode: "bold" | "italic" | "underline" | "heading" | "list" | "quote") => {
-    const textarea = bodyTextareaRef.current;
-    if (!textarea) return;
+  const handleSaveDraft = () => {
+    saveCurrentDraft(true);
+  };
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = body.slice(start, end);
-    const fallbackText = selectedText || "请替换这段文字";
-    let nextText = "";
-    let nextCursorOffset = 0;
-
-    if (mode === "bold") {
-      nextText = `【重点】${fallbackText}`;
-      nextCursorOffset = nextText.length;
-    }
-
-    if (mode === "italic") {
-      nextText = `「${fallbackText}」`;
-      nextCursorOffset = nextText.length;
-    }
-
-    if (mode === "underline") {
-      nextText = `__${fallbackText}__`;
-      nextCursorOffset = nextText.length;
-    }
-
-    if (mode === "heading") {
-      nextText = `## ${fallbackText}`;
-      nextCursorOffset = nextText.length;
-    }
-
-    if (mode === "list") {
-      nextText = fallbackText
-        .split("\n")
-        .map((line) => `- ${line.replace(/^- /, "")}`)
-        .join("\n");
-      nextCursorOffset = nextText.length;
-    }
-
-    if (mode === "quote") {
-      nextText = fallbackText
-        .split("\n")
-        .map((line) => `> ${line.replace(/^> /, "")}`)
-        .join("\n");
-      nextCursorOffset = nextText.length;
-    }
-
-    const updatedBody = `${body.slice(0, start)}${nextText}${body.slice(end)}`;
-    setBody(updatedBody);
-    setSaveNotice("已插入正文格式");
+  const applyToolbarAction = (mode: EditorToolbarMode) => {
+    richTextEditorRef.current?.runCommand(mode);
+    setSaveNotice("已更新正文格式");
     window.setTimeout(() => setSaveNotice(""), 1500);
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const cursor = start + nextCursorOffset;
-      textarea.setSelectionRange(cursor, cursor);
-    });
   };
 
   useEffect(() => {
-    if (!activeTopic || isGenerating) return;
+    if (isWritingBusy) return;
 
     if (!autosaveInitializedRef.current) {
       autosaveInitializedRef.current = true;
@@ -909,7 +1256,6 @@ export function WritingPage() {
     }
 
     const hasMeaningfulContent = Boolean(
-      selectedTitle.trim() ||
       summary.trim() ||
       body.trim() ||
       outline.some((item) => item.trim()),
@@ -922,27 +1268,42 @@ export function WritingPage() {
     }
 
     autosaveTimerRef.current = window.setTimeout(() => {
-      const targetDraft = currentDraft ?? ensureDraft(body.trim() ? "body" : "outline");
-      if (!targetDraft) return;
+      if (!currentDraft) {
+        const nextTitle = inferTitleFromBody(body, selectedTitle || "未命名文章");
+        const targetDraft = createManualDraft(selectedDomain, {
+          title: nextTitle,
+          summary,
+          outline,
+          body,
+          formatting,
+          status: "待修改",
+        });
 
-      updateDraft(targetDraft.id, {
+        setSelectedTitle(nextTitle);
+        startTransition(() => {
+          router.replace(`/writing?draftId=${targetDraft.id}`);
+        });
+
+        setSaveNotice("已自动保存");
+        window.setTimeout(() => setSaveNotice(""), 1500);
+        return;
+      }
+
+      const nextTitle = inferTitleFromBody(body, selectedTitle || currentDraft.title);
+
+      setSelectedTitle(nextTitle);
+      updateDraft(currentDraft.id, {
         domain: selectedDomain,
-        title: selectedTitle,
+        title: nextTitle,
         summary,
         outline,
         body,
         formatting:
-          targetDraft.domain === selectedDomain
-            ? targetDraft.formatting
+          currentDraft.domain === selectedDomain
+            ? currentDraft.formatting
             : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
-        status: targetDraft.status === "已发布" ? "已发布" : "待修改",
+        status: currentDraft.status === "已发布" ? "已发布" : "待修改",
       });
-
-      if (!currentDraft) {
-        startTransition(() => {
-          router.replace(`/writing?draftId=${targetDraft.id}`);
-        });
-      }
 
       setSaveNotice("已自动保存");
       window.setTimeout(() => setSaveNotice(""), 1500);
@@ -956,8 +1317,9 @@ export function WritingPage() {
   }, [
     activeTopic,
     body,
+    createManualDraft,
     currentDraft,
-    isGenerating,
+    isWritingBusy,
     outline,
     router,
     selectedDomain,
@@ -966,79 +1328,722 @@ export function WritingPage() {
     summary,
     updateDraft,
   ]);
+  function renderInlineNodes(text: string, primary: string, accent: string) {
+    const tokens = collectInlineTokens(text, true);
+    if (!tokens.length) return <>{text}</>;
+    const parts: React.ReactNode[] = [];
+    let cursor = 0;
+    tokens.forEach((token, index) => {
+      if (token.start > cursor) parts.push(text.slice(cursor, token.start));
+      if (token.kind === "bold") {
+        parts.push(<strong key={index} style={{ color: primary }}>{token.content}</strong>);
+      } else if (token.kind === "quote") {
+        parts.push(<span key={index} style={{ color: accent }}>{token.content}</span>);
+      } else {
+        parts.push(<span key={index} style={getInlineHighlightStyle(primary, accent)}>{token.content}</span>);
+      }
+      cursor = token.end;
+    });
+    if (cursor < text.length) parts.push(text.slice(cursor));
+    return <>{parts}</>;
+  }
 
-  if (!activeTopic) {
-    return <div className="p-8 text-sm text-gray-500">请先从选题中心选择一个选题。</div>;
+  function handleCopyHtml() {
+    const draft = currentDraft;
+    if (!draft) return;
+    const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
+    const htmlBody = stripTitleLineFromBody(body, inferredTitle);
+    const html = buildHtml({ ...draft, title: inferredTitle, summary: "" }, htmlBody, formatting, activeScheme.primary, activeScheme.accent, "公众号", previewAccountName, selectedDomain);
+    navigator.clipboard.writeText(html).then(() => {
+      setSaveNotice("已复制公众号格式");
+      window.setTimeout(() => setSaveNotice(""), 2000);
+    }).catch(() => {
+      setSaveNotice("复制失败");
+      window.setTimeout(() => setSaveNotice(""), 2000);
+    });
+  }
+
+  function handleExportHtml() {
+    const draft = currentDraft;
+    if (!draft) return;
+    const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
+    const htmlBody = stripTitleLineFromBody(body, inferredTitle);
+    const html = buildHtml({ ...draft, title: inferredTitle, summary: "" }, htmlBody, formatting, activeScheme.primary, activeScheme.accent, "公众号", previewAccountName, selectedDomain);
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${inferredTitle || "article"}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSaveNotice("已导出 HTML");
+    window.setTimeout(() => setSaveNotice(""), 2000);
+  }
+
+  function handleExportMarkdown() {
+    const draft = currentDraft;
+    if (!draft) return;
+    const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
+    const md = body;
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${inferredTitle || "article"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSaveNotice("已导出 Markdown");
+    window.setTimeout(() => setSaveNotice(""), 2000);
+  }
+
+  async function handlePushToWechatDraft() {
+    if (isWritingBusy || isWechatPushing) return;
+
+    const draft = saveCurrentDraft(false);
+    if (!draft) return;
+
+    const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
+    const articleBody = stripTitleLineFromBody(body, inferredTitle).trim();
+
+    if (!inferredTitle || !articleBody) {
+      setGenerationError("推送前需要先补齐标题和正文。");
+      return;
+    }
+
+    setIsWechatPushing(true);
+    setGenerationError("");
+    setSaveNotice("正在检查公众号草稿...");
+
+    try {
+      const checkResponse = await fetch("/api/wechat/draft/check", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: inferredTitle,
+          summary,
+          body: articleBody,
+          author: previewAccountName,
+          domain: selectedDomain,
+        }),
+      });
+      const checkPayload = await checkResponse.json().catch(() => null);
+
+      if (!checkResponse.ok || !checkPayload?.ok) {
+        const firstIssue = Array.isArray(checkPayload?.items)
+          ? checkPayload.items.find((item: { ok?: boolean }) => !item.ok)
+          : null;
+        throw new Error(firstIssue?.message ?? checkPayload?.message ?? "推送前检查未通过");
+      }
+
+      setSaveNotice("正在推送公众号草稿...");
+      const response = await fetch("/api/wechat/draft", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: inferredTitle,
+          summary,
+          body: articleBody,
+          author: previewAccountName,
+          domain: selectedDomain,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "推送公众号草稿箱失败");
+      }
+
+      updateDraft(draft.id, {
+        title: inferredTitle,
+        summary,
+        body,
+        formatting,
+        publishedChannel: "公众号",
+        lastExportFormat: "wechat",
+        lastExportedAt: new Date().toISOString(),
+      });
+
+      setSaveNotice(
+        `已推送到公众号草稿箱${payload?.accountName ? ` · ${payload.accountName}` : ""}${payload?.digestTruncated ? " · 摘要已截断" : ""}`,
+      );
+      window.setTimeout(() => setSaveNotice(""), 3000);
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : "推送公众号草稿箱失败");
+      setSaveNotice("");
+    } finally {
+      setIsWechatPushing(false);
+    }
+  }
+
+  function renderMockupPreviewContent() {
+    if (isWechatChannel) {
+      return (
+        <div className="mx-auto max-w-[640px]">
+          <div className="border-b pb-5" style={{ borderColor: isDarkTemplate ? "#1f2937" : "#f1f1f1" }}>
+            <h1
+              className="tracking-[0.01em]"
+              style={{
+                fontSize: String(domainPreviewStyle.titleStyle.fontSize),
+                lineHeight: Number(domainPreviewStyle.titleStyle.lineHeight),
+                letterSpacing: String(domainPreviewStyle.titleStyle.letterSpacing),
+                color: textPrimary,
+                fontWeight: Number(domainPreviewStyle.titleStyle.fontWeight),
+                textAlign: domainPreviewStyle.titleStyle.textAlign,
+                fontFamily: String(domainPreviewStyle.titleStyle.fontFamily),
+              }}
+            >
+              {selectedTitle}
+            </h1>
+            <div
+              className="mt-3 flex flex-wrap items-center gap-2 text-[12px]"
+              style={{
+                color: textMuted,
+                justifyContent: domainPreviewStyle.metaAlign,
+              }}
+            >
+              <span className="text-[15px]" style={{ fontWeight: 400, color: isDarkTemplate ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
+              <span>·</span>
+              <span>{articleDate}</span>
+            </div>
+          </div>
+
+          <div className="pt-5">
+            {previewBlocks.map((block, index) => {
+              if (block.type === "heading") {
+                if (domainPreviewStyle.headingMode === "underline") {
+                  return (
+                    <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px]">
+                      <h2
+                        className="inline-block border-b-2 pb-[6px] text-[18px] leading-[1.7]"
+                        style={{
+                          borderColor: activeScheme.primary,
+                          color: domainPreviewStyle.headingTextColor,
+                          fontWeight: domainPreviewStyle.headingFontWeight,
+                          fontFamily: domainPreviewStyle.headingFontFamily,
+                        }}
+                      >
+                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                      </h2>
+                    </div>
+                  );
+                }
+
+                if (domainPreviewStyle.headingMode === "center") {
+                  return (
+                    <div key={`${block.type}-${block.content}-${index}`} className="mb-[18px] mt-[34px] text-center">
+                      <h2
+                        className="inline-block border-b-2 pb-[6px] text-[18px] leading-[1.8]"
+                        style={{
+                          borderColor: activeScheme.accent,
+                          color: domainPreviewStyle.headingTextColor,
+                          fontWeight: domainPreviewStyle.headingFontWeight,
+                          fontFamily: domainPreviewStyle.headingFontFamily,
+                        }}
+                      >
+                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                      </h2>
+                    </div>
+                  );
+                }
+
+                if (domainPreviewStyle.headingMode === "card") {
+                  return (
+                    <div
+                      key={`${block.type}-${block.content}-${index}`}
+                      className="mb-[15px] mt-[30px] rounded-[14px] border px-4 py-3"
+                      style={{
+                        background: `linear-gradient(135deg, color-mix(in srgb, ${activeScheme.accent} 22%, white), color-mix(in srgb, ${activeScheme.primary} 18%, white))`,
+                        borderColor: `color-mix(in srgb, ${activeScheme.primary} 18%, white)`,
+                      }}
+                    >
+                      <h2
+                        className="text-[18px] leading-[1.7]"
+                        style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
+                      >
+                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                      </h2>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px] flex items-start gap-3">
+                    <span
+                      className="mt-[6px] inline-block h-[24px] w-[6px] rounded-full flex-shrink-0"
+                      style={{
+                        background: `linear-gradient(180deg, ${activeScheme.primary}, ${activeScheme.accent})`,
+                        opacity: 0.9,
+                      }}
+                    />
+                    <h2
+                      className="text-[18px] leading-[1.75]"
+                      style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
+                    >
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </h2>
+                  </div>
+                );
+              }
+
+              if (block.type === "quote") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-6 rounded-[12px] px-4 py-4"
+                    style={{ background: domainPreviewStyle.quoteBackground }}
+                  >
+                    <p className="text-[15px] leading-[1.85]" style={{ color: domainPreviewStyle.quoteTextColor }}>
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "divider") {
+                return <div key={`${block.type}-${index}`} className="my-7 h-px" style={{ background: domainPreviewStyle.dividerColor }} />;
+              }
+
+              if (block.type === "image") {
+                if (block.src) {
+                  return (
+                    <figure
+                      key={`${block.type}-${block.src}-${index}`}
+                      className="my-7 overflow-hidden"
+                    >
+                      <img
+                        src={block.src}
+                        alt={block.alt || block.caption || "文章配图"}
+                        className="block w-full rounded-[10px] border object-cover"
+                        style={{
+                          borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
+                          borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
+                          background: String(domainPreviewStyle.imageFrameStyle.background),
+                          boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
+                        }}
+                      />
+                      <figcaption className="px-2 pt-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
+                        {block.caption || block.alt || "文章配图"}
+                      </figcaption>
+                    </figure>
+                  );
+                }
+
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-7 overflow-hidden rounded-[8px] border"
+                    style={{
+                      borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
+                      background: String(domainPreviewStyle.imageFrameStyle.background),
+                      borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
+                      boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
+                    }}
+                  >
+                    <div
+                      className="flex h-44 items-center justify-center"
+                      style={{ background: String(domainPreviewStyle.imageFrameStyle.background) }}
+                    >
+                      <div
+                        className="rounded-full border px-4 py-2 text-[12px]"
+                        style={domainPreviewStyle.imagePlaceholderChipStyle}
+                      >
+                        配图占位
+                      </div>
+                    </div>
+                    <div className="px-4 py-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
+                      {block.content}
+                    </div>
+                  </div>
+                );
+              }
+
+              if (block.type === "golden") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-6 rounded-[10px] border-l-[3px] px-4 py-4"
+                    style={{ borderColor: domainPreviewStyle.goldenBorderColor, background: domainPreviewStyle.goldenBackground }}
+                  >
+                    <p className="text-[16px] leading-[1.85]" style={{ color: domainPreviewStyle.goldenTextColor, fontWeight: 600, textAlign: domainPreviewStyle.goldenTextAlign }}>
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "highlight") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-6 rounded-[10px] border px-4 py-4"
+                    style={{ background: highlightBackground, borderColor: domainPreviewStyle.highlightBorderColor }}
+                  >
+                    <p className="text-[16px] leading-[1.85]" style={{ color: textPrimary, fontWeight: 500 }}>
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "unordered-list") {
+                return (
+                  <ul key={`${block.type}-${index}`} className="my-5 space-y-3">
+                    {block.items.map((item, itemIndex) => (
+                      <li
+                        key={`${item}-${itemIndex}`}
+                        className="flex items-start gap-3 text-[16px] leading-[1.8]"
+                        style={{ color: textSecondary }}
+                      >
+                        <span className="mt-[11px] h-[5px] w-[5px] rounded-full bg-[#6b7280] flex-shrink-0" />
+                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              }
+
+              if (block.type === "ordered-list") {
+                return (
+                  <ol key={`${block.type}-${index}`} className="my-5 space-y-3">
+                    {block.items.map((item, itemIndex) => (
+                      <li
+                        key={`${item}-${itemIndex}`}
+                        className="flex items-start gap-3 text-[16px] leading-[1.8]"
+                        style={{ color: textSecondary }}
+                      >
+                        <span className="min-w-[18px] text-[15px] leading-[1.8] text-[#6b7280]">
+                          {itemIndex + 1}.
+                        </span>
+                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                );
+              }
+
+              if (block.type === "code") {
+                const language = block.language ? block.language : "code";
+                return (
+                  <figure key={`${block.type}-${block.content}-${index}`} className="my-6 border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-[11px] text-gray-500 uppercase">
+                      <span>代码</span>
+                      <span>{language}</span>
+                    </div>
+                    <pre className="p-3 overflow-x-auto text-[13px] bg-slate-900 text-slate-100 font-mono leading-relaxed">
+                      <code>{block.content}</code>
+                    </pre>
+                  </figure>
+                );
+              }
+
+              return (
+                <p
+                  key={`${block.type}-${block.content}-${index}`}
+                  className="mb-[18px] text-[16px] leading-[1.8] tracking-[0.02em]"
+                  style={{
+                    color: domainPreviewStyle.paragraphColor,
+                    fontWeight: 400,
+                    fontSize: domainPreviewStyle.paragraphFontSize,
+                    lineHeight: domainPreviewStyle.paragraphLineHeight,
+                    letterSpacing: domainPreviewStyle.paragraphLetterSpacing,
+                    fontFamily: domainPreviewStyle.paragraphFontFamily,
+                  }}
+                >
+                  {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      );
+    } else {
+      /* Standard channel preview */
+      return (
+        <div className="flex h-full min-h-0 flex-col">
+          <div
+            className="relative overflow-hidden rounded-[28px] border px-5 pb-5 pt-5"
+            style={{
+              background: `${previewThemeStyle.shellTint}, ${previewThemeStyle.shellGradient}`,
+              borderColor: previewThemeStyle.heroBorder,
+              boxShadow: isDarkTemplate
+                ? "0 20px 60px rgba(2,6,23,0.35)"
+                : "0 20px 60px rgba(15,23,42,0.08)",
+            }}
+          >
+            <div
+              className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full blur-3xl"
+              style={{ background: `${activeScheme.accent}35` }}
+            />
+            <div
+              className="pointer-events-none absolute -left-10 bottom-8 h-24 w-24 rounded-full blur-3xl"
+              style={{ background: `${activeScheme.primary}18` }}
+            />
+
+            <div className="relative flex items-center gap-3">
+              <div
+                className="flex h-11 w-11 items-center justify-center rounded-full text-[12px] text-white"
+                style={{
+                  background: `linear-gradient(135deg, ${activeScheme.primary}, ${activeScheme.accent})`,
+                  fontWeight: 700,
+                  boxShadow: `0 12px 24px ${activeScheme.primary}24`,
+                }}
+              >
+                {previewAccountInitials}
+              </div>
+              <div className="min-w-0">
+                <div className="text-[14px] truncate" style={{ color: textPrimary, fontWeight: 700 }}>
+                  {previewAccountName}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]" style={{ color: textMuted }}>
+                  <span>{articleDate}</span>
+                  <span>·</span>
+                  <span>{publishChannel}</span>
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="relative mt-4 overflow-hidden rounded-[24px] border px-5 py-6"
+              style={{
+                background: previewThemeStyle.heroGradient,
+                borderColor: previewThemeStyle.heroBorder,
+              }}
+            >
+              <h1 className="max-w-[92%] text-[23px] leading-[1.35] tracking-[-0.02em]" style={{ fontWeight: 800, color: textPrimary }}>
+                {selectedTitle}
+              </h1>
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px]" style={{ color: textMuted }}>
+                <span>作者：{previewAccountName}</span>
+                <span>·</span>
+                <span>{settings.accountPosition.slice(0, 20)}{settings.accountPosition.length > 20 ? "…" : ""}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-1">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-[11px] uppercase tracking-[0.24em]" style={{ color: textMuted, fontWeight: 700 }}>
+                正文
+              </div>
+              <div className="text-[11px]" style={{ color: textMuted }}>
+                {headingCount || 1} 个章节 · {estimatedCards} 处重点信息
+              </div>
+            </div>
+
+            {previewBlocks.map((block, index) => {
+              if (block.type === "heading") {
+                const displayIndex = previewBlocks.slice(0, index + 1).filter((item) => item.type === "heading").length;
+
+                return (
+                  <div key={`${block.type}-${block.content}-${index}`} className="my-8">
+                    <div className="mb-2 flex items-center gap-3">
+                      <span
+                        className="inline-flex h-8 min-w-8 items-center justify-center rounded-2xl px-2 text-[11px]"
+                        style={{
+                          background: formatting.numberedBadge ? activeScheme.primary : isDarkTemplate ? "#334155" : "#e2e8f0",
+                          color: "#ffffff",
+                          fontWeight: 700,
+                          boxShadow: `0 12px 28px ${activeScheme.primary}22`,
+                        }}
+                      >
+                        {String(displayIndex).padStart(2, "0")}
+                      </span>
+                      <div className="h-px flex-1" style={{ background: `${activeScheme.primary}24` }} />
+                    </div>
+                    <h2
+                      className="text-[18px] leading-[1.5] tracking-[-0.01em]"
+                      style={{ fontWeight: 800, color: textPrimary }}
+                    >
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </h2>
+                  </div>
+                );
+              }
+
+              if (block.type === "quote") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="px-4 py-4 my-6"
+                    style={{
+                      borderLeft: `4px solid ${activeScheme.primary}`,
+                      background: formatting.gradientQuote
+                        ? `linear-gradient(135deg, ${activeScheme.primary}14, ${activeScheme.accent}0f)`
+                        : `${activeScheme.primary}12`,
+                      borderRadius: formatting.roundedQuote ? "0 14px 14px 0" : "0",
+                      boxShadow: isDarkTemplate ? "none" : "0 10px 30px rgba(15,23,42,0.04)",
+                    }}
+                  >
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em]" style={{ color: activeScheme.primary, fontWeight: 700 }}>
+                      引用
+                    </div>
+                    <p className="text-[14px] leading-[1.8]" style={{ color: textSecondary }}>
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "divider") {
+                return <div key={`${block.type}-${index}`} className="my-7 h-px bg-slate-200" />;
+              }
+
+              if (block.type === "image") {
+                if (block.src) {
+                  return (
+                    <figure
+                      key={`${block.type}-${block.src}-${index}`}
+                      className="my-7 overflow-hidden"
+                    >
+                      <img
+                        src={block.src}
+                        alt={block.alt || block.caption || "文章配图"}
+                        className="block w-full rounded-2xl border border-slate-200 object-cover"
+                      />
+                      <figcaption className="px-2 pt-3 text-center text-[12px] text-gray-500">
+                        {block.caption || block.alt || "文章配图"}
+                      </figcaption>
+                    </figure>
+                  );
+                }
+
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-7 overflow-hidden rounded-[20px] border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-400"
+                  >
+                    {block.content}
+                  </div>
+                );
+              }
+
+              if (block.type === "golden") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-6 rounded-[18px] px-5 py-5"
+                    style={{
+                      background: `linear-gradient(135deg, ${activeScheme.primary}15, ${activeScheme.accent}22)`,
+                      color: textPrimary,
+                    }}
+                  >
+                    <p className="text-[16px] leading-[1.85] font-semibold">
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "highlight") {
+                return (
+                  <div
+                    key={`${block.type}-${block.content}-${index}`}
+                    className="my-6 rounded-[16px] border px-4 py-4"
+                    style={{
+                      background: highlightBackground,
+                      borderColor: `${activeScheme.primary}20`,
+                    }}
+                  >
+                    <p className="text-[15px] leading-[1.8] font-medium" style={{ color: textPrimary }}>
+                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                    </p>
+                  </div>
+                );
+              }
+
+              if (block.type === "unordered-list") {
+                return (
+                  <ul key={`${block.type}-${index}`} className="my-5 space-y-3">
+                    {block.items.map((item, itemIndex) => (
+                      <li
+                        key={`${item}-${itemIndex}`}
+                        className="flex items-start gap-3 text-[15px] leading-[1.8]"
+                        style={{ color: textSecondary }}
+                      >
+                        <span className="mt-[11px] h-[5px] w-[5px] rounded-full bg-[#6b7280] flex-shrink-0" />
+                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              }
+
+              if (block.type === "ordered-list") {
+                return (
+                  <ol key={`${block.type}-${index}`} className="my-5 space-y-3">
+                    {block.items.map((item, itemIndex) => (
+                      <li
+                        key={`${item}-${itemIndex}`}
+                        className="flex items-start gap-3 text-[15px] leading-[1.8]"
+                        style={{ color: textSecondary }}
+                      >
+                        <span className="min-w-[18px] text-[14px] leading-[1.8] text-[#6b7280]">
+                          {itemIndex + 1}.
+                        </span>
+                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                );
+              }
+
+              if (block.type === "code") {
+                const language = block.language ? block.language : "code";
+                return (
+                  <figure key={`${block.type}-${block.content}-${index}`} className="my-6 border border-gray-800 rounded-lg overflow-hidden shadow-lg bg-slate-900">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-slate-800 text-[11px] text-slate-300 uppercase">
+                      <span>代码</span>
+                      <span>{language}</span>
+                    </div>
+                    <pre className="p-3 overflow-x-auto text-[13px] text-slate-200 font-mono leading-relaxed">
+                      <code>{block.content}</code>
+                    </pre>
+                  </figure>
+                );
+              }
+
+              return (
+                <p
+                  key={`${block.type}-${block.content}-${index}`}
+                  className="mb-[18px] text-[15px] leading-[1.8] tracking-[0.01em]"
+                  style={{
+                    color: textSecondary,
+                  }}
+                >
+                  {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
+                </p>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="h-12 min-h-[48px] bg-white border-b border-gray-200 flex items-center px-4 gap-2">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => void handleGenerate("full")}
-            disabled={isGenerating}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-orange-500 to-amber-500 text-white px-3.5 py-1.5 rounded-lg text-[12px] hover:from-orange-600 hover:to-amber-600 disabled:opacity-60 disabled:cursor-not-allowed"
-            style={{ fontWeight: 600 }}
-          >
-            <Sparkles className="w-3.5 h-3.5" /> 一键生成全文
-          </button>
-          <button
-            onClick={() => void handleGenerate("title")}
-            disabled={isGenerating}
-            className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <Type className="w-3.5 h-3.5" /> 生成标题
-          </button>
-          <button
-            onClick={() => void handleGenerate("outline")}
-            disabled={isGenerating}
-            className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <ListTree className="w-3.5 h-3.5" /> 生成大纲
-          </button>
-          <button
-            onClick={() => void handleGenerate("body")}
-            disabled={isGenerating}
-            className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-[12px] hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <FileText className="w-3.5 h-3.5" /> 生成正文
-          </button>
-        </div>
-        <div className="w-px h-6 bg-gray-200 mx-1" />
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => void handleTransform("rewrite")}
-            disabled={isGenerating || !body.trim()}
-            className="flex items-center gap-1 border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> 局部改写
-          </button>
-          <button
-            onClick={() => void handleTransform("expand")}
-            disabled={isGenerating || !body.trim()}
-            className="flex items-center gap-1 border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <Maximize2 className="w-3.5 h-3.5" /> 扩写
-          </button>
-          <button
-            onClick={() => void handleTransform("shorten")}
-            disabled={isGenerating || !body.trim()}
-            className="flex items-center gap-1 border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed"
-            style={{ fontWeight: 500 }}
-          >
-            <Minimize2 className="w-3.5 h-3.5" /> 缩写
-          </button>
-        </div>
+    <div className="flex h-full flex-col bg-[#fffaf5]">
+      <div className="flex h-12 min-h-[48px] items-center gap-2 border-b border-[#eadfd4] bg-white/86 px-4">
+        <button
+          onClick={() => void handleGenerate("full")}
+          disabled={isWritingBusy}
+          className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]"
+          style={{ fontWeight: 850 }}
+        >
+          <Sparkles className="w-3.5 h-3.5" /> 生成文章
+        </button>
         <div className="flex-1" />
-        {pendingAction ? <span className="text-[12px] text-blue-600">{pendingAction}</span> : null}
-        {!pendingAction && saveNotice ? <span className="text-[12px] text-green-600">{saveNotice}</span> : null}
-        {isGenerating ? (
+        {visiblePendingAction ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fff0e6] px-2.5 py-1 text-[12px] text-[#d65f2b]">
+            <LoaderCircle className="h-3 w-3 animate-spin" />
+            {visiblePendingAction}
+          </span>
+        ) : null}
+        {!visiblePendingAction && saveNotice ? <span className="text-[12px] text-green-600">{saveNotice}</span> : null}
+        {isWritingBusy ? (
           <button
             onClick={handlePauseGeneration}
             className="flex items-center gap-1.5 border border-orange-200 bg-orange-50 px-3.5 py-1.5 rounded-lg text-[12px] text-orange-600 hover:bg-orange-100"
@@ -1049,20 +2054,42 @@ export function WritingPage() {
         ) : null}
         <button
           onClick={handleSaveDraft}
-          disabled={isGenerating}
-          className="flex items-center gap-1.5 border border-gray-200 px-3.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50"
-          style={{ fontWeight: 500 }}
+          disabled={isWritingBusy || isWechatPushing}
+          className="lens-btn-secondary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]"
+          style={{ fontWeight: 750 }}
         >
-          <Save className="w-3.5 h-3.5" /> 保存草稿
+          <Save className="w-3.5 h-3.5" /> 保存
         </button>
         <button
-          onClick={handleOpenFormatEditor}
-          disabled={isGenerating}
-          className="flex items-center gap-1.5 bg-green-600 text-white px-3.5 py-1.5 rounded-lg text-[12px] hover:bg-green-700"
-          style={{ fontWeight: 500 }}
+          onClick={() => void handlePushToWechatDraft()}
+          disabled={isWritingBusy || isWechatPushing || !body.trim()}
+          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12px] text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+          style={{ fontWeight: 600 }}
         >
-          <Palette className="w-3.5 h-3.5" /> 自动排版
+          {isWechatPushing ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+          推送
         </button>
+        <div className="relative group">
+          <button
+            disabled={isWritingBusy || isWechatPushing}
+            className="lens-btn-secondary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px]"
+            style={{ fontWeight: 750 }}
+          >
+            <Download className="w-3.5 h-3.5" /> 导出
+            <ChevronDown className="w-3 h-3" />
+          </button>
+          <div className="invisible absolute right-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-[#eadfd4] bg-white py-1 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
+            <button onClick={handleCopyHtml} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+              复制公众号格式
+            </button>
+            <button onClick={handleExportHtml} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+              导出 HTML
+            </button>
+            <button onClick={handleExportMarkdown} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+              导出 Markdown
+            </button>
+          </div>
+        </div>
       </div>
 
       {generationError ? (
@@ -1071,28 +2098,36 @@ export function WritingPage() {
         </div>
       ) : null}
 
+      {generationStageSteps.length ? (
+        <div className="border-b border-[#eadfd4] bg-white px-4 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {generationStageSteps.map((step) => (
+              <span
+                key={step.key}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
+                  step.status === "active"
+                    ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
+                    : step.status === "done"
+                      ? "border-emerald-100 bg-emerald-50 text-emerald-600"
+                      : "border-[#eadfd4] bg-[#fffaf5] text-[#8c8178]"
+                }`}
+                style={{ fontWeight: step.status === "active" ? 800 : 650 }}
+              >
+                {step.status === "active" ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
+                {step.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-[260px] min-w-[260px] bg-white border-r border-gray-100 overflow-y-auto p-4 space-y-5">
+        <div className="w-[260px] min-w-[260px] space-y-5 overflow-y-auto border-r border-[#eadfd4] bg-[#fff7ef] p-4">
           <div>
-            <div className="text-[13px] mb-2" style={{ fontWeight: 600 }}>写作参数</div>
+            <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>写作参数</div>
             <div className="space-y-3">
               <div>
-                <label className="text-[12px] text-gray-500 mb-1 block">文章类型</label>
-                <div className="relative">
-                  <select value={articleType} onChange={(event) => setArticleType(event.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] appearance-none cursor-pointer">
-                    {articleTypeOptions.map((option) => (
-                      <option key={option}>{option}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-[12px] text-gray-500 mb-1 block">目标读者</label>
-                <input value={targetReader} onChange={(event) => setTargetReader(event.target.value)} className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300" />
-              </div>
-              <div>
-                <label className="text-[12px] text-gray-500 mb-1 block">目标字数</label>
+                <label className="mb-1 block text-[12px] text-[#8c8178]">目标字数</label>
                 <input
                   type="number"
                   min={300}
@@ -1103,323 +2138,228 @@ export function WritingPage() {
                     const parsed = Number.parseInt(event.target.value, 10);
                     setTargetWordCount(Number.isFinite(parsed) ? parsed : 1200);
                   }}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300"
+                  className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#d65f2b]"
                 />
-                <p className="mt-1 text-[11px] text-gray-400">AI 会按这个长度规划大纲和正文。</p>
+                <p className="mt-1 text-[11px] text-[#8c8178]">AI 会按这个长度生成正文。</p>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-[#eadfd4] pt-4">
+            <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>排版设置</div>
+            <div className="space-y-3">
               <div>
-                <label className="text-[12px] text-gray-500 mb-1 block">风格语气</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {toneOptions.map((tone) => (
+                <label className="mb-1 block text-[12px] text-[#8c8178]">模板</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {templates.map((t) => (
                     <button
-                      key={tone}
-                      onClick={() => {
-                        setSelectedTone(tone);
-                        toneAutoManagedRef.current = tone === recommendedTone;
-                      }}
-                      className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
-                        selectedTone === tone ? "bg-blue-50 border-blue-200 text-blue-600" : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+                      key={t}
+                      onClick={() => setFormatting((f) => ({ ...f, template: t }))}
+                      className={`px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
+                        formatting.template === t
+                          ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
+                          : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
                       }`}
-                      style={{ fontWeight: 500 }}
+                      style={{ fontWeight: 700 }}
                     >
-                      {tone}
+                      {t}
                     </button>
                   ))}
                 </div>
-                <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2">
-                  <div className="flex items-center gap-2 text-[12px] text-blue-700" style={{ fontWeight: 600 }}>
-                    <Sparkles className="h-3.5 w-3.5" />
-                    当前风格：{activeTonePreset.label}
-                  </div>
-                  <p className="mt-1 text-[12px] leading-5 text-gray-600">{activeTonePreset.description}</p>
-                  {selectedTone === recommendedTone ? (
-                    <p className="mt-1 text-[11px] text-blue-500">已按当前文章类型自动匹配推荐风格。</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] text-[#8c8178]">配色</label>
+                <div className="flex gap-2">
+                  {colorSchemes.map((s) => (
+                    <button
+                      key={s.name}
+                      onClick={() => setFormatting((f) => ({ ...f, colorScheme: s.name }))}
+                      title={s.name}
+                      className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
+                        formatting.colorScheme === s.name ? "scale-110 border-[#181715]" : "border-[#eadfd4]"
+                      }`}
+                      style={{ backgroundColor: s.primary }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] text-[#8c8178]">字号</label>
+                <select
+                  value={formatting.fontSize}
+                  onChange={(e) => setFormatting((f) => ({ ...f, fontSize: e.target.value as DraftFormatting["fontSize"] }))}
+                  className="w-full cursor-pointer appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 text-[12px]"
+                >
+                  <option value="15px">15px 紧凑</option>
+                  <option value="16px">16px 默认</option>
+                  <option value="17px">17px 舒适</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative flex flex-1 flex-col overflow-hidden bg-[#f8f4ef] px-4 py-5">
+          <div className="mb-4 flex shrink-0 items-center justify-between rounded-2xl border border-[#eadfd4] bg-white/78 px-4 py-3 shadow-sm backdrop-blur">
+            <div>
+              <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>
+                实时编辑 / 预览
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewMode("mobile")}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
+                  previewMode === "mobile" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                }`}
+                style={{ fontWeight: 750 }}
+              >
+                <Smartphone className="h-3.5 w-3.5" /> 手机
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewMode("desktop")}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
+                  previewMode === "desktop" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                }`}
+                style={{ fontWeight: 750 }}
+              >
+                <Monitor className="h-3.5 w-3.5" /> 桌面
+              </button>
+              <button
+                type="button"
+                onClick={handleScrollPreviewTop}
+                className="lens-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[12px]"
+                style={{ fontWeight: 750 }}
+              >
+                <ArrowUp className="h-3.5 w-3.5" /> 回到顶部
+              </button>
+            </div>
+          </div>
+
+          <div className="grid flex-1 min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 overflow-hidden">
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.08)]">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f0e5da] px-4 py-2.5">
+                <div className="text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>编辑</div>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+                  {[
+                    { icon: Undo2, mode: "undo" as const, label: "撤销" },
+                    { icon: Redo2, mode: "redo" as const, label: "重做" },
+                    { icon: Pilcrow, mode: "paragraph" as const, label: "正文" },
+                    { icon: AlignLeft, mode: "heading" as const, label: "二级标题" },
+                    { icon: Bold, mode: "bold" as const, label: "加粗" },
+                    { icon: Italic, mode: "italic" as const, label: "斜体" },
+                    { icon: Underline, mode: "underline" as const, label: "下划线" },
+                    { icon: List, mode: "list" as const, label: "无序列表" },
+                    { icon: ListOrdered, mode: "orderedList" as const, label: "有序列表" },
+                    { icon: Quote, mode: "quote" as const, label: "引用" },
+                    { icon: Minus, mode: "divider" as const, label: "分割线" },
+                    { icon: Code2, mode: "code" as const, label: "代码块" },
+                  ].map(({ icon: Icon, mode, label }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      title={label}
+                      aria-label={label}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyToolbarAction(mode)}
+                      disabled={isWritingBusy}
+                      className="flex h-7 w-7 items-center justify-center rounded text-[#8c8178] hover:bg-[#fff7ef] hover:text-[#d65f2b] disabled:cursor-not-allowed disabled:text-gray-300"
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div
+                className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto bg-white px-5 py-5" : "min-h-0 flex-1 overflow-y-auto px-6 py-6"}
+                style={
+                  isWechatChannel
+                    ? { background: surfaceBackground }
+                    : {
+                        background: surfaceBackground,
+                        backgroundImage: `${previewThemeStyle.bodyOverlay}, repeating-linear-gradient(180deg, transparent 0, transparent 34px, ${isDarkTemplate ? "rgba(148,163,184,0.03)" : "rgba(148,163,184,0.05)"} 35px)`,
+                      }
+                }
+              >
+                <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col">
+                  {isBodyDraftGenerating && !body.trim() ? (
+                    <div className="space-y-3">
+                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-3 text-[12px] text-emerald-600">
+                        {visiblePendingAction || "正文生成中，正在组织正文内容和段落细节…"}
+                      </div>
+                      <div className="rounded-lg bg-gray-50 px-4 py-4">
+                        <div className="space-y-3">
+                          {[
+                            "w-[92%]",
+                            "w-[84%]",
+                            "w-[76%]",
+                            "w-[88%]",
+                            "w-[69%]",
+                            "w-[94%]",
+                            "w-[81%]",
+                          ].map((widthClass, index) => (
+                            <div key={index} className={`h-4 animate-pulse rounded bg-gray-200 ${widthClass}`} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="mt-1 text-[11px] text-gray-400">当前是手动选择风格，未跟随文章类型自动切换。</p>
+                    <RichTextEditor
+                      ref={richTextEditorRef}
+                      value={body}
+                      onChange={setBody}
+                      disabled={isWritingBusy}
+                      placeholder="请输入"
+                      editorStyle={{
+                        fontSize: formatting.fontSize,
+                        lineHeight: formatting.lineHeight,
+                        color: isWechatChannel ? domainPreviewStyle.paragraphColor : textPrimary,
+                        fontFamily: isWechatChannel ? domainPreviewStyle.paragraphFontFamily : undefined,
+                      }}
+                    />
                   )}
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
+            </section>
 
-        <div className="relative flex-1 overflow-y-auto bg-[#f7f8fa]">
-          {isGenerating ? (
-            <div className="pointer-events-none sticky top-0 z-10 px-4 pt-4">
-              <div className="mx-auto flex max-w-[720px] items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/75 px-4 py-3 shadow-sm backdrop-blur">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white">
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  </div>
-                  <div>
-                    <p className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>
-                      {pendingAction || "AI 正在处理中"}
-                    </p>
-                    <p className="text-[11px] text-gray-500">
-                      正在生成结果 · 请尽量不要重复点击
-                    </p>
-                  </div>
-                </div>
-                <div className="hidden text-[11px] text-gray-500 sm:block">
-                  {generationElapsedSeconds}s
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.08)]">
+              <div className="flex shrink-0 items-center justify-between border-b border-[#f0e5da] px-4 py-2.5">
+                <div className="text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>实时预览</div>
+                <div className="text-[11px] text-[#8c8178]">
+                  {previewMode === "mobile" ? "手机" : "桌面"}
                 </div>
               </div>
-            </div>
-          ) : null}
-          <div className="max-w-[720px] mx-auto py-6 px-4 space-y-4">
-            <div
-              className={`bg-white rounded-xl border p-5 transition-opacity ${isGenerating ? "opacity-80" : "opacity-100"}`}
-              style={{ borderColor: activeDomainTheme.border }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Type className="w-4 h-4" style={{ color: activeDomainTheme.primary }} />
-                  <span className="text-[13px]" style={{ fontWeight: 600 }}>标题候选</span>
-                </div>
-                <button
-                  onClick={() => void handleGenerate("title")}
-                  disabled={isGenerating}
-                  className="text-[11px] text-blue-600 hover:text-blue-700 disabled:cursor-not-allowed disabled:text-blue-300"
-                  style={{ fontWeight: 500 }}
+              <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-y-auto bg-[#f8f4ef] p-5">
+                <div
+                  className="mx-auto min-h-full overflow-hidden rounded-[24px] border shadow-lg"
+                  style={{
+                    width: previewMode === "mobile" ? 390 : "100%",
+                    maxWidth: previewMode === "mobile" ? 390 : 760,
+                    background: phoneShellBackground,
+                    color: textPrimary,
+                    borderColor: isDarkTemplate ? "#1f2937" : "#e5e7eb",
+                  }}
                 >
-                  AI 重新生成
-                </button>
-              </div>
-              <div className="space-y-2">
-                {isTitleGenerating && !hasGeneratedTitles ? (
-                  <div className="space-y-2">
-                    <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-[12px] text-blue-600">
-                      标题生成中，正在根据选题和结构生成候选标题…
-                    </div>
-                    {Array.from({ length: 4 }).map((_, index) => (
-                      <div key={index} className="flex items-start gap-3 rounded-lg bg-gray-50 px-3 py-3">
-                        <div className="mt-0.5 h-5 w-5 flex-shrink-0 rounded-full border-2 border-gray-200 bg-white" />
-                        <div className="flex-1 space-y-2">
-                          <div className="h-4 w-[88%] animate-pulse rounded bg-gray-200" />
-                          <div className="h-4 w-[64%] animate-pulse rounded bg-gray-100" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : hasGeneratedTitles ? (
-                  titleCandidates.map((title) => (
-                    <button
-                      key={title}
-                      onClick={() => setSelectedTitle(title)}
-                      className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-left ${
-                        selectedTitle === title ? "bg-blue-50 border border-blue-200" : "bg-gray-50 border border-transparent hover:bg-gray-100"
-                      }`}
-                    >
-                      <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${selectedTitle === title ? "border-blue-600" : "border-gray-300"}`}>
-                        {selectedTitle === title && <div className="w-2.5 h-2.5 rounded-full bg-blue-600" />}
-                      </div>
-                      <span className="flex-1 whitespace-normal break-words text-[13px] leading-6" style={{ fontWeight: selectedTitle === title ? 600 : 400 }}>{title}</span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-[12px] text-gray-500">
-                    还没有生成标题，点击“生成标题”或“一键生成全文”后会在这里显示 AI 标题候选。
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div
-              className={`bg-white rounded-xl border p-5 transition-opacity ${isGenerating ? "opacity-80" : "opacity-100"}`}
-              style={{ borderColor: activeDomainTheme.border }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-4 h-4" style={{ color: activeDomainTheme.accent }} />
-                <span className="text-[13px]" style={{ fontWeight: 600 }}>摘要</span>
-              </div>
-              {isSummaryGenerating && !hasGeneratedSummary ? (
-                <div className="space-y-2">
-                  <div className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-3 text-[12px] text-violet-600">
-                    摘要生成中，正在提炼这篇文章的导语和核心判断…
-                  </div>
-                  <div className="rounded-lg bg-gray-50 px-3 py-3">
-                    <div className="space-y-2">
-                      <div className="h-4 w-[92%] animate-pulse rounded bg-gray-200" />
-                      <div className="h-4 w-[84%] animate-pulse rounded bg-gray-100" />
-                      <div className="h-4 w-[68%] animate-pulse rounded bg-gray-200" />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <textarea
-                  value={summary}
-                  onChange={(event) => setSummary(event.target.value)}
-                  className="w-full min-h-28 text-[13px] text-gray-700 leading-relaxed bg-gray-50 rounded-lg p-3 border border-gray-100 outline-none focus:border-blue-200"
-                />
-              )}
-            </div>
-
-            <div
-              className={`bg-white rounded-xl border p-5 transition-opacity ${isGenerating ? "opacity-80" : "opacity-100"}`}
-              style={{ borderColor: activeDomainTheme.border }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <ListTree className="w-4 h-4" style={{ color: activeDomainTheme.accent }} />
-                  <span className="text-[13px]" style={{ fontWeight: 600 }}>大纲</span>
-                </div>
-                <button
-                  onClick={() => void handleGenerate("outline")}
-                  disabled={isGenerating}
-                  className="text-[11px] text-blue-600 hover:text-blue-700 disabled:cursor-not-allowed disabled:text-blue-300"
-                  style={{ fontWeight: 500 }}
-                >
-                  AI 重新生成
-                </button>
-              </div>
-              <div className="space-y-2">
-                {isOutlineGenerating && !hasGeneratedOutline ? (
-                  <div className="space-y-2">
-                    <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-3 text-[12px] text-sky-600">
-                      大纲生成中，正在组织文章结构和段落节奏…
-                    </div>
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <div key={index} className="rounded-lg bg-gray-50 px-3 py-3">
-                        <div className={`h-4 animate-pulse rounded bg-gray-200 ${index % 2 === 0 ? "w-[82%]" : "w-[68%]"}`} />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  outline.map((item, index) => (
-                    <input
-                      key={`${index}-${item}`}
-                      value={item}
-                      onChange={(event) =>
-                        setOutline((currentOutline) =>
-                          currentOutline.map((outlineItem, itemIndex) => (itemIndex === index ? event.target.value : outlineItem)),
-                        )
-                      }
-                      className="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-[13px] text-gray-700 outline-none focus:border-blue-200"
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div
-              className="bg-white rounded-xl border p-5 transition-opacity"
-              style={{
-                borderColor: activeDomainTheme.border,
-              }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-green-500" />
-                  <span className="text-[13px]" style={{ fontWeight: 600 }}>正文草稿</span>
-                  {isBodyDraftGenerating ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-600">
-                      <LoaderCircle className="h-3 w-3 animate-spin" />
-                      生成中
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                  <span>{body.replace(/\s+/g, "").length} 字</span>
-                  <span>·</span>
-                  <span>状态：{currentDraft?.status ?? "未保存"}</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1 mb-3 pb-3 border-b border-gray-100">
-                {[
-                  { icon: Bold, mode: "bold" as const },
-                  { icon: Italic, mode: "italic" as const },
-                  { icon: Underline, mode: "underline" as const },
-                  { icon: AlignLeft, mode: "heading" as const },
-                  { icon: List, mode: "list" as const },
-                  { icon: Quote, mode: "quote" as const },
-                ].map(({ icon: Icon, mode }) => (
-                  <button
-                    key={mode}
-                    onClick={() => applyToolbarAction(mode)}
-                    disabled={isGenerating}
-                    className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 disabled:cursor-not-allowed disabled:text-gray-300"
+                  <div
+                    className={isWechatChannel ? "bg-white px-4 py-5" : "px-6 py-6"}
+                    style={
+                      isWechatChannel
+                        ? { background: surfaceBackground }
+                        : {
+                            background: surfaceBackground,
+                            backgroundImage: `${previewThemeStyle.bodyOverlay}, repeating-linear-gradient(180deg, transparent 0, transparent 34px, ${isDarkTemplate ? "rgba(148,163,184,0.03)" : "rgba(148,163,184,0.05)"} 35px)`,
+                          }
+                    }
                   >
-                    <Icon className="w-3.5 h-3.5" />
-                  </button>
-                ))}
-                <div className="ml-auto">
-                  <button
-                    onClick={() => void handleGenerate("body")}
-                    disabled={isGenerating}
-                    className="text-[11px] text-blue-600 hover:text-blue-700 disabled:cursor-not-allowed disabled:text-blue-300"
-                    style={{ fontWeight: 500 }}
-                  >
-                    AI 重写正文
-                  </button>
-                </div>
-              </div>
-              {isBodyDraftGenerating && !hasGeneratedBody ? (
-                <div className="space-y-3">
-                  <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-3 text-[12px] text-emerald-600">
-                    正文生成中，正在组织正文内容和段落细节…
-                  </div>
-                  <div className="rounded-lg bg-gray-50 px-4 py-4">
-                    <div className="space-y-3">
-                      {[
-                        "w-[92%]",
-                        "w-[84%]",
-                        "w-[76%]",
-                        "w-[88%]",
-                        "w-[69%]",
-                        "w-[94%]",
-                        "w-[81%]",
-                      ].map((widthClass, index) => (
-                        <div key={index} className={`h-4 animate-pulse rounded bg-gray-200 ${widthClass}`} />
-                      ))}
-                    </div>
+                    {renderMockupPreviewContent()}
                   </div>
                 </div>
-              ) : (
-                <textarea
-                  ref={bodyTextareaRef}
-                  value={body}
-                  onChange={(event) => setBody(event.target.value)}
-                  className="w-full min-h-[420px] text-[14px] leading-relaxed text-gray-800 border-none outline-none resize-none transition-opacity"
-                />
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="w-[260px] min-w-[260px] bg-white border-l border-gray-100 overflow-y-auto p-4 space-y-4">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Flame className="w-4 h-4 text-orange-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>热点摘要</span>
-            </div>
-            <div className="bg-orange-50/50 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed space-y-2">
-              <div className="text-[13px] text-gray-900" style={{ fontWeight: 600 }}>{activeTopic.title}</div>
-              <p>{activeTopic.source}</p>
-              <p>热度等级：{activeTopic.heat}，匹配度 {activeTopic.fit}%</p>
-              <p>领域：{selectedDomain} · 核心角度：{activeTopic.angles[0]}</p>
-              <p>推荐理由：{activeTopic.reason}</p>
-              <div className="flex items-center gap-1 pt-1 flex-wrap">
-                {activeTopic.tags.map((tag) => (
-                  <span key={tag} className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">{tag}</span>
-                ))}
               </div>
-            </div>
+            </section>
           </div>
-
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Eye className="w-4 h-4 text-purple-500" />
-              <span className="text-[13px]" style={{ fontWeight: 600 }}>写作提示</span>
-            </div>
-            <div className="space-y-2">
-              {activeTopic.angles.map((angle) => (
-                <div key={angle} className="bg-gray-50 rounded-lg p-3 text-[12px] text-gray-600 leading-relaxed">
-                  {angle}
-                </div>
-              ))}
-            </div>
-          </div>
-
         </div>
       </div>
     </div>

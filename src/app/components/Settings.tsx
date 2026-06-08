@@ -10,15 +10,11 @@ import {
   Pencil,
   Trash2,
   UserRound,
-  Users,
-  MessageSquareQuote,
   ShieldAlert,
-  Megaphone,
   LayoutTemplate,
   Bot,
   ImageIcon,
   Send,
-  Tags,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -206,14 +202,11 @@ const settingsSections: Array<{
   icon: LucideIcon;
 }> = [
   { id: "account-profile", title: "账号定位", hint: "名称、定位与覆盖领域", icon: UserRound },
-  { id: "reader-persona", title: "目标读者", hint: "读者画像与需求", icon: Users },
-  { id: "brand-tone", title: "品牌语气", hint: "语气关键词与风格", icon: MessageSquareQuote },
   { id: "restricted-topics", title: "禁写范围", hint: "敏感词与限制话题", icon: ShieldAlert },
   { id: "default-template", title: "排版模板", hint: "默认模板偏好", icon: LayoutTemplate },
   { id: "ai-writer", title: "AI 写作模型", hint: "正文生成模型配置", icon: Bot },
   { id: "ai-image", title: "AI 图片模型", hint: "AI 配图模型配置", icon: ImageIcon },
   { id: "wechat-account", title: "公众号接入", hint: "公众号账号与推送配置", icon: Send },
-  { id: "content-preferences", title: "内容偏好", hint: "偏好输出的内容形式", icon: Tags },
 ];
 
 export function Settings() {
@@ -895,7 +888,7 @@ export function Settings() {
                     onClick={() => scrollToSection(section.id)}
                     className={`group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors transition-shadow ${
                       isActive
-                        ? "bg-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.22)]"
+                        ? "bg-[#d65f2b] text-white shadow-[0_12px_30px_rgba(214,95,43,0.22)]"
                         : "text-slate-600 hover:bg-white hover:text-slate-900"
                     }`}
                   >
@@ -903,7 +896,7 @@ export function Settings() {
                       className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border text-[12px] ${
                         isActive
                           ? "border-white/20 bg-white/14 text-white"
-                          : "border-slate-200 bg-slate-50 text-slate-500 group-hover:border-blue-100 group-hover:bg-blue-50 group-hover:text-blue-600"
+                          : "border-slate-200 bg-slate-50 text-slate-500 group-hover:border-[#f0dfd0] group-hover:bg-[#fff0e6] group-hover:text-[#d65f2b]"
                       }`}
                       style={{ fontWeight: 700 }}
                     >
@@ -912,13 +905,13 @@ export function Settings() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px]" style={{ fontWeight: 600 }}>{section.title}</span>
-                        <span className={`text-[10px] ${isActive ? "text-blue-100" : "text-slate-400"}`}>{String(index + 1).padStart(2, "0")}</span>
+                        <span className={`text-[10px] ${isActive ? "text-orange-100" : "text-slate-400"}`}>{String(index + 1).padStart(2, "0")}</span>
                       </div>
-                      <div className={`mt-1 line-clamp-2 text-[11px] leading-5 ${isActive ? "text-blue-100/90" : "text-slate-400"}`}>
+                      <div className={`mt-1 line-clamp-2 text-[11px] leading-5 ${isActive ? "text-orange-100/90" : "text-slate-400"}`}>
                         {section.hint}
                       </div>
                     </div>
-                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "translate-x-0 text-white" : "text-slate-300 group-hover:translate-x-0.5 group-hover:text-blue-400"}`} />
+                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "translate-x-0 text-white" : "text-slate-300 group-hover:translate-x-0.5 group-hover:text-[#d65f2b]"}`} />
                   </button>
                 );
               })}
@@ -946,7 +939,7 @@ export function Settings() {
                     <button
                       onClick={handleSave}
                       disabled={!isDirty}
-                      className="flex items-center justify-center gap-1.5 rounded-2xl bg-[linear-gradient(135deg,#3b82f6_0%,#60a5fa_100%)] px-4 py-2.5 text-[13px] text-white shadow-[0_10px_24px_rgba(59,130,246,0.24)] transition-all hover:translate-y-[-1px] hover:shadow-[0_14px_28px_rgba(59,130,246,0.28)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-blue-300 disabled:shadow-none"
+                      className="flex items-center justify-center gap-1.5 rounded-2xl bg-[linear-gradient(135deg,#d65f2b_0%,#e69a54_100%)] px-4 py-2.5 text-[13px] text-white shadow-[0_10px_24px_rgba(214,95,43,0.24)] transition-all hover:translate-y-[-1px] hover:shadow-[0_14px_28px_rgba(214,95,43,0.28)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-[#e8a17e] disabled:shadow-none"
                       style={{ fontWeight: 600 }}
                     >
                       <Save className="w-4 h-4" /> 保存设置
@@ -971,7 +964,7 @@ export function Settings() {
                       onClick={() => scrollToSection(section.id)}
                       className={`flex items-center gap-2 rounded-full border px-3 py-2 text-[12px] transition-colors ${
                         isActive
-                          ? "border-blue-200 bg-blue-50 text-blue-600"
+                          ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
                           : "border-gray-200 bg-gray-50 text-gray-600 hover:bg-white"
                       }`}
                       style={{ fontWeight: 500 }}
@@ -991,16 +984,6 @@ export function Settings() {
         <DomainSelector label="账号可覆盖领域" values={form.contentAreas} onChange={(values) => updateField("contentAreas", values)} />
       </Section>
 
-      <Section id="reader-persona" title="目标读者画像">
-        <Field label="年龄范围" value={form.readerAgeRange} onChange={(value) => updateField("readerAgeRange", value)} />
-        <Field label="职业特征" value={form.readerJobTraits} onChange={(value) => updateField("readerJobTraits", value)} />
-        <Field label="核心需求" value={form.readerNeeds} onChange={(value) => updateField("readerNeeds", value)} />
-      </Section>
-
-      <Section id="brand-tone" title="品牌语气关键词">
-        <TagEditor label="语气风格标签" values={form.toneKeywords} color="green" onChange={(values) => updateField("toneKeywords", values)} />
-      </Section>
-
       <Section id="restricted-topics" title="禁写领域 / 敏感词">
         <TagEditor label="禁止涉及的话题或词汇" values={form.bannedTopics} color="red" onChange={(values) => updateField("bannedTopics", values)} />
       </Section>
@@ -1014,7 +997,7 @@ export function Settings() {
                 key={template}
                 onClick={() => updateField("defaultTemplate", template)}
                 className={`p-3 rounded-lg border text-[12px] text-center transition-colors ${
-                  form.defaultTemplate === template ? "bg-blue-50 border-blue-200 text-blue-600" : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                  form.defaultTemplate === template ? "bg-[#fff0e6] border-[#d65f2b] text-[#d65f2b]" : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
                 }`}
                 style={{ fontWeight: 500 }}
               >
@@ -1038,7 +1021,7 @@ export function Settings() {
             <button
               type="button"
               onClick={openCreateAIProviderDialog}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#d65f2b] px-4 py-2.5 text-[13px] text-white hover:bg-[#bf4513]"
               style={{ fontWeight: 600 }}
             >
               <Plus className="h-4 w-4" />
@@ -1061,7 +1044,7 @@ export function Settings() {
                   key={profile.id}
                   className={`rounded-2xl border px-4 py-4 transition-colors ${
                     profile.isActive
-                      ? "border-blue-200 bg-blue-50/70"
+                      ? "border-[#d65f2b] bg-[#fff0e6]"
                       : "border-slate-200 bg-white"
                   }`}
                 >
@@ -1073,7 +1056,7 @@ export function Settings() {
                           {meta.tag}
                         </span>
                         {profile.isActive ? (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] text-blue-700" style={{ fontWeight: 700 }}>
+                          <span className="rounded-full bg-[#ffe3d3] px-2 py-0.5 text-[10px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
                             默认
                           </span>
                         ) : null}
@@ -1102,7 +1085,7 @@ export function Settings() {
                           type="button"
                           onClick={() => void handleActivateAIProviderConfig(profile.id)}
                           disabled={aiProviderLoading}
-                          className="rounded-xl border border-blue-200 px-3 py-2 text-[12px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+                          className="rounded-xl border border-[#d65f2b] px-3 py-2 text-[12px] text-[#d65f2b] hover:bg-[#fff0e6] disabled:opacity-60"
                           style={{ fontWeight: 600 }}
                         >
                           设为默认
@@ -1196,19 +1179,19 @@ export function Settings() {
                       onClick={() => handleApplyAIProviderPreset(preset)}
                       className={`rounded-2xl border px-4 py-4 text-left transition-all ${
                         active
-                          ? "border-blue-200 bg-blue-50 shadow-[0_12px_24px_rgba(59,130,246,0.12)]"
+                          ? "border-[#d65f2b] bg-[#fff0e6] shadow-[0_12px_24px_rgba(214,95,43,0.12)]"
                           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className={`text-[14px] ${active ? "text-blue-700" : "text-slate-900"}`} style={{ fontWeight: 700 }}>
+                        <div className={`text-[14px] ${active ? "text-[#d65f2b]" : "text-slate-900"}`} style={{ fontWeight: 700 }}>
                           {preset.name}
                         </div>
-                        <span className={`text-[10px] ${active ? "text-blue-600" : "text-slate-400"}`} style={{ fontWeight: 700 }}>
+                        <span className={`text-[10px] ${active ? "text-[#d65f2b]" : "text-slate-400"}`} style={{ fontWeight: 700 }}>
                           {meta.tag}
                         </span>
                       </div>
-                      <div className={`mt-2 text-[11px] leading-5 ${active ? "text-blue-600" : "text-slate-500"}`}>
+                      <div className={`mt-2 text-[11px] leading-5 ${active ? "text-[#d65f2b]" : "text-slate-500"}`}>
                         {meta.hint}
                       </div>
                     </button>
@@ -1308,7 +1291,7 @@ export function Settings() {
                   type="button"
                   onClick={() => void handleTestAIProviderConfig()}
                   disabled={aiProviderLoading || aiProviderTesting}
-                  className="rounded-xl border border-blue-200 px-4 py-2.5 text-[13px] text-blue-600 hover:bg-blue-50 disabled:opacity-60"
+                  className="rounded-xl border border-[#d65f2b] px-4 py-2.5 text-[13px] text-[#d65f2b] hover:bg-[#fff0e6] disabled:opacity-60"
                   style={{ fontWeight: 500 }}
                 >
                   {aiProviderTesting ? "测试中" : "测试连接"}
@@ -1327,7 +1310,7 @@ export function Settings() {
                   type="button"
                   onClick={() => void handleSaveAIProviderConfig()}
                   disabled={aiProviderLoading}
-                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] text-white hover:bg-blue-700 disabled:bg-blue-300"
+                  className="rounded-xl bg-[#d65f2b] px-4 py-2.5 text-[13px] text-white hover:bg-[#bf4513] disabled:bg-[#e8a17e]"
                   style={{ fontWeight: 600 }}
                 >
                   {aiProviderLoading ? "保存中" : aiProviderForm.id ? "保存配置" : "添加配置"}
@@ -1688,10 +1671,6 @@ export function Settings() {
         </Dialog>
       </Section>
 
-      <Section id="content-preferences" title="内容偏好标签">
-        <TagEditor label="你偏好生成的内容形式" values={form.contentPreferences} color="purple" onChange={(values) => updateField("contentPreferences", values)} />
-      </Section>
-
         <div className="flex justify-end text-[12px] text-gray-400">
           {isDirty ? "你有未保存的修改" : "当前设置已同步到云端"}
         </div>
@@ -1733,7 +1712,7 @@ function Field({
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[13px] outline-none transition-colors focus:border-blue-300 focus:bg-white"
+        className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[13px] outline-none transition-colors focus:border-[#d65f2b] focus:bg-white"
       />
       {hint ? <div className="mt-1.5 text-[12px] leading-5 text-slate-400">{hint}</div> : null}
     </div>
@@ -1754,7 +1733,7 @@ function TagEditor({
   const [draftValue, setDraftValue] = useState("");
 
   const colorClasses = {
-    blue: "bg-blue-50 text-blue-600 hover:text-blue-800 hover:border-blue-300",
+    blue: "bg-[#fff0e6] text-[#d65f2b] hover:text-[#bf4513] hover:border-[#d65f2b]",
     green: "bg-green-50 text-green-600 hover:text-green-800 hover:border-green-300",
     red: "bg-red-50 text-red-500 hover:text-red-700 hover:border-red-300",
     purple: "bg-purple-50 text-purple-600 hover:text-purple-800 hover:border-purple-300",
@@ -1791,7 +1770,7 @@ function TagEditor({
               addTag();
             }
           }}
-          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-300 focus:bg-white transition-colors"
+          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#d65f2b] focus:bg-white transition-colors"
           placeholder="输入后回车添加"
         />
         <button
@@ -1844,13 +1823,13 @@ function DomainSelector({
               onClick={() => toggleDomain(domain)}
               className={`rounded-xl border px-3 py-3 text-left transition-colors ${
                 active
-                  ? "border-blue-200 bg-blue-50"
+                  ? "border-[#d65f2b] bg-[#fff0e6]"
                   : "border-gray-200 bg-gray-50 hover:bg-white hover:border-gray-300"
               }`}
             >
               <div className="flex items-center gap-2 text-[13px]" style={{ fontWeight: 600 }}>
                 <span>{domainConfigs[domain].icon}</span>
-                <span className={active ? "text-blue-700" : "text-gray-800"}>{domain}</span>
+                <span className={active ? "text-[#d65f2b]" : "text-gray-800"}>{domain}</span>
               </div>
               <div className="mt-1 text-[11px] leading-5 text-gray-500">{domainConfigs[domain].description}</div>
             </button>

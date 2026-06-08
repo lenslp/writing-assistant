@@ -14,6 +14,7 @@ import {
   createBody,
   createFormattingForDomain,
   createFormattingForTopicInput,
+  migrateDefaultFormattingToMinimal,
   createOutline,
   createSummary,
   defaultDrafts,
@@ -65,16 +66,30 @@ function trySetStorageItem(storage: Storage, key: string, value: string) {
 }
 
 type GenerateScope = "title" | "outline" | "body";
+type WritingTaskScope = GenerateScope | "full" | "rewrite" | "expand" | "shorten";
+
+type WritingTask = {
+  id: string;
+  draftId: string;
+  scope: WritingTaskScope;
+  label: string;
+  startedAt: string;
+  abort?: () => void;
+};
 
 type AppStoreContextValue = {
   settings: AppSettings;
   drafts: Draft[];
   topics: TopicSuggestion[];
   selectedTopic: TopicSuggestion | null;
+  writingTasks: Record<string, WritingTask>;
   saveSettings: (settings: AppSettings) => void;
   selectTopic: (topicId: string | null) => void;
   upsertTopic: (topic: TopicSuggestion) => TopicSuggestion;
+  createManualDraft: (domain?: Draft["domain"], initialDraft?: Partial<Draft>) => Draft;
   generateDraftFromTopic: (topicId: string, scope?: GenerateScope) => Draft;
+  startWritingTask: (task: Omit<WritingTask, "id" | "startedAt">) => WritingTask;
+  clearWritingTask: (draftId: string, taskId?: string) => void;
   updateDraft: (draftId: string, patch: Partial<Draft>) => void;
   updateDraftStatus: (draftId: string, status: DraftStatus) => void;
   submitDraftReview: (draftId: string, patch?: Partial<Draft>) => void;
@@ -100,10 +115,7 @@ function parseStoredValue<T>(value: string | null, fallback: T): T {
 function normalizeClientSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
-    readerJobTraits:
-      settings.readerJobTraits.trim() && settings.readerJobTraits.trim() !== "产品经理"
-        ? settings.readerJobTraits.trim()
-        : defaultSettings.readerJobTraits,
+    defaultTemplate: settings.defaultTemplate === "科技蓝" ? defaultSettings.defaultTemplate : settings.defaultTemplate,
   };
 }
 
@@ -115,7 +127,7 @@ function normalizeDraft(settings: AppSettings, draft: Draft): Draft {
     body,
     domain,
     words: calculateWords(body),
-    formatting: draft.formatting ?? createFormattingForDomain(domain, settings.defaultTemplate),
+    formatting: migrateDefaultFormattingToMinimal(draft.formatting ?? createFormattingForDomain(domain, settings.defaultTemplate)),
   };
 }
 
@@ -124,7 +136,7 @@ function normalizeTopic(topic: TopicSuggestion): TopicSuggestion {
   const storedDomain = resolveArticleDomain(topic.domain);
   return {
     ...topic,
-    domain: topic.domain && storedDomain !== "科技" ? storedDomain : inferredDomain,
+    domain: topic.domain ? storedDomain : inferredDomain,
   };
 }
 
@@ -185,6 +197,13 @@ function dedupeTopics(items: TopicSuggestion[]) {
 
 function sortDraftsByUpdatedAt(items: Draft[]) {
   return [...items].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+}
+
+function hasDraftNormalizationChanges(original: Draft, normalized: Draft) {
+  return original.body !== normalized.body ||
+    original.domain !== normalized.domain ||
+    original.words !== normalized.words ||
+    JSON.stringify(original.formatting ?? null) !== JSON.stringify(normalized.formatting ?? null);
 }
 
 function mergeDraftCollections(serverDrafts: Draft[], localDrafts: Draft[]) {
@@ -312,6 +331,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [drafts, setDrafts] = useState<Draft[]>(defaultDrafts);
   const [customTopics, setCustomTopics] = useState<TopicSuggestion[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [writingTasks, setWritingTasks] = useState<Record<string, WritingTask>>({});
 
   useEffect(() => {
     const storage = getBrowserStorage();
@@ -340,16 +360,19 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         if (draftsResponse.ok) {
           const draftsPayload = await draftsResponse.json();
+          const hasPersistedDrafts = draftsPayload.persisted === true;
           const serverDraftItems = Array.isArray(draftsPayload.items) ? (draftsPayload.items as Draft[]) : [];
           const normalizedServerDrafts = Array.isArray(draftsPayload.items)
             ? serverDraftItems.map((draft) => normalizeDraft(storedSettings, draft))
             : [];
           const normalizedLocalDrafts = storedDrafts.map((draft) => normalizeDraft(storedSettings, draft));
-          const { mergedDrafts, draftsToSync } = mergeDraftCollections(normalizedServerDrafts, normalizedLocalDrafts);
+          const { mergedDrafts, draftsToSync } = hasPersistedDrafts
+            ? { mergedDrafts: sortDraftsByUpdatedAt(normalizedServerDrafts), draftsToSync: [] }
+            : mergeDraftCollections(normalizedServerDrafts, normalizedLocalDrafts);
           const draftsToRepair = serverDraftItems
             .map((draft, index) => {
               const normalizedDraft = normalizedServerDrafts[index];
-              if (!normalizedDraft || normalizedDraft.body === draft.body) {
+              if (!normalizedDraft || !hasDraftNormalizationChanges(draft, normalizedDraft)) {
                 return null;
               }
 
@@ -372,8 +395,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         if (topicsResponse.ok) {
           const topicsPayload = await topicsResponse.json();
+          const hasPersistedTopics = topicsPayload.persisted === true;
           const serverTopics = Array.isArray(topicsPayload.items) ? (topicsPayload.items as TopicSuggestion[]).map(normalizeTopic) : [];
-          const { mergedTopics, topicsToSync } = mergeTopicCollections(serverTopics, storedCustomTopics);
+          const { mergedTopics, topicsToSync } = hasPersistedTopics
+            ? { mergedTopics: dedupeTopics(serverTopics), topicsToSync: [] }
+            : mergeTopicCollections(serverTopics, storedCustomTopics);
 
           setCustomTopics(mergedTopics);
 
@@ -390,9 +416,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
         if (appConfigResponse.ok) {
           const configPayload = await appConfigResponse.json();
+          const hasPersistedAppConfig = configPayload.persisted === true;
           const remoteConfig = configPayload.item as { settings?: AppSettings; selectedTopicId?: string | null } | null;
 
-          if (remoteConfig?.settings) {
+          if (hasPersistedAppConfig) {
+            setSettings(remoteConfig?.settings ? normalizeClientSettings(remoteConfig.settings) : defaultSettings);
+          } else if (remoteConfig?.settings) {
             setSettings(normalizeClientSettings(remoteConfig.settings));
           } else if (JSON.stringify(storedSettings) !== JSON.stringify(defaultSettings)) {
             await persistAppConfigPatch({ settings: storedSettings }).catch((error) => {
@@ -400,7 +429,9 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             });
           }
 
-          if (remoteConfig?.selectedTopicId !== undefined && remoteConfig?.selectedTopicId !== null) {
+          if (hasPersistedAppConfig) {
+            setSelectedTopicId(remoteConfig?.selectedTopicId ?? null);
+          } else if (remoteConfig?.selectedTopicId !== undefined && remoteConfig?.selectedTopicId !== null) {
             setSelectedTopicId(remoteConfig.selectedTopicId);
           } else if (storedSelectedTopicId) {
             await persistAppConfigPatch({ selectedTopicId: storedSelectedTopicId }).catch((error) => {
@@ -497,6 +528,46 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return nextTopic;
   }, [customTopics]);
 
+  const createManualDraft = useCallback((domain: Draft["domain"] = settings.contentAreas[0], initialDraft: Partial<Draft> = {}) => {
+    const normalizedDomain = resolveArticleDomain(domain);
+    const now = new Date().toISOString();
+    const body = initialDraft.body ?? "";
+    const draft: Draft = {
+      id: `manual-draft-${Date.now()}`,
+      domain: normalizedDomain,
+      title: initialDraft.title ?? "",
+      titleCandidates: initialDraft.titleCandidates ?? [],
+      selectedAngle: initialDraft.selectedAngle ?? "手动写作",
+      status: initialDraft.status ?? "待修改",
+      updatedAt: now,
+      topic: initialDraft.topic ?? "手动写作",
+      topicId: "manual-writing",
+      tags: initialDraft.tags ?? [normalizedDomain],
+      words: calculateWords(body),
+      summary: initialDraft.summary ?? "",
+      outline: initialDraft.outline ?? [],
+      body,
+      source: initialDraft.source ?? "手动创建",
+      formatting: initialDraft.formatting ?? createFormattingForDomain(normalizedDomain, settings.defaultTemplate),
+      publishedAt: initialDraft.publishedAt,
+      publishedChannel: initialDraft.publishedChannel,
+      lastExportedAt: initialDraft.lastExportedAt,
+      lastExportFormat: initialDraft.lastExportFormat,
+    };
+
+    setDrafts((currentDrafts) => [draft, ...currentDrafts]);
+    setSelectedTopicId(null);
+
+    void Promise.all([
+      persistDraftSnapshot(draft),
+      persistAppConfigPatch({ selectedTopicId: null }),
+    ]).catch((error) => {
+      console.error("Failed to create manual draft:", error);
+    });
+
+    return draft;
+  }, [settings.contentAreas, settings.defaultTemplate]);
+
   const generateDraftFromTopic = useCallback(
     (topicId: string, scope: GenerateScope = "body") => {
       const topic = allTopics.find((item) => item.id === topicId);
@@ -542,6 +613,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     },
     [allTopics, drafts, settings],
   );
+
+  const startWritingTask = useCallback((task: Omit<WritingTask, "id" | "startedAt">) => {
+    const nextTask: WritingTask = {
+      ...task,
+      id: `writing-task-${task.draftId}-${Date.now()}`,
+      startedAt: new Date().toISOString(),
+    };
+
+    setWritingTasks((currentTasks) => ({
+      ...currentTasks,
+      [task.draftId]: nextTask,
+    }));
+
+    return nextTask;
+  }, []);
+
+  const clearWritingTask = useCallback((draftId: string, taskId?: string) => {
+    setWritingTasks((currentTasks) => {
+      const existingTask = currentTasks[draftId];
+      if (!existingTask || (taskId && existingTask.id !== taskId)) {
+        return currentTasks;
+      }
+
+      const nextTasks = { ...currentTasks };
+      delete nextTasks[draftId];
+      return nextTasks;
+    });
+  }, []);
 
   const updateDraft = useCallback((draftId: string, patch: Partial<Draft>) => {
     const existingDraft = drafts.find((draft) => draft.id === draftId);
@@ -669,10 +768,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       drafts,
       topics: allTopics,
       selectedTopic,
+      writingTasks,
       saveSettings,
       selectTopic,
       upsertTopic,
+      createManualDraft,
       generateDraftFromTopic,
+      startWritingTask,
+      clearWritingTask,
       updateDraft,
       updateDraftStatus,
       submitDraftReview,
@@ -686,16 +789,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       deleteDraft,
       duplicateDraft,
       drafts,
+      createManualDraft,
       generateDraftFromTopic,
       getDraftById,
       allTopics,
+      clearWritingTask,
       saveSettings,
       selectTopic,
       selectedTopic,
       settings,
+      startWritingTask,
       upsertTopic,
       updateDraft,
       updateDraftStatus,
+      writingTasks,
       submitDraftReview,
       returnDraftToEditing,
       publishDraft,

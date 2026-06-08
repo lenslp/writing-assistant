@@ -1,29 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  TrendingUp, Plus, Flame, Search, RefreshCw,
-  ArrowUpDown, AlertCircle, LoaderCircle
+  Plus, Flame, Search, RefreshCw,
+  ArrowUpDown, AlertCircle, LoaderCircle, X, ExternalLink, Clock
 } from "lucide-react";
-import { AreaChart, Area, ResponsiveContainer } from "recharts";
 import { useAppStore } from "../providers/app-store";
 import { type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
-import { articleDomains, type ArticleDomain } from "../lib/content-domains";
+import {
+  articleDomains,
+  detectArticleDomainWithSignals,
+  resolveArticleDomain,
+  type ActiveArticleDomain,
+} from "../lib/content-domains";
 import { Skeleton } from "./ui/skeleton";
 
-const trendData = Array.from({ length: 12 }, (_, i) => ({ v: Math.random() * 100 + 20 }));
 const loadingStages = ["连接热点源", "聚合平台数据", "整理可写选题"];
 const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache:v2";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
-const HOT_TOPICS_MIXED_PAGE_SIZE = 50;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
-const SOURCE_PRIORITY = ["微博", "Twitter/X", "GitHub Trending", "知乎", "抖音", "百度", "今日头条"] as const;
-const DOMAIN_ORDER = new Map<ArticleDomain, number>(articleDomains.map((domain, index) => [domain, index]));
-type HotTopicCategory = ArticleDomain | "GitHub Trending";
-const GITHUB_CATEGORY = "GitHub Trending" as const;
-const GITHUB_CATEGORY_ORDER = -1;
+const SOURCE_PRIORITY = ["AI HOT", "GitHub Trending", "36氪", "爱范儿", "少数派", "微博", "抖音", "知乎", "今日头条", "百度"] as const;
+const AI_TOPIC_PATTERN = /(ai|aigc|gpt|openai|claude|gemini|deepseek|agent|copilot|llm|mcp|人工智能|大模型|智能体|生成式|机器学习|深度学习|自动驾驶|人形机器人|豆包|kimi|千问|文心|星火|智谱|minimax|海螺|sora|runway|midjourney|llama|token)/i;
+const AI_SOURCE_PATTERN = /(AI HOT|GitHub Trending|36氪|爱范儿|少数派|虎嗅|openai|anthropic|github|nvidia)/i;
 
 type HotTopicsCachePayload = {
   items: HotTopicItem[];
@@ -109,27 +109,62 @@ function formatFailedSourceWarning(failedSources: unknown, baseMessage = "") {
   return `${prefix}部分来源抓取失败：${entries.join("；")}`;
 }
 
+function resolveDisplayDomain(topic: HotTopicItem): ActiveArticleDomain | null {
+  const isExplicitActiveDomain = topic.domain && (articleDomains as readonly string[]).includes(topic.domain);
+  const explicitDomain = isExplicitActiveDomain ? (topic.domain as ActiveArticleDomain) : null;
+  const text = `${topic.title} ${topic.source} ${topic.tags.join(" ")} ${topic.summary ?? ""}`;
+
+  // Weibo is never AI
+  if (topic.source === "微博") {
+    const signal = detectArticleDomainWithSignals(topic.title, topic.tags, topic.source, topic.summary ?? "");
+    const resolvedSignalDomain = (articleDomains as readonly string[]).includes(signal.domain) ? (signal.domain as ActiveArticleDomain) : null;
+    if (resolvedSignalDomain && signal.confidence !== "low") {
+      return resolvedSignalDomain;
+    }
+    return null;
+  }
+
+  if (explicitDomain) {
+    return explicitDomain;
+  }
+
+  const PURE_AI_SOURCE_PATTERN = /(AI HOT|GitHub Trending|openai|anthropic|github|nvidia)/i;
+  const fastPathText = `${topic.title} ${topic.source} ${topic.tags.join(" ")}`;
+
+  if (PURE_AI_SOURCE_PATTERN.test(topic.source) || AI_TOPIC_PATTERN.test(fastPathText)) {
+    return "AI";
+  }
+
+  const signal = detectArticleDomainWithSignals(topic.title, topic.tags, topic.source, topic.summary ?? "");
+  const resolvedSignalDomain = (articleDomains as readonly string[]).includes(signal.domain) ? (signal.domain as ActiveArticleDomain) : null;
+  if (resolvedSignalDomain && signal.confidence !== "low") {
+    return resolvedSignalDomain;
+  }
+
+  return null;
+}
+
 function HotTopicsLoadingShell() {
   return (
-    <div className="max-w-[1200px] mx-auto space-y-5">
+    <div className="mx-auto max-w-[1200px] space-y-5">
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <Skeleton className="h-7 w-28 rounded-lg bg-blue-100/80" />
-          <Skeleton className="h-4 w-72 rounded-lg bg-gray-100" />
+          <Skeleton className="h-7 w-28 rounded-lg bg-[#fff0e6]" />
+          <Skeleton className="h-4 w-72 rounded-lg bg-[#f1eadf]" />
         </div>
-        <div className="rounded-2xl border border-blue-100 bg-linear-to-r from-blue-50 via-cyan-50 to-sky-50 px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2 text-[13px] text-blue-700" style={{ fontWeight: 600 }}>
+        <div className="rounded-2xl border border-[#f0dfd0] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_100%)] px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2 text-[13px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
             <LoaderCircle className="h-4 w-4 animate-spin" />
             热点数据准备中
           </div>
-          <div className="mt-1.5 text-[12px] text-blue-600/80">正在连接微博、GitHub Trending、抖音、百度等来源，首次加载会稍慢一点。</div>
+          <div className="mt-1.5 text-[12px] text-[#8c8178]">正在连接微博、GitHub Trending、抖音、百度等来源，首次加载会稍慢一点。</div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="lens-card p-4">
         <div className="grid gap-3 md:grid-cols-[1.2fr_0.9fr]">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-[12px] text-gray-500">
+            <div className="flex items-center gap-2 text-[12px] text-[#8c8178]">
               <Skeleton className="h-4 w-4 rounded-full" />
               <Skeleton className="h-4 w-44 rounded-lg" />
             </div>
@@ -146,18 +181,18 @@ function HotTopicsLoadingShell() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
-            <div className="text-[12px] text-gray-500">加载阶段</div>
+          <div className="rounded-2xl border border-[#f0e5da] bg-[#fffaf5] p-4">
+            <div className="text-[12px] text-[#8c8178]">加载阶段</div>
             <div className="mt-3 space-y-3">
               {loadingStages.map((stage, index) => (
                 <div key={stage} className="flex items-center gap-3">
                   <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] ${
-                    index === 0 ? "bg-blue-600 text-white" : "bg-white text-gray-400"
+                    index === 0 ? "bg-[#d65f2b] text-white" : "bg-white text-[#8c8178]"
                   }`} style={{ fontWeight: 600 }}>
                     {index + 1}
                   </div>
                   <div className="flex-1">
-                    <div className="text-[12px] text-gray-700" style={{ fontWeight: 500 }}>{stage}</div>
+                    <div className="text-[12px] text-[#5d544c]" style={{ fontWeight: 600 }}>{stage}</div>
                     <Skeleton className="mt-1 h-2 w-full rounded-full" />
                   </div>
                 </div>
@@ -167,8 +202,8 @@ function HotTopicsLoadingShell() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-        <div className="grid grid-cols-[1fr_100px_90px_90px_140px] border-b border-gray-100 px-5 py-2.5">
+      <div className="overflow-hidden rounded-2xl border border-[#eadfd4] bg-white shadow-sm">
+        <div className="grid grid-cols-[1fr_100px_90px_90px_140px] border-b border-[#f0e5da] px-5 py-2.5">
           {Array.from({ length: 5 }).map((_, index) => (
             <Skeleton key={`header-${index}`} className="h-4 w-16 rounded-md" />
           ))}
@@ -203,10 +238,9 @@ function HotTopicsLoadingShell() {
 }
 
 export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData }) {
-  const [activeSource, setActiveSource] = useState("全部");
-  const [activeCategory, setActiveCategory] = useState("全部");
+  const [activeCategory, setActiveCategory] = useState<ActiveArticleDomain>("AI");
+  const [activeSource, setActiveSource] = useState("");
   const [sortMode, setSortMode] = useState<"heat" | "trend">("heat");
-  const [viewMode, setViewMode] = useState<"mixed" | "grouped">("mixed");
   const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<HotTopicItem[]>(initialData?.items ?? []);
   const [dataSource, setDataSource] = useState<"database" | "live">(initialData?.source ?? "live");
@@ -215,14 +249,14 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshWarning, setRefreshWarning] = useState("");
   const [restrictedCount, setRestrictedCount] = useState(initialData?.restrictedCount ?? 0);
-  const [mixedPage, setMixedPage] = useState(1);
   const [groupedPages, setGroupedPages] = useState<Record<string, number>>({});
   const [isReclassifying, setIsReclassifying] = useState(false);
+  const [detailTopic, setDetailTopic] = useState<HotTopicItem | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { settings, upsertTopic } = useAppStore();
+  const { upsertTopic } = useAppStore();
 
-  const sortSourceOptions = (sources: string[]) =>
+  const sortSourceOptions = useCallback((sources: string[]) =>
     [...sources].sort((left, right) => {
       const leftPriority = SOURCE_PRIORITY.indexOf(left as typeof SOURCE_PRIORITY[number]);
       const rightPriority = SOURCE_PRIORITY.indexOf(right as typeof SOURCE_PRIORITY[number]);
@@ -234,7 +268,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       if (leftPriority === -1) return 1;
       if (rightPriority === -1) return -1;
       return leftPriority - rightPriority;
-    });
+    }), []);
 
   useEffect(() => {
     const cachedPayload = readHotTopicsCache();
@@ -299,17 +333,10 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
   const topicDomainMap = useMemo(
     () =>
-      new Map<string, HotTopicCategory>(
-        items.map((topic) => [
-          topic.id,
-          topic.source === GITHUB_CATEGORY ? GITHUB_CATEGORY : (topic.domain ?? "其他"),
-        ]),
+      new Map<string, ActiveArticleDomain | null>(
+        items.map((topic) => [topic.id, resolveDisplayDomain(topic)]),
       ),
     [items],
-  );
-  const techTopicCount = useMemo(
-    () => items.filter((topic) => topicDomainMap.get(topic.id) === "科技").length,
-    [items, topicDomainMap],
   );
 
   const sortTopics = (topicItems: HotTopicItem[]) =>
@@ -324,65 +351,72 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
     () =>
       sortTopics(
         items.filter((topic) => {
-          const matchesSource = activeSource === "全部" ? true : topic.source === activeSource;
-          const matchesCategory = activeCategory === "全部" ? true : topicDomainMap.get(topic.id) === activeCategory;
+          const matchesCategory = topicDomainMap.get(topic.id) === activeCategory;
+          const matchesSource = activeSource ? topic.source === activeSource : true;
           const matchesKeyword = keyword
             ? topic.title.includes(keyword) || topic.tags.some((tag) => tag.includes(keyword))
             : true;
-          return matchesSource && matchesCategory && matchesKeyword;
+          return matchesCategory && matchesSource && matchesKeyword;
         }),
       ),
     [activeCategory, activeSource, items, keyword, sortMode, topicDomainMap],
   );
   const groupedTopics = useMemo(() => {
-    const grouped = new Map<string, HotTopicItem[]>();
+    const grouped = new Map<ActiveArticleDomain, HotTopicItem[]>(
+      articleDomains.map((domain) => [domain, []]),
+    );
 
     filteredTopics.forEach((topic) => {
-      const group = grouped.get(topic.source) ?? [];
+      const domain = topicDomainMap.get(topic.id) ?? "AI";
+      const group = grouped.get(domain) ?? [];
       group.push(topic);
-      grouped.set(topic.source, group);
+      grouped.set(domain, group);
     });
 
-    return sortSourceOptions(Array.from(grouped.keys())).map((source) => ({
-      source,
-      items: sortTopics(grouped.get(source) ?? []),
-    }));
-  }, [filteredTopics, sortMode]);
-  const sourceOptions = useMemo(
-    () => ["全部", ...sortSourceOptions(Array.from(new Set(items.map((item) => item.source))))],
-    [items],
-  );
-  const categoryOptions = useMemo(
-    () => [
-      "全部",
-      ...Array.from(new Set<HotTopicCategory>([...settings.contentAreas, ...Array.from(topicDomainMap.values())]))
-        .sort((left, right) => {
-          const leftOrder = left === GITHUB_CATEGORY ? GITHUB_CATEGORY_ORDER : (DOMAIN_ORDER.get(left) ?? 999);
-          const rightOrder = right === GITHUB_CATEGORY ? GITHUB_CATEGORY_ORDER : (DOMAIN_ORDER.get(right) ?? 999);
-          return leftOrder - rightOrder;
-        }),
-    ],
-    [settings.contentAreas, topicDomainMap],
-  );
+    return articleDomains
+      .map((domain) => ({
+        domain,
+        items: sortTopics(grouped.get(domain) ?? []),
+      }))
+      .filter((section) => section.items.length);
+  }, [filteredTopics, sortMode, topicDomainMap]);
   const refreshStage = loadingStages[Math.min(loadingStages.length - 1, Math.floor((items.length || 0) / 10))];
-  const mixedTotalPages = Math.max(1, Math.ceil(filteredTopics.length / HOT_TOPICS_MIXED_PAGE_SIZE));
-  const mixedVisibleTopics = useMemo(
-    () => filteredTopics.slice((mixedPage - 1) * HOT_TOPICS_MIXED_PAGE_SIZE, mixedPage * HOT_TOPICS_MIXED_PAGE_SIZE),
-    [filteredTopics, mixedPage],
-  );
+  const categoryOptions = useMemo(() => [...articleDomains], []);
+  const sourceOptions = useMemo(() => {
+    const categorySources = items
+      .filter((topic) => topicDomainMap.get(topic.id) === activeCategory)
+      .map((topic) => topic.source);
+    return sortSourceOptions(Array.from(new Set(categorySources)));
+  }, [activeCategory, items, sortSourceOptions, topicDomainMap]);
 
   useEffect(() => {
-    setMixedPage(1);
     setGroupedPages({});
-  }, [activeSource, activeCategory, keyword, sortMode, viewMode, items]);
+  }, [activeCategory, activeSource, keyword, sortMode, items]);
+
+  useEffect(() => {
+    if (!sourceOptions.length) {
+      setActiveSource("");
+      return;
+    }
+
+    if (!sourceOptions.includes(activeSource)) {
+      setActiveSource(sourceOptions[0]);
+    }
+  }, [activeSource, sourceOptions]);
 
   useEffect(() => {
     const nextCategory = searchParams.get("category");
+    if (!nextCategory) return;
 
-    if (nextCategory && categoryOptions.includes(nextCategory)) {
-      setActiveCategory(nextCategory);
+    const normalizedCategory = resolveArticleDomain(nextCategory);
+    if (articleDomains.includes(normalizedCategory)) {
+      setActiveCategory(normalizedCategory);
+      setGroupedPages((current) => ({
+        ...current,
+        [normalizedCategory]: 1,
+      }));
     }
-  }, [categoryOptions, searchParams]);
+  }, [searchParams]);
 
   const openTopic = (topic: HotTopicItem, mode: "topic" | "writing") => {
     const topicId = upsertTopic(buildTopicSuggestionFromHotTopic(topic)).id;
@@ -489,71 +523,39 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   }
 
   return (
-    <div className="max-w-[1200px] mx-auto space-y-5">
+    <div className="mx-auto max-w-[1200px] space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[20px]" style={{ fontWeight: 600 }}>热点中心</h1>
-          <p className="text-[13px] text-gray-500 mt-1">聚合多平台热点，方便按来源、领域和关键词筛选可写内容</p>
+          <h1 className="lens-title text-[20px]">热点中心</h1>
+          <p className="mt-1 text-[13px] text-[#8c8178]">聚合多来源热点，先筛出值得写的选题。</p>
         </div>
         <div className="flex items-center gap-2">
           {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
           <button
             onClick={handleRefresh}
             disabled={isRefreshing || isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+            className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-2 text-[13px]"
+            style={{ fontWeight: 800 }}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
             {isRefreshing ? "刷新中" : "抓取热点"}
           </button>
-          <button
-            onClick={handleReclassify}
-            disabled={isReclassifying || isRefreshing || isLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isReclassifying ? "animate-spin" : ""}`} />
-            {isReclassifying ? "归类中" : "重新归类"}
-          </button>
-          <button
-            onClick={() => setSortMode((current) => (current === "heat" ? "trend" : "heat"))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-[13px] text-gray-600 hover:bg-gray-50"
-          >
-            <ArrowUpDown className="w-3.5 h-3.5" />
-            按{sortMode === "heat" ? "热度" : "增速"}排序
-          </button>
-          <div className="flex items-center rounded-lg border border-gray-200 bg-white p-0.5">
-            <button
-              onClick={() => setViewMode("grouped")}
-              className={`rounded-md px-2.5 py-1 text-[12px] transition-colors ${
-                viewMode === "grouped" ? "bg-blue-600 text-white" : "text-gray-500 hover:bg-gray-50"
-              }`}
-            >
-              按平台分组
-            </button>
-            <button
-              onClick={() => setViewMode("mixed")}
-              className={`rounded-md px-2.5 py-1 text-[12px] transition-colors ${
-                viewMode === "mixed" ? "bg-blue-600 text-white" : "text-gray-500 hover:bg-gray-50"
-              }`}
-            >
-              综合混排
-            </button>
-          </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
+      <div className="lens-card space-y-3 p-4">
         {isRefreshing ? (
-          <div className="rounded-xl border border-blue-100 bg-linear-to-r from-blue-50 via-cyan-50 to-sky-50 px-4 py-3">
-            <div className="flex items-center gap-2 text-[13px] text-blue-700" style={{ fontWeight: 600 }}>
+          <div className="rounded-xl border border-[#f0dfd0] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_100%)] px-4 py-3">
+            <div className="flex items-center gap-2 text-[13px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
               <LoaderCircle className="h-4 w-4 animate-spin" />
               正在抓取最新热点并同步选题
             </div>
-            <div className="mt-1 text-[12px] text-blue-600/80">
+            <div className="mt-1 text-[12px] text-[#8c8178]">
               当前阶段：{refreshStage}，完成后会自动更新列表和选题池。
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
-              <div className="h-full w-1/2 animate-pulse rounded-full bg-linear-to-r from-blue-500 via-cyan-500 to-sky-500" />
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-[#d65f2b]" />
             </div>
           </div>
         ) : null}
@@ -563,46 +565,46 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             {refreshWarning}
           </div>
         ) : null}
-        <div className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 border border-transparent focus-within:border-blue-200 focus-within:bg-white">
-          <Search className="w-4 h-4 text-gray-400" />
+        <div className="lens-input flex items-center gap-2 px-3 py-2">
+          <Search className="w-4 h-4 text-[#9a9086]" />
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             type="text"
             placeholder="搜索热点关键词..."
-            className="bg-transparent border-none outline-none text-[13px] w-full placeholder:text-gray-400"
+            className="w-full border-none bg-transparent text-[13px] text-[#181715] outline-none placeholder:text-[#9a9086]"
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">来源</span>
+          <span className="w-12 flex-shrink-0 text-[12px] text-[#8c8178]">领域</span>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {sourceOptions.map(s => (
+            {categoryOptions.map((category) => (
               <button
-                key={s}
-                onClick={() => setActiveSource(s)}
+                key={category}
+                onClick={() => setActiveCategory(category)}
                 className={`px-3 py-1 rounded-full text-[12px] transition-colors ${
-                  activeSource === s ? "bg-blue-600 text-white" : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  activeCategory === category ? "lens-chip-active" : "lens-chip"
                 }`}
-                style={{ fontWeight: 500 }}
+                style={{ fontWeight: 700 }}
               >
-                {s}
+                {category}
               </button>
             ))}
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[12px] text-gray-400 w-12 flex-shrink-0">领域</span>
+          <span className="w-12 flex-shrink-0 text-[12px] text-[#8c8178]">数据源</span>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {categoryOptions.map(c => (
+            {sourceOptions.map((source) => (
               <button
-                key={c}
-                onClick={() => setActiveCategory(c)}
+                key={source}
+                onClick={() => setActiveSource(source)}
                 className={`px-3 py-1 rounded-full text-[12px] transition-colors ${
-                  activeCategory === c ? "bg-blue-600 text-white" : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  activeSource === source ? "bg-[#181715] text-white" : "lens-chip"
                 }`}
-                style={{ fontWeight: 500 }}
+                style={{ fontWeight: 700 }}
               >
-                {c}
+                {source}
               </button>
             ))}
           </div>
@@ -610,171 +612,62 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       </div>
 
       {/* Topics list */}
-      {viewMode === "mixed" ? (
-        <div className="bg-white rounded-xl border border-gray-100">
-          <div className="grid grid-cols-[1fr_100px_90px_90px_140px] px-5 py-2.5 border-b border-gray-100 text-[12px] text-gray-400" style={{ fontWeight: 500 }}>
-            <span>热点标题</span>
-            <span>来源</span>
-            <span>热度</span>
-            <span>趋势</span>
-            <span className="text-right">操作</span>
-          </div>
-          <div className={`divide-y divide-gray-50 transition-opacity ${isRefreshing ? "opacity-80" : "opacity-100"}`}>
-            {mixedVisibleTopics.length ? mixedVisibleTopics.map((t, i) => (
-              <div key={`${t.source}-${t.id}`} className="grid grid-cols-[1fr_100px_90px_90px_140px] items-center px-5 py-3 hover:bg-gray-50/50 transition-colors group">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className={`w-6 h-6 rounded flex items-center justify-center text-[11px] flex-shrink-0 ${
-                    i + (mixedPage - 1) * HOT_TOPICS_MIXED_PAGE_SIZE < 3 ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-500"
-                  }`} style={{ fontWeight: 600 }}>{i + 1 + (mixedPage - 1) * HOT_TOPICS_MIXED_PAGE_SIZE}</span>
-                  <div className="min-w-0">
-                    <button
-                      onClick={() => openTopic(t, "topic")}
-                      className="text-[13px] truncate group-hover:text-blue-600 transition-colors cursor-pointer text-left w-full"
-                      style={{ fontWeight: 500 }}
-                    >
-                      {t.title}
-                    </button>
-                    <div className="flex items-center gap-1 mt-1">
-                      {t.tags.map(tag => (
-                        <span key={tag} className="text-[10px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">{tag}</span>
-                      ))}
-                      <span className="text-[10px] text-gray-400 ml-1">{t.time}</span>
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[12px] text-gray-500 bg-gray-50 px-2 py-0.5 rounded w-fit">{t.source}</span>
-                <div className="flex items-center gap-1">
-                  <Flame className="w-3.5 h-3.5 text-orange-400" />
-                  <span className="text-[13px]" style={{ fontWeight: 500 }}>{t.heat.toLocaleString()}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-14 h-6">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={trendData}>
-                        <Area type="monotone" dataKey="v" stroke="#3b82f6" fill="#dbeafe" strokeWidth={1.5} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <span className="text-[11px] text-green-600" style={{ fontWeight: 500 }}>{t.trend}</span>
-                </div>
-                <div className="flex items-center justify-end gap-1.5">
-                  <button
-                    onClick={() => openTopic(t, "topic")}
-                    className="text-[11px] text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
-                  >
-                    详情
-                  </button>
-                  <button
-                    onClick={() => openTopic(t, "topic")}
-                    className="text-[11px] text-gray-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-blue-50 transition-colors flex items-center gap-0.5"
-                  >
-                    <Plus className="w-3 h-3" />选题
-                  </button>
-                  <button
-                    onClick={() => openTopic(t, "writing")}
-                    className="text-[11px] text-white bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded transition-colors"
-                  >
-                    生成
-                  </button>
-                </div>
-              </div>
-            )) : (
-              <div className="px-5 py-12 text-center">
-                <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>没有匹配到热点</div>
-                <div className="text-[12px] text-gray-400 mt-1">先点击上方“抓取热点”，或调整来源、领域与关键词。</div>
-              </div>
-            )}
-          </div>
-          {filteredTopics.length > HOT_TOPICS_MIXED_PAGE_SIZE ? (
-            <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
-              <div className="text-[12px] text-gray-400">
-                第 {mixedPage} / {mixedTotalPages} 页 · 共 {filteredTopics.length} 条
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setMixedPage((current) => Math.max(1, current - 1))}
-                  disabled={mixedPage === 1}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  上一页
-                </button>
-                <button
-                  onClick={() => setMixedPage((current) => Math.min(mixedTotalPages, current + 1))}
-                  disabled={mixedPage === mixedTotalPages}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  下一页
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : groupedTopics.length ? (
-        <div className="grid items-stretch gap-4 md:grid-cols-2">
-          {groupedTopics.map(({ source, items: sourceItems }) => {
+      {groupedTopics.length ? (
+        <div className="grid grid-cols-1 items-stretch gap-4">
+          {groupedTopics.map(({ domain, items: sourceItems }) => {
             const totalPages = Math.max(1, Math.ceil(sourceItems.length / HOT_TOPICS_GROUPED_PAGE_SIZE));
-            const currentPage = Math.min(groupedPages[source] ?? 1, totalPages);
+            const currentPage = Math.min(groupedPages[domain] ?? 1, totalPages);
             const visibleItems = sourceItems.slice(
               (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE,
               currentPage * HOT_TOPICS_GROUPED_PAGE_SIZE,
             );
 
             return (
-            <div key={source} className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.04)]">
-              <div className="flex items-center justify-between border-b border-gray-100 bg-linear-to-r from-slate-50 via-white to-white px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-blue-50 px-3 py-1 text-[12px] text-blue-600" style={{ fontWeight: 600 }}>
-                    {source}
-                  </span>
-                  <span className="text-[12px] text-gray-400">第 {currentPage} / {totalPages} 页 · 共 {sourceItems.length} 条</span>
-                </div>
-              </div>
-              <div className="flex-1 divide-y divide-gray-50">
+              <div key={domain} className="flex h-full flex-col overflow-hidden rounded-[22px] border border-[#eadfd4] bg-white/86 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+                <div className="flex-1 divide-y divide-[#f0e5da]">
                 {visibleItems.map((topic, index) => (
-                  <div key={topic.id} className="min-h-[128px] px-5 py-4 transition-colors hover:bg-slate-50/70">
-                    <div className="flex min-h-full items-start gap-3">
+                  <div key={topic.id} className="px-5 py-4 transition-colors hover:bg-[#fffaf5]">
+                    <div className="flex items-center gap-4">
                       <span className={`mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[14px] text-[13px] shadow-sm ${
-                        index + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE < 3 ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-500"
-                      }`} style={{ fontWeight: 600 }}>
+                        index + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE < 3 ? "bg-[#d65f2b] text-white" : "bg-[#f1eadf] text-[#8c8178]"
+                      }`} style={{ fontWeight: 800 }}>
                         {index + 1 + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE}
                       </span>
-                      <div className="flex min-h-full min-w-0 flex-1 flex-col">
-                        <button
-                          onClick={() => openTopic(topic, "topic")}
-                          className="line-clamp-2 self-start text-left text-[14px] leading-6 text-slate-800 transition-colors hover:text-blue-600"
-                          style={{ fontWeight: 500 }}
-                        >
-                          {topic.title}
-                        </button>
-                        <div className="mt-3 flex min-h-[32px] flex-wrap items-center gap-x-3 gap-y-2">
+                      <div className="grid min-w-0 flex-1 grid-cols-[minmax(260px,1fr)_minmax(320px,0.9fr)_auto] items-center gap-4">
+                        <div className="min-w-0">
+                          <button
+                            onClick={() => openTopic(topic, "topic")}
+                            className="line-clamp-2 self-start text-left text-[14px] leading-6 text-[#181715] transition-colors hover:text-[#d65f2b]"
+                            style={{ fontWeight: 700 }}
+                          >
+                            {topic.title}
+                          </button>
+                        </div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-1 text-[12px] text-slate-500">
                             <Flame className="h-3.5 w-3.5 text-orange-400" />
                             {topic.heat.toLocaleString()}
                           </div>
                           <span className="text-[12px] text-emerald-600" style={{ fontWeight: 600 }}>{topic.trend}</span>
-                          <span className="text-[12px] text-gray-400">{topic.time}</span>
-                          {topic.tags.slice(0, 2).map((tag) => (
-                            <span key={`${topic.id}-${tag}`} className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600">
-                              {tag}
-                            </span>
-                          ))}
+                          <span className="text-[12px] text-[#8c8178]">{topic.time}</span>
                         </div>
-                        <div className="mt-auto flex items-center gap-2 pt-3">
+                        <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => openTopic(topic, "topic")}
-                            className="rounded-lg border border-transparent px-2.5 py-1.5 text-[12px] text-gray-500 transition-colors hover:border-blue-100 hover:bg-blue-50 hover:text-blue-600"
+                            onClick={() => setDetailTopic(topic)}
+                            className="lens-btn-secondary px-3 py-1.5 text-[12px] shadow-xs"
                           >
                             详情
                           </button>
                           <button
                             onClick={() => openTopic(topic, "topic")}
-                            className="flex items-center gap-0.5 rounded-lg border border-transparent px-2.5 py-1.5 text-[12px] text-gray-500 transition-colors hover:border-blue-100 hover:bg-blue-50 hover:text-blue-600"
+                            className="lens-btn-secondary flex items-center gap-1 px-3 py-1.5 text-[12px] shadow-xs"
                           >
-                            <Plus className="h-3 w-3" />选题
+                            <Plus className="h-3.5 w-3.5" />选题
                           </button>
                           <button
                             onClick={() => openTopic(topic, "writing")}
-                            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] text-white shadow-sm transition-colors hover:bg-blue-700"
+                            className="lens-btn-primary px-3.5 py-1.5 text-[12px]"
+                            style={{ fontWeight: 800 }}
                           >
                             生成
                           </button>
@@ -785,28 +678,28 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                 ))}
               </div>
               {sourceItems.length > HOT_TOPICS_GROUPED_PAGE_SIZE ? (
-                <div className="flex items-center justify-between border-t border-gray-100 bg-slate-50/60 px-4 py-3">
-                  <span className="text-[12px] text-gray-400">
-                    每页 10 条
+                <div className="flex items-center justify-between border-t border-[#f0e5da] bg-[#fffaf5] px-4 py-3">
+                  <span className="text-[12px] text-[#8c8178]">
+                    共 {sourceItems.length} 条 · 第 {currentPage} / {totalPages} 页
                   </span>
                   <div className="flex items-center gap-2">
                   <button
                     onClick={() => setGroupedPages((current) => ({
                       ...current,
-                      [source]: Math.max(1, currentPage - 1),
+                      [domain]: Math.max(1, currentPage - 1),
                     }))}
                     disabled={currentPage === 1}
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="lens-btn-secondary px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     上一页
                   </button>
                   <button
                     onClick={() => setGroupedPages((current) => ({
                       ...current,
-                      [source]: Math.min(totalPages, currentPage + 1),
+                      [domain]: Math.min(totalPages, currentPage + 1),
                     }))}
                     disabled={currentPage === totalPages}
-                    className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-600 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="lens-btn-secondary px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     下一页
                   </button>
@@ -818,9 +711,106 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           })}
         </div>
       ) : (
-        <div className="rounded-xl border border-gray-100 bg-white px-5 py-12 text-center">
-          <div className="text-[14px] text-gray-800" style={{ fontWeight: 600 }}>没有匹配到热点</div>
-          <div className="text-[12px] text-gray-400 mt-1">先点击上方“抓取热点”，或调整来源、领域与关键词。</div>
+        <div className="lens-card px-5 py-12 text-center">
+          <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>没有匹配到热点</div>
+          <div className="mt-1 text-[12px] text-[#8c8178]">先点击上方“抓取热点”，或调整关键词。</div>
+        </div>
+      )}
+
+      {/* Hot topic detail modal */}
+      {detailTopic && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setDetailTopic(null)}
+        >
+          <div
+            className="relative mx-4 w-full max-w-lg rounded-[22px] border border-[#eadfd4] bg-white shadow-[0_24px_80px_rgba(85,57,34,0.16)] animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 border-b border-[#f0e5da] px-6 py-4">
+              <h2 className="text-[16px] leading-6 text-[#181715]" style={{ fontWeight: 800 }}>
+                {detailTopic.title}
+              </h2>
+              <button
+                onClick={() => setDetailTopic(null)}
+                className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[#8c8178] transition-colors hover:bg-[#fff7ef] hover:text-[#d65f2b]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="space-y-4 px-6 py-5">
+              {/* Meta row */}
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="rounded-full bg-[#fff0e6] px-2.5 py-1 text-[12px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+                  {detailTopic.source}
+                </span>
+                <div className="flex items-center gap-1 text-[12px] text-[#6f665d]">
+                  <Flame className="h-3.5 w-3.5 text-orange-400" />
+                  热度 {detailTopic.heat.toLocaleString()}
+                </div>
+                <span className="text-[12px] text-emerald-600" style={{ fontWeight: 600 }}>
+                  {detailTopic.trend}
+                </span>
+                <div className="flex items-center gap-1 text-[12px] text-[#8c8178]">
+                  <Clock className="h-3.5 w-3.5" />
+                  {detailTopic.time}
+                </div>
+              </div>
+
+              {/* Summary */}
+              {detailTopic.summary ? (
+                <div className="rounded-xl bg-[#fffaf5] px-4 py-3">
+                  <div className="mb-1.5 text-[12px] text-[#8c8178]" style={{ fontWeight: 700 }}>摘要</div>
+                  <p className="whitespace-pre-line text-[13px] leading-6 text-[#5d544c]">
+                    {detailTopic.summary}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-[#fffaf5] px-4 py-3 text-[13px] text-[#8c8178]">
+                  暂无摘要信息
+                </div>
+              )}
+
+              {/* External link */}
+              {detailTopic.url && (
+                <a
+                  href={detailTopic.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-[12px] text-[#d65f2b] transition-colors hover:text-[#bf4513]"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  查看原文
+                </a>
+              )}
+            </div>
+
+            {/* Footer actions */}
+            <div className="flex items-center justify-end gap-2 border-t border-[#f0e5da] px-6 py-3">
+              <button
+                onClick={() => {
+                  openTopic(detailTopic, "topic");
+                  setDetailTopic(null);
+                }}
+                className="lens-btn-secondary flex items-center gap-1 px-3.5 py-1.5 text-[12px]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                加入选题
+              </button>
+              <button
+                onClick={() => {
+                  openTopic(detailTopic, "writing");
+                  setDetailTopic(null);
+                }}
+                className="lens-btn-primary px-3.5 py-1.5 text-[12px]" style={{ fontWeight: 800 }}
+              >
+                直接生成
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

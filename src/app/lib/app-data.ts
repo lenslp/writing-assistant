@@ -63,10 +63,6 @@ export type AppSettings = {
   accountName: string;
   accountPosition: string;
   contentAreas: ArticleDomain[];
-  readerAgeRange: string;
-  readerJobTraits: string;
-  readerNeeds: string;
-  toneKeywords: string[];
   bannedTopics: string[];
   ctaFollow: string;
   ctaEngage: string;
@@ -88,17 +84,13 @@ export const recommendedTopics: TopicSuggestion[] = [];
 
 export const defaultSettings: AppSettings = {
   accountName: "内容灵感研究所",
-  accountPosition: "一个覆盖多领域内容的个人公众号，擅长把热点、经验和观点写成易读、易传播的文章",
+  accountPosition: "一个覆盖多领域内容的自媒体账号，擅长把热点、经验和观点写成适合多平台传播的内容",
   contentAreas: [...articleDomains],
-  readerAgeRange: "25-40岁",
-  readerJobTraits: "对新知、生活方式和实用经验有持续兴趣的泛内容读者",
-  readerNeeds: "希望获得有信息增量、有情绪价值、也有可执行建议的优质内容",
-  toneKeywords: ["专业理性", "犀利观点", "情绪共鸣", "增长操盘手", "朋友式表达"],
   bannedTopics: ["政治敏感", "时政新闻", "两岸关系", "国际冲突", "军事外交", "医疗建议", "投资理财推荐", "色情暴力"],
   ctaFollow: "关注「内容灵感研究所」，持续获取多领域优质内容",
   ctaEngage: "觉得有启发？点个「在看」分享给更多人",
   ctaShare: "转发给你身边同样喜欢优质内容的朋友",
-  defaultTemplate: "科技蓝",
+  defaultTemplate: "极简白",
   contentPreferences: ["深度分析", "实用攻略", "观点表达", "案例拆解", "共鸣内容"],
 };
 
@@ -108,7 +100,7 @@ const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((?:data:[^)]+|[^)]+)\)/g;
 const IMAGE_PLACEHOLDER_PATTERN = /\[图片占位[^\]]*]/g;
 
 export function createDefaultFormatting(defaultTemplate: string): DraftFormatting {
-  const template = templates.includes(defaultTemplate as TemplateName) ? (defaultTemplate as TemplateName) : "科技蓝";
+  const template = templates.includes(defaultTemplate as TemplateName) ? (defaultTemplate as TemplateName) : "极简白";
   const defaultColorMap: Record<TemplateName, ColorSchemeName> = {
     极简白: "默认蓝",
     科技蓝: "默认蓝",
@@ -124,22 +116,41 @@ export function createDefaultFormatting(defaultTemplate: string): DraftFormattin
     lineHeight: "1.9",
     paragraphSpacing: "20px",
     roundedQuote: true,
-    gradientQuote: true,
-    numberedBadge: true,
+    gradientQuote: template !== "极简白",
+    numberedBadge: template !== "极简白",
+  };
+}
+
+export function migrateDefaultFormattingToMinimal(formatting: DraftFormatting): DraftFormatting {
+  if (
+    formatting.template !== "科技蓝" ||
+    formatting.colorScheme !== "默认蓝" ||
+    !formatting.gradientQuote ||
+    !formatting.numberedBadge
+  ) {
+    return formatting;
+  }
+
+  return {
+    ...formatting,
+    template: "极简白",
+    gradientQuote: false,
+    numberedBadge: false,
   };
 }
 
 export function createFormattingForDomain(domain: ArticleDomain, fallbackTemplate = defaultSettings.defaultTemplate): DraftFormatting {
   const presets: Record<ArticleDomain, Pick<DraftFormatting, "template" | "colorScheme" | "gradientQuote" | "roundedQuote" | "numberedBadge">> = {
-    科技: { template: "科技蓝", colorScheme: "默认蓝", gradientQuote: true, roundedQuote: true, numberedBadge: true },
-    教育: { template: "暖色调", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: true },
+    AI: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    科技: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    教育: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
     旅游: { template: "极简白", colorScheme: "科技绿", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    情感: { template: "暖色调", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    社会: { template: "暖色调", colorScheme: "商务橙", gradientQuote: true, roundedQuote: true, numberedBadge: false },
-    汽车: { template: "商务灰", colorScheme: "默认蓝", gradientQuote: true, roundedQuote: false, numberedBadge: false },
-    体育: { template: "商务灰", colorScheme: "默认蓝", gradientQuote: true, roundedQuote: false, numberedBadge: true },
-    娱乐: { template: "暖色调", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    财经: { template: "商务灰", colorScheme: "商务橙", gradientQuote: true, roundedQuote: false, numberedBadge: true },
+    情感: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    社会: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    汽车: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    体育: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    娱乐: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+    财经: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
     文化: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
     其他: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
   };
@@ -158,11 +169,11 @@ export function createFormattingForTopicInput(input: {
   if (input.source?.includes("GitHub Trending")) {
     return {
       ...createDefaultFormatting(input.fallbackTemplate ?? defaultSettings.defaultTemplate),
-      template: "暖色调",
+      template: "极简白",
       colorScheme: "商务橙",
-      gradientQuote: true,
+      gradientQuote: false,
       roundedQuote: true,
-      numberedBadge: true,
+      numberedBadge: false,
     };
   }
 
@@ -170,10 +181,10 @@ export function createFormattingForTopicInput(input: {
 }
 
 export function createTitleCandidates(topic: TopicSuggestion, settings: AppSettings) {
+  void settings;
   const subject = topic.title.replace(/\s+/g, " ").trim();
   const primaryAngle = topic.angles[0]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || subject;
   const secondaryAngle = topic.angles[1]?.replace(/^从/, "").replace(/^[，、\s]+/, "") || primaryAngle;
-  const tone = settings.toneKeywords[0] ?? "朋友式表达";
   const readerLabel =
     /家长|学生|老师/.test(subject + topic.tags.join(" ")) ? "家长和学生" :
       /创作|写作|流量|增长|运营/.test(subject + topic.tags.join(" ")) ? "做内容的人" :
@@ -229,7 +240,7 @@ export function createTitleCandidates(topic: TopicSuggestion, settings: AppSetti
     `${readerLabel}为什么更该关心${primaryAngle}？`,
     `${subject}之后，真正会变的是谁的日子`,
     `如果只把${subject}当热闹看，后面更容易看漏`,
-    `${tone}一点说，${primaryAngle}才是关键`,
+    `说直接点，${primaryAngle}才是关键`,
     `${subject}闹上来以后，哪些风险开始变具体`,
     `比起${subject}本身，更值得聊的是${secondaryAngle}`,
   ];

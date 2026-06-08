@@ -14,6 +14,7 @@ import {
   colorSchemes,
   createDefaultFormatting,
   formatDraftTime,
+  migrateDefaultFormattingToMinimal,
   templates,
   type Draft,
   type DraftStatus,
@@ -22,7 +23,9 @@ import {
 import { buildAutoImageCaption, buildAutoImagePrompt, buildAutoImageSearchQuery, buildImageSnippet, shouldPreferRealImage } from "../lib/article-auto-image";
 import { normalizeStructuredBodyText } from "../lib/body-structure";
 import { domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
+import { useAuth } from "../providers/auth-provider";
 
 const publishChannels = ["公众号", "知乎", "微博", "头条", "小红书"] as const;
 const previewModes = ["mobile", "desktop"] as const;
@@ -40,9 +43,9 @@ const moduleTools = [
 ] as const;
 
 const draftStatusStyles: Record<DraftStatus, { chip: string; dot: string }> = {
-  待生成: { chip: "bg-blue-50 text-blue-600", dot: "bg-blue-500" },
+  待生成: { chip: "bg-[#fff0e6] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
   待修改: { chip: "bg-amber-50 text-amber-600", dot: "bg-amber-500" },
-  审核中: { chip: "bg-purple-50 text-purple-600", dot: "bg-purple-500" },
+  审核中: { chip: "bg-[#f1eadf] text-[#6f665d]", dot: "bg-[#8c8178]" },
   已发布: { chip: "bg-green-50 text-green-600", dot: "bg-green-500" },
 };
 
@@ -881,6 +884,7 @@ function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, acc
 export function FormatEditor() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const { drafts, settings, getDraftById, updateDraft, publishDraft } = useAppStore();
   const latestDraft = useMemo(
     () => [...drafts].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0],
@@ -893,7 +897,7 @@ export function FormatEditor() {
   const [summary, setSummary] = useState(currentDraft?.summary ?? "");
   const [body, setBody] = useState(currentDraft?.body ?? "");
   const [formatting, setFormatting] = useState<DraftFormatting>(
-    currentDraft?.formatting ?? createDefaultFormatting(settings.defaultTemplate),
+    migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createDefaultFormatting(settings.defaultTemplate)),
   );
   const [publishChannel, setPublishChannel] = useState<(typeof publishChannels)[number]>(currentDraft?.publishedChannel ?? "公众号");
   const [notice, setNotice] = useState("");
@@ -928,7 +932,7 @@ export function FormatEditor() {
     () => wechatAccounts.find((account) => account.id === selectedWechatAccountId) ?? wechatAccounts[0] ?? null,
     [selectedWechatAccountId, wechatAccounts],
   );
-  const previewAccountName = selectedWechatAccount?.name || settings.accountName;
+  const previewAccountName = selectedWechatAccount?.name || getUserDisplayName(user, settings.accountName || "公众号");
   const previewAccountInitials = previewAccountName.slice(0, 2);
 
   useEffect(() => {
@@ -944,7 +948,7 @@ export function FormatEditor() {
     setTitle(currentDraft.title);
     setSummary(currentDraft.summary);
     setBody(currentDraft.body);
-    setFormatting(currentDraft.formatting ?? createDefaultFormatting(settings.defaultTemplate));
+    setFormatting(migrateDefaultFormattingToMinimal(currentDraft.formatting ?? createDefaultFormatting(settings.defaultTemplate)));
     setPublishChannel(currentDraft.publishedChannel ?? "公众号");
   }, [currentDraft, settings.defaultTemplate]);
 
@@ -1107,7 +1111,7 @@ export function FormatEditor() {
         JSON.stringify(currentDraft.formatting) !== JSON.stringify(formatting)
       ),
   );
-  const currentDraftStatusStyle = draftStatusStyles[currentDraft.status];
+  const currentDraftStatusStyle = draftStatusStyles[currentDraft?.status ?? "draft"];
   const currentDraftPreview =
     summary.trim() ||
     body
@@ -1437,7 +1441,7 @@ export function FormatEditor() {
     setTitle(currentDraft.title);
     setSummary(currentDraft.summary);
     setBody(currentDraft.body);
-    setFormatting(currentDraft.formatting ?? createDefaultFormatting(settings.defaultTemplate));
+    setFormatting(migrateDefaultFormattingToMinimal(currentDraft.formatting ?? createDefaultFormatting(settings.defaultTemplate)));
     setPublishChannel(currentDraft.publishedChannel ?? "公众号");
     setNotice("已恢复到草稿原始内容");
     window.setTimeout(() => setNotice(""), 2000);
@@ -1515,7 +1519,7 @@ export function FormatEditor() {
     });
     setNotice("已标记为已发布");
     window.setTimeout(() => setNotice(""), 2000);
-    router.push("/published");
+    router.push("/drafts");
   };
 
   const runWechatDraftCheck = async () => {
@@ -1528,7 +1532,7 @@ export function FormatEditor() {
         title,
         summary,
         body,
-        author: selectedWechatAccount?.name || settings.accountName,
+        author: previewAccountName,
         domain: articleDomain,
         accountId: selectedWechatAccountId,
       }),
@@ -1588,7 +1592,7 @@ export function FormatEditor() {
           title,
           summary,
           body,
-          author: selectedWechatAccount?.name || settings.accountName,
+          author: previewAccountName,
           domain: articleDomain,
           accountId: selectedWechatAccountId,
         }),
@@ -1628,23 +1632,23 @@ export function FormatEditor() {
 
   if (!currentDraft) {
     return (
-      <div className="max-w-[720px] mx-auto py-16 text-center space-y-4">
-        <div className="text-[22px]" style={{ fontWeight: 600 }}>还没有可排版的草稿</div>
-        <p className="text-[14px] text-gray-500">先去生成一篇文章草稿，再回来做公众号排版。</p>
+      <div className="lens-card-strong mx-auto max-w-[720px] space-y-4 px-6 py-16 text-center">
+        <div className="text-[22px] text-[#181715]" style={{ fontWeight: 850 }}>还没有可排版的草稿</div>
+        <p className="text-[14px] text-[#6f665d]">先去生成一篇文章草稿，再回来做多平台排版。</p>
         <div className="flex items-center justify-center gap-3">
-          <Link href="/topic-center" className="px-4 py-2 rounded-lg bg-blue-600 text-white text-[13px]">去选题中心</Link>
-          <Link href="/drafts" className="px-4 py-2 rounded-lg border border-gray-200 text-[13px] text-gray-600">查看草稿箱</Link>
+          <Link href="/topic-center" className="lens-btn-primary px-4 py-2 text-[13px]">去选题中心</Link>
+          <Link href="/drafts" className="lens-btn-secondary px-4 py-2 text-[13px]">查看草稿箱</Link>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="border-b border-gray-200 bg-white overflow-x-auto overflow-y-hidden">
+    <div className="flex h-full flex-col bg-[#fffaf5]">
+      <div className="overflow-x-auto overflow-y-hidden border-b border-[#eadfd4] bg-white/86">
         <div className="flex min-w-max items-center gap-2 px-4 py-2">
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={handleSave} disabled={!isDirty} className="flex shrink-0 items-center gap-1.5 whitespace-nowrap border border-gray-200 px-3 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50 disabled:text-gray-300 disabled:bg-gray-50 disabled:cursor-not-allowed" style={{ fontWeight: 500 }}>
+          <button onClick={handleSave} disabled={!isDirty} className="lens-btn-secondary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:opacity-50" style={{ fontWeight: 750 }}>
             <Save className="w-3.5 h-3.5" /> 保存排版
           </button>
           {wechatAccounts.length ? (
@@ -1680,13 +1684,13 @@ export function FormatEditor() {
             推送草稿箱
           </button>
         </div>
-        <div className="w-px h-6 bg-gray-200 mx-1 shrink-0" />
+        <div className="mx-1 h-6 w-px shrink-0 bg-[#eadfd4]" />
         <div className="flex items-center gap-1 shrink-0">
           <div className="relative shrink-0">
             <select
               value={publishChannel}
               onChange={(event) => setPublishChannel(event.target.value as (typeof publishChannels)[number])}
-              className="w-[110px] appearance-none rounded-lg border border-gray-200 bg-white px-3 py-1.5 pr-8 text-[12px] text-gray-600"
+              className="w-[110px] appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 pr-8 text-[12px] text-[#6f665d]"
             >
               {publishChannels.map((channel) => (
                 <option key={channel} value={channel}>{channel}</option>
@@ -1698,8 +1702,8 @@ export function FormatEditor() {
             <button
               type="button"
               onClick={() => setIsToolbarMoreOpen((current) => !current)}
-              className="flex shrink-0 items-center gap-1 whitespace-nowrap border border-gray-200 px-2.5 py-1.5 rounded-lg text-[12px] text-gray-600 hover:bg-gray-50"
-              style={{ fontWeight: 500 }}
+              className="lens-btn-secondary flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-1.5 text-[12px]"
+              style={{ fontWeight: 750 }}
             >
               <MoreHorizontal className="w-3.5 h-3.5" /> 更多
             </button>
@@ -1708,8 +1712,8 @@ export function FormatEditor() {
             <button
               type="button"
               onClick={() => setIsToolbarActionOpen((current) => !current)}
-              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-[12px] text-white hover:bg-slate-800"
-              style={{ fontWeight: 500 }}
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-[#181715] px-2.5 py-1.5 text-[12px] text-white hover:bg-black"
+              style={{ fontWeight: 750 }}
             >
               发布操作 <ChevronDown className="h-3.5 w-3.5" />
             </button>
@@ -1805,7 +1809,7 @@ export function FormatEditor() {
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImage} />
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="w-[72px] min-w-[72px] bg-white border-r border-gray-100 py-3 flex flex-col items-center gap-1">
+        <div className="flex w-[72px] min-w-[72px] flex-col items-center gap-1 border-r border-[#eadfd4] bg-[#fff7ef] py-3">
           {moduleTools.map(({ icon: Icon, label }) => {
             const isImageToolActive = label === "图片" && isImagePanelOpen;
 
@@ -1816,8 +1820,8 @@ export function FormatEditor() {
                 aria-pressed={isImageToolActive}
                 className={`w-14 h-14 flex flex-col items-center justify-center rounded-lg transition-colors gap-1 ${
                   isImageToolActive
-                    ? "bg-blue-50 text-blue-600 shadow-[inset_0_0_0_1px_rgba(59,130,246,0.12)]"
-                    : "text-gray-500 hover:bg-gray-50 hover:text-blue-600"
+                    ? "bg-[#fff0e6] text-[#d65f2b] shadow-[inset_0_0_0_1px_rgba(214,95,43,0.16)]"
+                    : "text-[#6f665d] hover:bg-white hover:text-[#d65f2b]"
                 }`}
               >
                 <Icon className="w-4.5 h-4.5" />
@@ -1827,21 +1831,21 @@ export function FormatEditor() {
           })}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-hidden bg-[#eef0f4] px-4 py-5">
+        <div className="min-h-0 flex-1 overflow-hidden bg-[#f8f4ef] px-4 py-5">
           <div className="mx-auto flex h-full max-w-[980px] min-h-0 flex-col">
-            <div className="mb-4 flex items-center justify-between rounded-2xl border border-white/60 bg-white/75 px-4 py-3 backdrop-blur">
+            <div className="mb-4 flex items-center justify-between rounded-2xl border border-[#eadfd4] bg-white/78 px-4 py-3 backdrop-blur">
               <div>
-                <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>排版预览</div>
-                <div className="text-[12px] text-gray-500">独立滚动预览，支持移动端与桌面宽度切换</div>
+                <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>排版预览</div>
+                <div className="text-[12px] text-[#8c8178]">独立滚动预览，支持移动端与桌面宽度切换</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setPreviewMode("mobile")}
                   className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                    previewMode === "mobile" ? "border-blue-200 bg-blue-50 text-blue-600" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    previewMode === "mobile" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
                   }`}
-                  style={{ fontWeight: 500 }}
+                  style={{ fontWeight: 750 }}
                 >
                   <Smartphone className="h-3.5 w-3.5" /> 手机
                 </button>
@@ -1849,17 +1853,17 @@ export function FormatEditor() {
                   type="button"
                   onClick={() => setPreviewMode("desktop")}
                   className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                    previewMode === "desktop" ? "border-blue-200 bg-blue-50 text-blue-600" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                    previewMode === "desktop" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
                   }`}
-                  style={{ fontWeight: 500 }}
+                  style={{ fontWeight: 750 }}
                 >
                   <Monitor className="h-3.5 w-3.5" /> 桌面
                 </button>
                 <button
                   type="button"
                   onClick={handleScrollPreviewTop}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50"
-                  style={{ fontWeight: 500 }}
+                  className="lens-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[12px]"
+                  style={{ fontWeight: 750 }}
                 >
                   <ArrowUp className="h-3.5 w-3.5" /> 回到顶部
                 </button>
@@ -2577,28 +2581,28 @@ export function FormatEditor() {
         </div>
 
         <div
-          className={`bg-white border-l border-gray-100 overflow-y-auto p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[352px] min-w-[352px] xl:w-[368px] xl:min-w-[368px]"} space-y-5`}
+          className={`space-y-5 overflow-y-auto border-l border-[#eadfd4] bg-white p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[352px] min-w-[352px] xl:w-[368px] xl:min-w-[368px]"}`}
         >
           {isImagePanelOpen ? (
             <>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-[18px] text-gray-900" style={{ fontWeight: 700 }}>插入图片</div>
-                  <div className="mt-1 text-[12px] leading-6 text-gray-500">侧栏插图不会打断中间预览区，适合边看正文边决定插入位置。</div>
+                  <div className="text-[18px] text-[#181715]" style={{ fontWeight: 850 }}>插入图片</div>
+                  <div className="mt-1 text-[12px] leading-6 text-[#8c8178]">侧栏插图不会打断中间预览区，适合边看正文边决定插入位置。</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsImagePanelOpen(false)}
-                  className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-600"
+                  className="rounded-lg p-2 text-[#8c8178] transition-colors hover:bg-[#fff7ef] hover:text-[#d65f2b]"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-                <div className="rounded-2xl border border-gray-100 bg-gradient-to-br from-slate-50 to-white p-3">
+                <div className="rounded-2xl border border-[#eadfd4] bg-[#fffaf5] p-3">
                 <div className="grid grid-cols-4 gap-2">
                   {[
-                    { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-blue-600" },
+                    { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-[#d65f2b]" },
                     { key: "link" as const, label: "图片链接", icon: Link2, color: "text-emerald-600" },
                     { key: "search" as const, label: "联网搜图", icon: Search, color: "text-amber-600" },
                     { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-purple-600" },
@@ -2609,27 +2613,27 @@ export function FormatEditor() {
                       onClick={() => setActiveImageTab(key)}
                       className={`rounded-xl border px-3 py-3 text-left transition-colors ${
                         activeImageTab === key
-                          ? "border-blue-200 bg-blue-50"
-                          : "border-transparent bg-white hover:bg-gray-50"
+                          ? "border-[#d65f2b] bg-[#fff0e6]"
+                          : "border-transparent bg-white hover:bg-[#fff7ef]"
                       }`}
                     >
                       <Icon className={`mb-2 h-4 w-4 ${color}`} />
-                      <div className="text-[12px] text-gray-900" style={{ fontWeight: 600 }}>{label}</div>
+                      <div className="text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>{label}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
               {activeImageTab === "upload" ? (
-                <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>本地上传</div>
-                  <p className="mt-2 text-[12px] leading-6 text-gray-500">上传后会直接插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
+                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
+                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>本地上传</div>
+                  <p className="mt-2 text-[12px] leading-6 text-[#8c8178]">上传后会直接插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
                   <button
                     type="button"
                     disabled={imageLoading === "upload"}
                     onClick={() => fileInputRef.current?.click()}
-                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    style={{ fontWeight: 500 }}
+                    className="lens-btn-primary mt-4 inline-flex items-center gap-2 px-3 py-2 text-[12px]"
+                    style={{ fontWeight: 800 }}
                   >
                     {imageLoading === "upload" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                     选择图片并插入
@@ -2638,20 +2642,20 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "link" ? (
-                <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>图片链接</div>
+                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
+                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>图片链接</div>
                   <div className="mt-3 space-y-3">
                     <input
                       value={imageUrl}
                       onChange={(event) => setImageUrl(event.target.value)}
                       placeholder="https://example.com/image.jpg"
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                      className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
                     />
                     <button
                       type="button"
                       onClick={handleInsertImageByUrl}
-                      className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-[12px] text-gray-700 hover:bg-gray-50"
-                      style={{ fontWeight: 500 }}
+                      className="lens-btn-secondary inline-flex items-center gap-2 px-3 py-2 text-[12px]"
+                      style={{ fontWeight: 750 }}
                     >
                       <Link2 className="h-3.5 w-3.5" /> 插入链接图片
                     </button>
@@ -2671,7 +2675,7 @@ export function FormatEditor() {
                       value={imageSearchQuery}
                       onChange={(event) => setImageSearchQuery(event.target.value)}
                       placeholder="例如：travel landscape street photography"
-                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                      className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
                     />
                     <button
                       type="button"
@@ -2693,7 +2697,7 @@ export function FormatEditor() {
                               insertImageToBody(item.url, imageCaption || title || "文章配图");
                               setIsImagePanelOpen(false);
                             }}
-                            className="overflow-hidden rounded-xl border border-gray-200 bg-white text-left transition hover:border-blue-300 hover:shadow-sm"
+                            className="overflow-hidden rounded-xl border border-[#eadfd4] bg-white text-left transition hover:border-[#d65f2b]/40 hover:shadow-sm"
                           >
                             <img src={item.thumbnailUrl || item.url} alt="真实图片候选" className="h-28 w-full object-cover" loading="lazy" />
                             <div className="space-y-1 px-3 py-2">
@@ -2709,18 +2713,18 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "ai" ? (
-                <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                  <div className="text-[14px] text-gray-900" style={{ fontWeight: 600 }}>AI 配图</div>
+                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
+                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>AI 配图</div>
                   <div className="mt-3 space-y-3">
-                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-3">
-                      <div className="text-[12px] text-blue-700" style={{ fontWeight: 600 }}>智能配图</div>
-                      <p className="mt-1 text-[12px] leading-6 text-blue-700/80">会根据文章内容自动配图；默认优先联网搜真实图，失败时再回退 AI。</p>
+                    <div className="rounded-xl border border-[#f0dfd0] bg-[#fff7ef] p-3">
+                      <div className="text-[12px] text-[#d65f2b]" style={{ fontWeight: 800 }}>智能配图</div>
+                      <p className="mt-1 text-[12px] leading-6 text-[#8c8178]">会根据文章内容自动配图；默认优先联网搜真实图，失败时再回退 AI。</p>
                       <button
                         type="button"
                         disabled={imageLoading === "generate" || imageLoading === "search"}
                         onClick={handleAutoGenerateImage}
-                        className="mt-3 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-[12px] text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                        style={{ fontWeight: 500 }}
+                        className="lens-btn-primary mt-3 inline-flex items-center gap-2 px-3 py-2 text-[12px]"
+                        style={{ fontWeight: 800 }}
                       >
                         {imageLoading === "generate" || imageLoading === "search" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
                         智能配图并插入
@@ -2732,7 +2736,7 @@ export function FormatEditor() {
                       onChange={(event) => setImagePrompt(event.target.value)}
                       rows={6}
                       placeholder="描述你想要的配图风格、主体和氛围"
-                      className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-gray-400 focus:border-blue-300"
+                      className="w-full resize-none rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
                     />
                     <button
                       type="button"
@@ -2755,7 +2759,7 @@ export function FormatEditor() {
                     value={imageCaption}
                     onChange={(event) => setImageCaption(event.target.value)}
                     placeholder="图片说明 / 图注"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[12px] outline-none placeholder:text-gray-400 focus:border-blue-300"
+                    className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
                   />
                 </div>
 
@@ -2773,8 +2777,8 @@ export function FormatEditor() {
                         onClick={() => setImageInsertMode(option.value)}
                         className={`rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
                           imageInsertMode === option.value
-                            ? "border-blue-200 bg-blue-50 text-blue-600"
-                            : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                            ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
+                            : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
                         }`}
                         style={{ fontWeight: 500 }}
                       >
@@ -2872,7 +2876,7 @@ export function FormatEditor() {
                   className={`w-full rounded-lg bg-gray-50 px-3 py-2 text-[13px] outline-none focus:bg-white ${
                     isWechatTitleTooLong
                       ? "border border-red-200 text-red-600 focus:border-red-300"
-                      : "border border-gray-200 focus:border-blue-200"
+                      : "border border-[#eadfd4] focus:border-[#d65f2b]"
                   }`}
                 />
                 {isWechatTitleTooLong ? (
@@ -2884,7 +2888,7 @@ export function FormatEditor() {
                 <textarea
                   value={summary}
                   onChange={(event) => setSummary(event.target.value)}
-                  className="min-h-24 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-blue-200 focus:bg-white"
+                  className="min-h-24 w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-[#d65f2b] focus:bg-white"
                 />
               </div>
               <div>
@@ -2902,7 +2906,7 @@ export function FormatEditor() {
                   onClick={syncBodySelection}
                   onKeyUp={syncBodySelection}
                   onSelect={syncBodySelection}
-                  className="min-h-56 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-blue-200 focus:bg-white"
+                  className="min-h-56 w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-[#d65f2b] focus:bg-white"
                 />
               </div>
             </div>
@@ -2917,8 +2921,8 @@ export function FormatEditor() {
                   onClick={() => setFormatting((current) => ({ ...current, template }))}
                   className={`px-3 py-2 rounded-lg text-[12px] border transition-colors ${
                     formatting.template === template
-                      ? "bg-blue-50 border-blue-200 text-blue-600"
-                      : "bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100"
+                      ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
+                      : "border-[#eadfd4] bg-[#fffaf5] text-[#6f665d] hover:bg-[#fff7ef]"
                   }`}
                   style={{ fontWeight: 500 }}
                 >
@@ -2936,7 +2940,7 @@ export function FormatEditor() {
                   key={scheme.name}
                   onClick={() => setFormatting((current) => ({ ...current, colorScheme: scheme.name }))}
                   className={`w-full flex items-center gap-2 p-2 rounded-lg cursor-pointer border transition-colors ${
-                    formatting.colorScheme === scheme.name ? "border-blue-200 bg-blue-50/60" : "border-transparent hover:bg-gray-50"
+                    formatting.colorScheme === scheme.name ? "border-[#d65f2b] bg-[#fff0e6]" : "border-transparent hover:bg-[#fff7ef]"
                   }`}
                 >
                   <div className="w-6 h-6 rounded-full" style={{ background: scheme.primary }} />
@@ -3044,7 +3048,7 @@ function ToggleField({
       <button
         type="button"
         onClick={onChange}
-        className={`w-9 h-5 rounded-full relative cursor-pointer transition-colors ${checked ? "bg-blue-600" : "bg-gray-300"}`}
+        className={`relative h-5 w-9 cursor-pointer rounded-full transition-colors ${checked ? "bg-[#d65f2b]" : "bg-[#d8cfc5]"}`}
       >
         <div className={`w-4 h-4 bg-white rounded-full absolute top-0.5 shadow-sm transition-all ${checked ? "right-0.5" : "left-0.5"}`} />
       </button>

@@ -1,6 +1,9 @@
 import { hasDatabaseUrl } from "./prisma";
-import { hasSupabaseAdminConfig } from "./supabase-admin";
 
 export function hasPersistenceBackend() {
-  return hasDatabaseUrl() || hasSupabaseAdminConfig();
+  return hasDatabaseUrl();
+}
+
+export function shouldUseSupabaseAdmin() {
+  return false;
 }

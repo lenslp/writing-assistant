@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { hasDatabaseUrl } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
+import { shouldUseSupabaseAdmin } from "./persistence";
 import { type TopicSuggestion, type TopicType } from "./app-data";
 import { deriveTopicAngles, deriveTopicReason } from "./article-analysis";
 import { detectArticleDomain, resolveArticleDomain } from "./content-domains";
@@ -70,7 +70,7 @@ export function mapTopicRecord(record: TopicRecord): TopicSuggestion {
   const inferredDomain = detectArticleDomain(record.title, record.tags, record.source, record.reason);
   const resolvedStoredDomain = resolveArticleDomain(record.domain);
   const preferredDomain =
-    record.domain && resolvedStoredDomain !== "科技"
+    record.domain
       ? resolvedStoredDomain
       : inferredDomain;
   const angles = shouldRefreshAngles(record.angles ?? [], record.source)
@@ -105,7 +105,7 @@ export function mapTopicRecord(record: TopicRecord): TopicSuggestion {
 }
 
 export async function readTopics() {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("topics")
@@ -162,7 +162,7 @@ export async function readTopics() {
 export async function upsertTopicRecord(topic: TopicSuggestion) {
   assertTopicAllowed(topic);
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data: existingItems, error: existingError } = await supabase
       .from("topics")
@@ -300,7 +300,7 @@ async function rebuildTopicWithAssistedDomain(topic: TopicSuggestion): Promise<T
 async function persistHotTopicDomain(topic: TopicSuggestion) {
   const sourceName = topic.source.split("·")[0]?.trim() || topic.source.trim();
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data: existingRows, error: queryError } = await supabase
       .from("hot_topics")

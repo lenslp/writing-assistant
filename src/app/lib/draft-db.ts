@@ -1,10 +1,11 @@
 import { prisma } from "./prisma";
-import { hasDatabaseUrl } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
+import { shouldUseSupabaseAdmin } from "./persistence";
 import {
   calculateWords,
   createFormattingForDomain,
   createDefaultFormatting,
+  migrateDefaultFormattingToMinimal,
   defaultSettings,
   type Draft,
   type DraftFormatting,
@@ -48,10 +49,10 @@ function normalizeFormatting(formatting: unknown): DraftFormatting {
     return createDefaultFormatting(defaultSettings.defaultTemplate);
   }
 
-  return {
+  return migrateDefaultFormattingToMinimal({
     ...createDefaultFormatting(defaultSettings.defaultTemplate),
     ...(formatting as Partial<DraftFormatting>),
-  };
+  });
 }
 
 function normalizePublishedChannel(channel: unknown): Draft["publishedChannel"] {
@@ -115,7 +116,7 @@ export function mapDraftRecord(record: DraftRecord): Draft {
 }
 
 export async function readDrafts() {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
@@ -156,7 +157,7 @@ export async function readDrafts() {
 }
 
 export async function readDraftById(draftId: string) {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
@@ -202,7 +203,7 @@ export async function readDraftById(draftId: string) {
 export async function upsertDraft(draft: Draft) {
   const normalized = normalizeDraftInput(draft);
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const payload = {
       id: normalized.id,
@@ -320,7 +321,7 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
     words: patch.body ? calculateWords(patch.body) : patch.words ?? existing.words,
   });
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
@@ -404,7 +405,7 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
 }
 
 export async function updateDraftStatusById(draftId: string, status: DraftStatus) {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
@@ -454,7 +455,7 @@ export async function updateDraftStatusById(draftId: string, status: DraftStatus
 }
 
 export async function deleteDraftById(draftId: string) {
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { error } = await supabase
       .from("drafts")

@@ -1,6 +1,8 @@
-export const articleDomains = ["科技", "教育", "旅游", "情感", "社会", "汽车", "体育", "娱乐", "财经", "文化", "其他"] as const;
+export const articleDomains = ["AI", "汽车", "教育", "旅游"] as const;
+export const legacyArticleDomains = ["科技", "情感", "社会", "体育", "娱乐", "财经", "文化", "其他"] as const;
 
-export type ArticleDomain = (typeof articleDomains)[number];
+export type ActiveArticleDomain = (typeof articleDomains)[number];
+export type ArticleDomain = ActiveArticleDomain | (typeof legacyArticleDomains)[number];
 export type DomainConfidence = "high" | "medium" | "low";
 export type DomainDetectionResult = {
   domain: ArticleDomain;
@@ -25,11 +27,21 @@ export type DomainConfig = {
 };
 
 export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
+  AI: {
+    label: "AI",
+    icon: "🤖",
+    description: "适合 AI 趋势、大模型、产品更新、商业影响类内容。",
+    template: "极简白",
+    colorScheme: "默认蓝",
+    aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "卫星", "其他", "其它", "综合", "泛热点", "杂谈", "社会", "情感", "体育", "娱乐", "财经", "文化"],
+    writingFocus: ["趋势判断", "产品解读", "用户价值", "行业影响"],
+    promptHint: "重点写 AI 变化、产品能力、行业影响和普通读者该怎么理解。",
+  },
   科技: {
     label: "科技",
     icon: "🤖",
     description: "适合科技趋势、AI、产品更新、商业影响类内容。",
-    template: "科技蓝",
+    template: "极简白",
     colorScheme: "默认蓝",
     aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "卫星"],
     writingFocus: ["趋势判断", "产品解读", "用户价值", "行业影响"],
@@ -39,7 +51,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "教育",
     icon: "📚",
     description: "适合学习方法、家长教育、成长建议和知识科普。",
-    template: "暖色调",
+    template: "极简白",
     colorScheme: "商务橙",
     aliases: ["教育", "学习", "家长", "成长", "考试", "升学", "课堂", "老师"],
     writingFocus: ["方法建议", "认知升级", "案例启发", "成长路径"],
@@ -63,7 +75,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "情感",
     icon: "💕",
     description: "适合关系表达、情绪疗愈、共鸣故事和边界话题。",
-    template: "暖色调",
+    template: "极简白",
     colorScheme: "高级紫",
     aliases: ["情感", "恋爱", "婚姻", "关系", "治愈", "共鸣", "心理", "温暖"],
     writingFocus: ["情绪共鸣", "关系判断", "沟通建议", "边界感"],
@@ -73,7 +85,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "社会",
     icon: "📰",
     description: "适合社会热点、民生观察、公共议题和现实案例。",
-    template: "暖色调",
+    template: "极简白",
     colorScheme: "商务橙",
     aliases: ["社会", "社会热点", "民生", "新闻", "事件", "观察", "调查", "舆论", "搞笑", "法律", "法院", "文化"],
     writingFocus: ["事件脉络", "现实影响", "公众情绪", "观点判断"],
@@ -83,7 +95,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "汽车",
     icon: "🚗",
     description: "适合车型评测、购车建议、配置对比和用车体验。",
-    template: "商务灰",
+    template: "极简白",
     colorScheme: "默认蓝",
     aliases: ["汽车", "新能源", "车型", "suv", "轿车", "试驾", "评测", "配置", "续航", "机车", "摩托"],
     writingFocus: ["配置参数", "驾驶体验", "购车决策", "性价比判断"],
@@ -93,7 +105,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "体育",
     icon: "🏟️",
     description: "适合赛事、运动员、竞技表现和体育商业类内容。",
-    template: "商务灰",
+    template: "极简白",
     colorScheme: "默认蓝",
     aliases: ["体育", "赛事", "比赛", "运动", "足球", "篮球", "电竞", "冠军", "夺冠"],
     writingFocus: ["赛事脉络", "竞技表现", "情绪价值", "商业影响"],
@@ -103,7 +115,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "娱乐",
     icon: "🎬",
     description: "适合明星、影视综艺、演唱会、奖项和文娱热点。",
-    template: "暖色调",
+    template: "极简白",
     colorScheme: "高级紫",
     aliases: ["娱乐", "明星", "影视", "综艺", "电影", "演员", "歌手", "演唱会", "奖项"],
     writingFocus: ["公众情绪", "粉丝生态", "作品价值", "舆论变化"],
@@ -113,7 +125,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     label: "财经",
     icon: "💹",
     description: "适合公司、消费、商业、融资、市场和宏观经济类内容。",
-    template: "商务灰",
+    template: "极简白",
     colorScheme: "商务橙",
     aliases: ["财经", "商业", "消费", "公司", "融资", "投资", "估值", "市场", "经济"],
     writingFocus: ["商业模式", "市场变化", "消费决策", "风险边界"],
@@ -142,8 +154,7 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
 };
 
 const sourceDomainHints: Array<{ pattern: RegExp; domain: ArticleDomain; score: number }> = [
-  { pattern: /(36氪|爱范儿|机器之心|量子位|雷峰网|虎嗅|openai|anthropic|github)/i, domain: "科技", score: 3 },
-  { pattern: /(少数派)/i, domain: "科技", score: 1 },
+  { pattern: /(36氪|爱范儿|少数派|虎嗅|openai|anthropic|github)/i, domain: "AI", score: 3 },
   { pattern: /(懂车帝|汽车之家|易车|太平洋汽车|一汽大众|比亚迪|特斯拉|理想汽车|蔚来|小鹏)/i, domain: "汽车", score: 3 },
   { pattern: /(马蜂窝|携程|飞猪|同程|去哪儿|途牛|驴妈妈|穷游网|小红书旅游|大众点评旅游|抖音旅游|十六番|背包客|蚂蜂窝|airbnb|booking|agoda|tripadvisor|猫途鹰)/i, domain: "旅游", score: 3 },
   { pattern: /(新华社|央视|人民日报|澎湃|界面|红星|新京报|中新网)/i, domain: "社会", score: 3 },
@@ -161,16 +172,16 @@ const titleIntentHints: Array<{ pattern: RegExp; domain: ArticleDomain; score: n
   { pattern: /(\d+[:：]\d+|tko|止步\d+强|世乒赛|复出|马龙|许昕|阿森纳|马竞|赵心童|村超|kpl|罗唐|里夫斯|禁赛风波|詹姆斯|苏超|火箭.*詹姆斯)/i, domain: "体育", score: 7 },
   { pattern: /(跑男|五哈|开始推理吧|影帝|影后|新歌|粉丝|女团|男团|合照|综艺|艺人|偶遇|影节|大赏|行程安排|回归|隐婚生子|手势舞|主持|回复唐嫣|吓出汗|首发博|演技大赏|乐华艺人|黄晓明|关晓彤|赵露思|陈哲远|肖战|杨幂|朱珠|王玉雯|吴宣仪|李小冉|贺峻霖|造型|阵容|进组|妻旅|虞书欣|白鹿|密逃8|穿普拉达的女王|vlog品类主理人|独家访谈)/i, domain: "娱乐", score: 7 },
   { pattern: /(股票|a股|股王|利率|金饰价格|金价|楼市|彩票|加仓|楼市调控|购买决策|美联储|利率不变|供应商|泡泡玛特|成交额|航司|净买入|交付速度刺激购买决策)/i, domain: "财经", score: 7 },
-  { pattern: /(微信.*工具|工作软件|空间站|歼15|生产线|军机|射程之内|苹果.*生产线|高通|共享内存|win 本|macbook pro|一加 ace|steam 手柄|联通魔方|前额叶|外骨骼机器)/i, domain: "科技", score: 7 },
+  { pattern: /(微信.*工具|工作软件|空间站|歼15|生产线|军机|射程之内|苹果.*生产线|高通|共享内存|win 本|macbook pro|一加 ace|steam 手柄|联通魔方|前额叶|外骨骼机器)/i, domain: "AI", score: 7 },
   { pattern: /(洗护指南|穿搭|极简|禅意|显贵|风格|不p图|耳边的风|月季的浪漫|转场挑战|手势舞|bonbonbon|回床演绎挑战|蒜薹噩梦|深藏不露|换头像的频率|虾吃大赛|阿房宫|方言歌曲|抗战剧|老式水果|奢侈品|闪光职人|带火一座城|月季的浪漫|灵隐寺|奢侈品)/i, domain: "文化", score: 6 },
 ];
 
 const sourceTagDomainHints: Array<{ sourcePattern: RegExp; tagPattern: RegExp; domain: ArticleDomain; score: number }> = [
   { sourcePattern: /(微博|抖音|百度|知乎|今日头条|头条)/i, tagPattern: /(热搜|热榜)/i, domain: "社会", score: 1 },
   { sourcePattern: /(36氪)/i, tagPattern: /(商业)/i, domain: "财经", score: 4 },
-  { sourcePattern: /(36氪|爱范儿)/i, tagPattern: /(科技)/i, domain: "科技", score: 4 },
+  { sourcePattern: /(36氪|爱范儿)/i, tagPattern: /(科技)/i, domain: "AI", score: 4 },
+  { sourcePattern: /(少数派)/i, tagPattern: /(效率|工具)/i, domain: "AI", score: 4 },
   { sourcePattern: /(爱范儿)/i, tagPattern: /(董车会|乐道|领克|汽车)/i, domain: "汽车", score: 6 },
-  { sourcePattern: /(少数派)/i, tagPattern: /(效率|工具)/i, domain: "文化", score: 4 },
   { sourcePattern: /(知乎)/i, tagPattern: /(知乎热榜)/i, domain: "社会", score: 1 },
 ];
 
@@ -183,6 +194,12 @@ const domainKeywordRules: Record<
     patterns?: RegExp[];
   }
 > = {
+  AI: {
+    strong: ["ai", "aigc", "gpt", "openai", "claude", "gemini", "deepseek", "agent", "智能体", "copilot", "llm", "mcp", "人工智能", "大模型", "生成式", "大语言模型", "世界模型", "sora", "runway", "midjourney", "llama", "豆包", "kimi", "千问", "文心", "星火", "智谱", "minimax", "海螺", "token"],
+    medium: ["机器学习", "深度学习", "多模态", "神经网络", "transformer", "机器人", "人形机器人", "自动驾驶", "芯片", "半导体", "算力中心", "npu", "gpu", "智能化", "智能眼镜", "智能终端", "英伟达", "nvidia"],
+    weak: ["云服务", "云计算", "科技", "硬核科技", "开源"],
+    patterns: [/(发布|上线|更新|首发|开源).{0,8}(大模型|大语言模型|大模型系统|大模型应用|智能体|AI芯片|AI平台)/i],
+  },
   科技: {
     strong: ["ai", "gpt", "openai", "claude", "agent", "大模型", "人工智能", "芯片", "算力", "开源", "机器人", "航天", "卫星", "飞行汽车", "激光雷达"],
     medium: ["科技", "互联网", "数码", "手机", "电脑", "应用", "软件", "系统", "云计算", "产品", "发布会", "苹果", "华为", "小米", "硬核科技", "清洁能源", "消博会"],
@@ -352,30 +369,30 @@ function detectDomainByDisambiguation(text: string): ArticleDomain | null {
     /(火箭).{0,8}(湖人|勇士|快船|掘金|雷霆|骑士|雄鹿|vs|队|主场|客场|季后赛|常规赛)/i.test(text) ||
     /(湖人|勇士|快船|掘金|雷霆|骑士|雄鹿).{0,8}(火箭)/i.test(text)
   ) {
-    return "体育";
+    return null;
   }
 
   if (/(乐高|积木|手办|装饰画)/i.test(text) && !/(ai|大模型|人工智能|模型发布|开源模型)/i.test(text)) {
-    return "文化";
+    return null;
   }
 
   if (/(中年危机|婚姻危机|人生思考|关于.+思考)/i.test(text)) {
-    return "情感";
+    return null;
   }
 
   return null;
 }
 
-export function resolveArticleDomain(input?: string | null): ArticleDomain {
+export function resolveArticleDomain(input?: string | null): ActiveArticleDomain {
   const normalized = input?.trim().toLowerCase();
-  if (!normalized) return "其他";
+  if (!normalized) return "AI";
 
   if (normalized === "搞笑") {
-    return "社会";
+    return "AI";
   }
 
   if (normalized === "其它") {
-    return "其他";
+    return "AI";
   }
 
   for (const domain of articleDomains) {
@@ -391,7 +408,7 @@ export function resolveArticleDomain(input?: string | null): ArticleDomain {
     }
   }
 
-  return "其他";
+  return "AI";
 }
 
 export function detectArticleDomainWithSignals(title: string, tags: string[] = [], source = "", summary = ""): DomainDetectionResult {
@@ -457,8 +474,8 @@ export function detectArticleDomainWithSignals(title: string, tags: string[] = [
     });
   }
 
-  let best: { domain: ArticleDomain; total: number; content: number; source: number; titleStrongHits: number; titlePatternHits: number; titleIntentScore: number } = {
-    domain: "其他",
+  let best: { domain: ActiveArticleDomain; total: number; content: number; source: number; titleStrongHits: number; titlePatternHits: number; titleIntentScore: number } = {
+    domain: "AI",
     total: -1,
     content: -1,
     source: 0,
@@ -467,7 +484,7 @@ export function detectArticleDomainWithSignals(title: string, tags: string[] = [
     titleIntentScore: 0,
   };
   let secondBest: typeof best = {
-    domain: "其他",
+    domain: "AI",
     total: -1,
     content: -1,
     source: 0,
@@ -496,64 +513,60 @@ export function detectArticleDomainWithSignals(title: string, tags: string[] = [
   const contentLead = best.content - secondBest.content;
   const totalLead = best.total - secondBest.total;
 
-  let ruleDomain: ArticleDomain = "其他";
+  let ruleDomain: ActiveArticleDomain = "AI";
 
   if (
-    best.domain !== "其他" &&
     best.content >= 8 &&
     (contentLead >= 2 || best.content >= 11 || hasStrongTitleEvidence)
   ) {
     ruleDomain = best.domain;
   }
   else if (
-    best.domain !== "其他" &&
     best.content >= 5 &&
     hasStrongTitleEvidence &&
     (contentLead >= 1.5 || totalLead >= 2)
   ) {
     ruleDomain = best.domain;
   }
-  else if (best.domain !== "其他" && best.content >= 6 && totalLead >= 2) {
+  else if (best.content >= 6 && totalLead >= 2) {
     ruleDomain = best.domain;
   }
   else if (
-    best.domain !== "其他" &&
     /微博|抖音|百度|知乎|今日头条|头条/.test(sourceText) &&
     best.content >= 4 &&
     (contentLead >= 1 || totalLead >= 1)
   ) {
     ruleDomain = best.domain;
   }
-  else if (best.domain !== "其他" && best.source >= 3 && secondBest.content < 4) {
+  else if (best.source >= 3 && secondBest.content < 4) {
     ruleDomain = best.domain;
   }
 
   let confidence: DomainConfidence = "low";
 
   if (
-    ruleDomain !== "其他" &&
-    (
-      directDomain !== null ||
-      (best.content >= 8 && (contentLead >= 2 || hasStrongTitleEvidence)) ||
-      (best.content >= 11 && totalLead >= 3)
-    )
+    directDomain !== null ||
+    (best.content >= 8 && (contentLead >= 2 || hasStrongTitleEvidence)) ||
+    (best.content >= 11 && totalLead >= 3)
   ) {
     confidence = "high";
   } else if (
-    ruleDomain !== "其他" &&
-    (
-      (best.content >= 6 && totalLead >= 2) ||
-      (best.content >= 5 && hasStrongTitleEvidence)
-    )
+    (best.content >= 6 && totalLead >= 2) ||
+    (best.content >= 5 && hasStrongTitleEvidence)
   ) {
     confidence = "medium";
   }
 
-  const shouldUseAiAssist = confidence === "low" || ruleDomain === "其他";
+  const shouldUseAiAssist = confidence === "low";
+
+  let finalDomain: ArticleDomain = ruleDomain;
+  if (/微博/i.test(source) && finalDomain === "AI") {
+    finalDomain = secondBest.domain !== "AI" ? secondBest.domain : "社会";
+  }
 
   return {
-    domain: ruleDomain,
-    ruleDomain,
+    domain: finalDomain,
+    ruleDomain: finalDomain,
     confidence,
     shouldUseAiAssist,
     contentLead,

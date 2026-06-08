@@ -8,7 +8,6 @@ import {
   type TopicSuggestion,
 } from "./app-data";
 import { domainConfigs, resolveArticleDomain } from "./content-domains";
-import { resolveWritingTone } from "./writing-tones";
 import { decodeEscapedStructuralText, normalizeStructuredBodyText } from "./body-structure";
 import { readAIProviderSecret, type AIProviderSecret } from "./app-config-db";
 import type {
@@ -28,6 +27,7 @@ type ProviderConfig = {
 
 type JsonRecord = Record<string, unknown>;
 type AIModelTask = AIWriteGenerateRequest["scope"] | "transform";
+export type AITextCompletionTask = AIModelTask;
 type AIArticlePlan = Omit<AIWriteResult, "body"> & { body: string };
 type ModelSelection = {
   primary: string;
@@ -51,7 +51,9 @@ const MIN_GENERATED_OUTLINE_ITEMS = 3;
 const MIN_GENERATED_GITHUB_OUTLINE_ITEMS = 2;
 const TITLE_LENGTH_ADJUSTMENT_MAX_PASSES = 2;
 const BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES = 1;  // v2: 从 2 降到 1，减少 API 调用
-const BODY_REGENERATION_MAX_ATTEMPTS = 1;  // v2: 从 2 降到 1，减少 API 调用
+const BODY_REGENERATION_MAX_ATTEMPTS = 2;
+const QUALITY_REWRITE_MAX_ATTEMPTS = 2;
+const QUALITY_RETRY_USER_MESSAGE = "AI 正在自动调整稿件质量，请再试一次。";
 const BODY_WORD_COUNT_TOLERANCE_RATIO = 0.02;
 const BODY_WORD_COUNT_TOLERANCE_MIN = 15;
 const BODY_WORD_COUNT_TOLERANCE_MAX = 80;
@@ -161,6 +163,37 @@ const STRUCTURAL_AI_PATTERNS = [
   // 完美正反对比：一方面…另一方面…
   /一方面…另一方面…/,
 ] as const;
+
+class QualityRetryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "QualityRetryError";
+  }
+}
+
+function createQualityRetryExhaustedError() {
+  return new QualityRetryError(QUALITY_RETRY_USER_MESSAGE);
+}
+
+function throwQualityRetry(reason: string) {
+  throw new QualityRetryError(reason);
+}
+
+export function isQualityRetryError(error: unknown): error is QualityRetryError {
+  return error instanceof QualityRetryError;
+}
+
+function buildQualityRewriteNotes(issue?: string) {
+  return [
+    issue ? `上一次质检没有通过：${issue}` : "本次写作从第一稿就要避开常见 AI 味，不要等校验后再改。",
+    issue ? "这次直接重写，不要解释。目标是自然、具体、像人写过，不要像 AI 成稿。" : "直接生成自然成稿，像编辑亲手改过，不要像模型一次性铺出来。",
+    "重点避开：三词并列、整齐对仗、首先/其次/最后、总分总报告腔、空泛拔高、模糊归因、金句式结尾。",
+    "不要写“不仅……更是……”“一方面……另一方面……”“既……又……还……”这类硬凑结构。",
+    "少用：此外、值得注意、核心、关键、赋能、底层逻辑、方法论、格局、启示、趋势、深度。",
+    "少用抽象大词，多写具体对象、真实处境、明确代价和读者能感到的后果。",
+    "段落长度要有变化。两项可以，不要硬凑三项。句子不要每段都用同一种转折。",
+  ].filter(Boolean);
+}
 
 const PLACEHOLDER_OUTLINE_PATTERNS = [
   /^(开头|中段|结尾|总结|核心变化|影响判断|机会与风险|实操拆解|风险提醒)[:：]/m,
@@ -357,12 +390,23 @@ function sleep(ms: number) {
   });
 }
 
-function getModelRequestTimeoutMs(task: AIModelTask) {
-  if (task === "body" || task === "full") {
-    return 180000;
+function readTimeoutMs(names: string[], fallbackMs: number) {
+  for (const name of names) {
+    const value = Number.parseInt(getEnv(name), 10);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
   }
 
-  return 90000;
+  return fallbackMs;
+}
+
+function getModelRequestTimeoutMs(task: AIModelTask) {
+  if (task === "body" || task === "full") {
+    return readTimeoutMs(["AI_MODEL_LONG_TIMEOUT_MS", "AI_MODEL_TIMEOUT_MS"], 360000);
+  }
+
+  return readTimeoutMs(["AI_MODEL_FAST_TIMEOUT_MS", "AI_MODEL_TIMEOUT_MS"], 180000);
 }
 
 function getAnthropicMaxTokens(task: AIModelTask) {
@@ -1016,7 +1060,7 @@ function assertTitleCandidateDiversity(titleCandidates: string[], topicTitle: st
     ? getGithubTitleCandidateStructureIssue(titleCandidates)
     : getTitleCandidateStructureIssue(titleCandidates, topicTitle);
   if (issue) {
-    throw new Error(issue);
+    throwQualityRetry(issue);
   }
 }
 
@@ -1037,7 +1081,7 @@ function resolveSafeTitleCandidates(aiCandidates: string[], fallbackCandidates: 
   return normalizedAiCandidates;
 }
 
-function buildTitleAdjustmentSystemPrompt(tone: string) {
+function buildTitleAdjustmentSystemPrompt() {
   return [
     "你是一位资深中文公众号编辑，专门负责把标题压缩到指定长度，同时保留传播感。",
     "不要简单截断，不要只删掉句尾几个字，要重写成自然完整、适合传播的公众号标题。",
@@ -1045,8 +1089,6 @@ function buildTitleAdjustmentSystemPrompt(tone: string) {
     "",
     "## 写作规则",
     ...getRulesForPhase("planning").map((rule, index) => `${index + 1}. ${rule}`),
-    "",
-    ...buildTonePromptSections(tone).system,
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
@@ -1081,7 +1123,7 @@ async function adjustTitlesToLength<T extends AIWriteResult>(
     }
 
     const { content } = await callCompatibleModel({
-      systemPrompt: buildTitleAdjustmentSystemPrompt(request.tone),
+      systemPrompt: buildTitleAdjustmentSystemPrompt(),
       userPrompt: buildTitleAdjustmentUserPrompt(request, current),
       temperature: 0.45,
       task: "title",
@@ -1122,12 +1164,12 @@ function assertOutlineDiversity(outline: string[]) {
   const leadTokens = cleaned.map((item) => item.slice(0, 4));
   const repeatedLeadCount = leadTokens.filter((token, index, items) => items.indexOf(token) !== index).length;
   if (repeatedLeadCount >= 3) {
-    throw new Error("大纲句式变化不够，太像同一模板展开，请重新生成。");
+    throwQualityRetry("大纲句式变化不够，太像同一模板展开。");
   }
 
   const uniqueOutlineCount = new Set(cleaned.map((item) => item.replace(/[「」“”":：，,。！？!?、\s]/g, ""))).size;
   if (uniqueOutlineCount < Math.max(3, cleaned.length - 1)) {
-    throw new Error("大纲条目彼此太像，信息增量不够，请重新生成。");
+    throwQualityRetry("大纲条目彼此太像，信息增量不够。");
   }
 }
 
@@ -1232,8 +1274,24 @@ function hasGeneratedBodyQuality(body: string, fallbackBody = "") {
 function assertGeneratedBodyQuality(body: string, fallbackBody = "") {
   const result = hasGeneratedBodyQuality(body, fallbackBody);
   if (!result.ok) {
-    throw new Error(result.reason);
+    throwQualityRetry(result.reason);
   }
+}
+
+function getBodyQualityIssue(body: string, fallbackBody = "") {
+  const result = hasGeneratedBodyQuality(body, fallbackBody);
+  return result.ok ? "" : result.reason;
+}
+
+function deriveOutlineFromBody(body: string) {
+  const headings = body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^##\s+/.test(line))
+    .map((line) => line.replace(/^##\s+/, "").trim())
+    .filter(Boolean);
+
+  return headings.slice(0, 6);
 }
 
 function hasGeneratedPlanningQuality(
@@ -1329,7 +1387,7 @@ function assertGeneratedPlanningQuality(
 ) {
   const result = hasGeneratedPlanningQuality(summary, outline, fallbackSummary, fallbackOutline, topic);
   if (!result.ok) {
-    throw new Error(result.reason);
+    throwQualityRetry(result.reason);
   }
 }
 
@@ -1403,16 +1461,18 @@ function assertResultConsistency(
   const planningMatches = summaryMatches + outlineMatches;
   const isGithubTrending = topic.source?.includes("GitHub Trending") || topic.title.includes("/");
 
-  if (planningMatches < 2) {
-    if (!isGithubTrending) {
-      throw new Error("生成结果和当前选题的关联度太弱，请重新生成。");
-    }
-  }
-
   if (options?.requireBody) {
     const bodyMatches = countMatchedKeywords(stripNonArticleText(result.body), keywords);
-    if (!isGithubTrending && bodyMatches < 2 && planningMatches < 2) {
-      throw new Error("正文和当前选题的关联度太弱，请重新生成。");
+    if (bodyMatches >= 2 || planningMatches >= 2 || isGithubTrending) {
+      return;
+    }
+
+    throwQualityRetry("正文和当前选题的关联度太弱。");
+  }
+
+  if (planningMatches < 2) {
+    if (!isGithubTrending) {
+      throwQualityRetry("生成结果和当前选题的关联度太弱。");
     }
   }
 }
@@ -1450,7 +1510,7 @@ function extractMessageContent(payload: unknown) {
   return extractProviderResponseContent(payload);
 }
 
-function buildGenerateSystemPrompt(scope: AIWriteGenerateRequest["scope"], tone: string) {
+function buildGenerateSystemPrompt(scope: AIWriteGenerateRequest["scope"]) {
   const scopeInstruction: Record<AIWriteGenerateRequest["scope"], string> = {
     title: "你本次只需要重做标题候选，但仍需保持选题角度清晰、传播感强。",
     outline: "你本次重点重做摘要和文章大纲，让结构更适合公众号阅读与转发。",
@@ -1465,46 +1525,11 @@ function buildGenerateSystemPrompt(scope: AIWriteGenerateRequest["scope"], tone:
     "",
     "## 写作规则",
     ...getRulesForPhase("generate").map((rule, index) => `${index + 1}. ${rule}`),
-    "",
-    ...buildTonePromptSections(tone).system,
-    ...buildToneExamplesSections(tone),
+    "整体写法：像成熟公众号作者在自然表达，有判断、有节奏、有具体细节，不要按固定人设写。",
+    "标题和正文都要服务于选题本身，不要为了风格牺牲事实边界。",
     scopeInstruction[scope],
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
-}
-
-function buildTonePromptSections(tone: string) {
-  const preset = resolveWritingTone(tone);
-
-  return {
-    preset,
-    system: [
-      `本次写作采用「${preset.label}」风格。${preset.description}`,
-      `标题策略：${preset.titleStrategy}`,
-      `开头方式：${preset.openingStrategy}`,
-      `段落节奏：${preset.paragraphRhythm}`,
-      `表达方式：${preset.languageStyle}`,
-      `情绪纹理：${preset.emotionalTexture}`,
-      `结尾方式：${preset.closingStyle}`,
-    ],
-    user: [
-      `目标风格：${preset.label}——${preset.description}`,
-    ],
-  };
-}
-
-function buildToneExamplesSections(tone: string): string[] {
-  const preset = resolveWritingTone(tone);
-  if (!preset.examples) return [];
-
-  return [
-    "",
-    "## 风格参考示例（仅供模仿风格，不要照搬内容）",
-    "标题示例：",
-    ...preset.examples.titles.map((t, i) => `${i + 1}. ${t}`),
-    "开头示例：",
-    preset.examples.opening,
-  ];
 }
 
 function clipPromptText(text: string, maxLength: number) {
@@ -1606,13 +1631,10 @@ function buildSharedTaskContext(request: {
   settings: AppSettings;
   domain: string;
   articleType: string;
-  targetReader: string;
   targetWordCount: number;
-  tone: string;
 }): string[] {
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
-  const tonePrompt = buildTonePromptSections(request.tone);
   const wordCount = buildWordCountGuidance(request.targetWordCount);
 
   return [
@@ -1624,12 +1646,9 @@ function buildSharedTaskContext(request: {
     `推荐角度：${request.topic.angles.join("；")}`,
     `选题理由：${request.topic.reason}`,
     `文章类型：${request.articleType}`,
-    `目标读者：${request.targetReader}`,
     `目标字数：严格控制在 ${wordCount.normalized} 字，允许误差不超过 ${wordCount.tolerance} 字`,
-    ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `内容领域：${request.settings.contentAreas.join("、")}`,
-    `读者需求：${request.settings.readerNeeds}`,
     `禁写：${request.settings.bannedTopics.join("、") || "无"}`,
     `互动 CTA：${request.settings.ctaEngage}`,
   ];
@@ -1671,7 +1690,7 @@ function getBodyWordCountMetrics(body: string, targetWordCount: number) {
   };
 }
 
-function buildWordCountAdjustmentSystemPrompt(tone: string) {
+function buildWordCountAdjustmentSystemPrompt() {
   return [
     "你是一位资深中文公众号编辑，专门负责在不跑题的前提下校准正文长度。",
     "请输出适合直接发布的公众号正文，不要解释改动，不要列点说明你做了什么。",
@@ -1680,8 +1699,6 @@ function buildWordCountAdjustmentSystemPrompt(tone: string) {
     "",
     "## 写作规则",
     ...getRulesForPhase("drafting").map((rule, index) => `${index + 1}. ${rule}`),
-    "",
-    ...buildTonePromptSections(tone).system,
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
@@ -1690,6 +1707,7 @@ function buildWordCountAdjustmentUserPrompt(
   request: AIWriteGenerateRequest,
   plan: AIArticlePlan,
   body: string,
+  qualityIssue?: string,
 ) {
   const metrics = getBodyWordCountMetrics(body, request.targetWordCount);
   const adjustmentInstruction = metrics.isTooLong
@@ -1709,6 +1727,8 @@ function buildWordCountAdjustmentUserPrompt(
     "只调整正文，不要改成大纲，不要输出写作说明。",
     "如果压缩，优先删减重复表述、空泛判断、可省略的过渡句和冗长例子。",
     "如果补足，优先补充因果解释、影响对象、实际后果和结尾建议，不要平铺新观点。",
+    qualityIssue ? "## 自动质检重写要求" : "",
+    ...buildQualityRewriteNotes(qualityIssue),
     `待校准正文：\n${body}`,
     '请只返回 JSON：{"transformedText":""}',
   ].filter(Boolean).join("\n");
@@ -1727,14 +1747,26 @@ function buildWordCountStatus(body: string, targetWordCount: number, adjusted: b
   };
 }
 
-function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
+function buildGenerateUserPrompt(request: AIWriteGenerateRequest, qualityIssue?: string) {
   const { topic, draft, scope } = request;
   const wordCount = buildWordCountGuidance(request.targetWordCount);
+  const shouldGenerateTitleCandidates = scope !== "full";
+  const isFullArticle = scope === "full";
   const sourceContext = isGithubTrendingDraft(request)
     ? getGithubTrendingSourceContextForPrompt(request.sourceContext)
     : request.sourceContext;
   const sections = [
     `任务：生成适合公众号的${scope === "full" ? "完整文章" : scope === "title" ? "标题候选" : scope === "outline" ? "摘要和大纲" : "正文"}`,
+    isFullArticle
+      ? [
+          "本次生成流程必须按顺序执行，但只输出最终 JSON：",
+          "1. 先完整阅读并吸收所有热点素材、事实卡片、账号定位、禁写规则和写作要求。",
+          "2. 在脑中搭好文章结构和段落节奏，但不要把结构、大纲、写作计划、分析过程写出来。",
+          "3. 一口气写完最终主标题和完整正文。正文可以使用自然的 ## 小标题分节，但不能输出提纲式占位内容。",
+          "4. 输出前自行检查 AI 味，删掉模板句、空泛拔高、三段式套话、硬凑排比和写作说明。",
+          '5. JSON 中 outline 返回 []，titleCandidates 返回 []，最终内容只看 title、summary、selectedAngle、body。',
+        ].join("\n")
+      : "",
     ...buildSharedTaskContext(request),
     ...buildSourceContextPromptSections(sourceContext, "generate"),
     ...buildGithubTrendingPromptSections(request, "generate"),
@@ -1749,20 +1781,28 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest) {
     draft?.outline?.length ? `当前大纲：${draft.outline.join(" | ")}` : "",
     draft?.body ? `当前正文参考：${draft.body.slice(0, 600)}` : "",
     '请只返回 JSON，格式必须是：{"title":"","titleCandidates":[],"selectedAngle":"","summary":"","outline":[],"body":""}',
-    "titleCandidates 输出 5 个标题，避免标题党，但要有点击欲和明确价值感。",
-    `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
+    scope === "full"
+      ? "只输出一个最终主标题，titleCandidates 返回空数组，不要生成标题候选。"
+      : "titleCandidates 输出 5 个标题，避免标题党，但要有点击欲和明确价值感。",
+    shouldGenerateTitleCandidates
+      ? `每个标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`
+      : `主标题不要超过 ${MAX_TITLE_LENGTH} 个字符。`,
     "优先把标题控制在 12-24 字之间，宁可短一点，也不要拖成长句。",
     "标题里不要出现“知乎、微博、抖音、百度、今日头条、热搜、热榜”这类平台词，除非平台名本身就是事件主体的一部分。",
-    "标题不用刻意五花八门，别把所有候选都写成同一套句式硬换词。",
+    shouldGenerateTitleCandidates ? "标题不用刻意五花八门，别把所有候选都写成同一套句式硬换词。" : "",
     "标题优先像自然推荐而不是文章摘要，读起来要顺，不要总用反问、转折和“为什么”式开头。",
     `摘要控制在 80-${MAX_SUMMARY_LENGTH} 字，像一段自然转述，不像摘要报告。`,
-    "大纲不要写得太像清单，允许两段式、三段式和轻判断混写。",
+    isFullArticle
+      ? "不要输出大纲内容；如果 JSON 必须包含 outline 字段，就返回空数组 []。"
+      : "大纲不要写得太像清单，允许两段式、三段式和轻判断混写。",
+    scope === "body" || scope === "full" || qualityIssue ? "## 自动质检重写要求" : "",
+    ...buildQualityRewriteNotes(qualityIssue),
   ].filter(Boolean);
 
   return sections.join("\n");
 }
 
-function buildPlanningSystemPrompt(tone: string) {
+function buildPlanningSystemPrompt() {
   return [
     "你是一位资深中文公众号策划编辑，擅长为文章确定最有传播性的标题、摘要和结构。",
     "请用简体中文输出，像成熟公众号编辑，不要报告腔。",
@@ -1770,14 +1810,12 @@ function buildPlanningSystemPrompt(tone: string) {
     "",
     "## 写作规则",
     ...getRulesForPhase("planning").map((rule, index) => `${index + 1}. ${rule}`),
-    "",
-    ...buildTonePromptSections(tone).system,
-    ...buildToneExamplesSections(tone),
+    "整体写法：自然、有信息量、有判断感，不套固定风格模板。",
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
 
-function buildPlanningUserPrompt(request: AIWriteGenerateRequest) {
+function buildPlanningUserPrompt(request: AIWriteGenerateRequest, qualityIssue?: string) {
   const { draft } = request;
   const wordCount = buildWordCountGuidance(request.targetWordCount);
   const sourceContext = isGithubTrendingDraft(request)
@@ -1802,11 +1840,13 @@ function buildPlanningUserPrompt(request: AIWriteGenerateRequest) {
     draft?.title ? `当前标题参考：${draft.title}` : "",
     draft?.summary ? `当前摘要参考：${draft.summary}` : "",
     draft?.outline?.length ? `当前大纲参考：${draft.outline.join(" | ")}` : "",
+    qualityIssue ? "## 自动质检重写要求" : "",
+    ...buildQualityRewriteNotes(qualityIssue),
     '请只返回 JSON：{"title":"","titleCandidates":[],"selectedAngle":"","summary":"","outline":[],"body":""}',
   ].filter(Boolean).join("\n");
 }
 
-function buildDraftingSystemPrompt(tone: string) {
+function buildDraftingSystemPrompt() {
   return [
     "你是一位资深中文公众号作者，擅长把已有结构写成可直接发布的成稿。",
     "请用简体中文输出，像成熟公众号作者在和读者说话，不要报告腔，不要模板腔。",
@@ -1814,9 +1854,7 @@ function buildDraftingSystemPrompt(tone: string) {
     "",
     "## 写作规则",
     ...getRulesForPhase("drafting").map((rule, index) => `${index + 1}. ${rule}`),
-    "",
-    ...buildTonePromptSections(tone).system,
-    ...buildToneExamplesSections(tone),
+    "整体写法：自然、有信息量、有判断感，不套固定风格模板。",
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
@@ -1824,8 +1862,8 @@ function buildDraftingSystemPrompt(tone: string) {
 function buildDraftingUserPrompt(
   request: AIWriteGenerateRequest,
   plan: AIArticlePlan,
+  qualityIssue?: string,
 ) {
-  const tonePrompt = buildTonePromptSections(request.tone);
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
   const wordCount = buildWordCountGuidance(request.targetWordCount);
@@ -1839,8 +1877,6 @@ function buildDraftingUserPrompt(
     `文章领域：${resolvedDomain}`,
     `领域提醒：${domainConfig.promptHint}`,
     `文章类型：${request.articleType}`,
-    `目标读者：${request.targetReader}`,
-    ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
     ...buildSourceContextPromptSections(sourceContext, "drafting"),
@@ -1859,6 +1895,8 @@ function buildDraftingUserPrompt(
     "文中至少写出一个容易被忽略的代价、门槛或风险，不要只写机会和表面热度。",
     "结尾给出 2-3 条可执行建议，并自然收束到互动 CTA。",
     request.draft?.body ? `已有正文参考：${request.draft.body.slice(0, 600)}` : "",
+    "## 自动质检重写要求",
+    ...buildQualityRewriteNotes(qualityIssue),
     '请只返回 JSON：{"title":"","titleCandidates":[],"selectedAngle":"","summary":"","outline":[],"body":""}',
   ].filter(Boolean).join("\n");
 }
@@ -1875,22 +1913,19 @@ function buildTransformInstruction(action: AITransformAction) {
   return "在保留核心观点和关键信息的前提下缩写这段内容，删掉空话套话，让节奏更紧凑。";
 }
 
-function buildTransformSystemPrompt(tone: string) {
+function buildTransformSystemPrompt() {
   return [
     "你是一位资深公众号编辑，专门负责润色和改写文章片段。",
     "请输出适合直接粘贴回公众号文章的中文文本。",
     "不要加引号、不要解释改动、不要列点说明。",
     "改写后不要有 AI 味，不要出现“总的来说”“不难发现”“值得一提的是”这类模板连接词。",
     ...getRulesForPhase("transform"),
-    ...buildTonePromptSections(tone).system,
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
 
 function buildTransformUserPrompt(request: AIWriteTransformRequest) {
   const sourceText = request.selectedText?.trim() || request.body.trim();
-  const tonePrompt = buildTonePromptSections(request.tone);
-  const tonePreset = resolveWritingTone(request.tone);
   const resolvedDomain = resolveArticleDomain(request.domain);
   const domainConfig = domainConfigs[resolvedDomain];
 
@@ -1904,14 +1939,10 @@ function buildTransformUserPrompt(request: AIWriteTransformRequest) {
     `领域重点：${domainConfig.writingFocus.join("、")}`,
     `角度：${request.topic.angles.join("；")}`,
     `文章类型：${request.articleType}`,
-    `目标读者：${request.targetReader}`,
-    `语气：${request.tone}`,
-    ...tonePrompt.user,
     `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
     "改写方向：更像公众号爆文作者，而不是报告写作者。多用短句，保留判断感和节奏感。",
     "去味清单：删掉填充连接词、空泛拔高、模糊归因、宣传腔、否定式排比和硬凑三连词；把能说具体的地方都说具体。",
-    `本次改写重点：${tonePreset.transformFocus}`,
     "不要编造新事实、案例、数据、采访和引用。",
     "不要为了显得高级而堆抽象词，优先把话说明白。",
     request.draft?.title ? `文章标题：${request.draft.title}` : "",
@@ -1925,6 +1956,7 @@ async function adjustBodyToTargetWordCount(
   request: AIWriteGenerateRequest,
   plan: AIArticlePlan,
   body: string,
+  qualityIssue?: string,
 ) {
   const initialMetrics = getBodyWordCountMetrics(body, request.targetWordCount);
   if (!initialMetrics.isTooShort && !initialMetrics.isTooLong) {
@@ -1935,36 +1967,47 @@ async function adjustBodyToTargetWordCount(
   let currentMetrics = initialMetrics;
   const usedModels: string[] = [];
   let provider = "";
+  let currentQualityIssue = qualityIssue;
 
   for (let pass = 0; pass < BODY_WORD_COUNT_ADJUSTMENT_MAX_PASSES; pass += 1) {
     const { config, model, content } = await callCompatibleModel({
-      systemPrompt: buildWordCountAdjustmentSystemPrompt(request.tone),
-      userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, currentBody),
+      systemPrompt: buildWordCountAdjustmentSystemPrompt(),
+      userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, currentBody, currentQualityIssue),
       temperature: 0.4,
       task: "transform",
     });
 
-    const parsed = extractJsonPayload(content);
-    const adjustedBody = polishBodyText(
-      normalizeBodyText(parsed.transformedText, content.trim() || currentBody),
-    );
-    const adjustedMetrics = getBodyWordCountMetrics(adjustedBody, request.targetWordCount);
-    const becameCloser =
-      Math.abs(adjustedMetrics.actual - adjustedMetrics.normalized) < Math.abs(currentMetrics.actual - currentMetrics.normalized);
-    const reachedTarget = !adjustedMetrics.isTooShort && !adjustedMetrics.isTooLong;
+    try {
+      const parsed = extractJsonPayload(content);
+      const adjustedBody = polishBodyText(
+        normalizeBodyText(parsed.transformedText, content.trim() || currentBody),
+      );
+      const adjustedMetrics = getBodyWordCountMetrics(adjustedBody, request.targetWordCount);
+      const becameCloser =
+        Math.abs(adjustedMetrics.actual - adjustedMetrics.normalized) < Math.abs(currentMetrics.actual - currentMetrics.normalized);
+      const reachedTarget = !adjustedMetrics.isTooShort && !adjustedMetrics.isTooLong;
 
-    if (!becameCloser && !reachedTarget) {
-      break;
-    }
+      if (!becameCloser && !reachedTarget) {
+        break;
+      }
 
-    assertGeneratedBodyQuality(adjustedBody, currentBody);
-    currentBody = adjustedBody;
-    currentMetrics = adjustedMetrics;
-    usedModels.push(model);
-    provider = config.provider;
+      assertGeneratedBodyQuality(adjustedBody, currentBody);
+      currentBody = adjustedBody;
+      currentMetrics = adjustedMetrics;
+      usedModels.push(model);
+      provider = config.provider;
+      currentQualityIssue = undefined;
 
-    if (reachedTarget) {
-      break;
+      if (reachedTarget) {
+        break;
+      }
+    } catch (error) {
+      if (isQualityRetryError(error)) {
+        currentQualityIssue = error.message;
+        continue;
+      }
+
+      throw error;
     }
   }
 
@@ -1987,52 +2030,64 @@ async function draftBodyWithStrictWordCount(
   let lastWordCountStatus = null as ReturnType<typeof buildWordCountStatus> | null;
   const modelTrail: string[] = [];
   let provider = "";
+  let qualityIssue: string | undefined;
 
-  for (let attempt = 0; attempt < BODY_REGENERATION_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt <= BODY_REGENERATION_MAX_ATTEMPTS; attempt += 1) {
     const draftingResponse = await callCompatibleModel({
-      systemPrompt: buildDraftingSystemPrompt(request.tone),
-      userPrompt: buildDraftingUserPrompt(request, plan),
+      systemPrompt: buildDraftingSystemPrompt(),
+      userPrompt: buildDraftingUserPrompt(request, plan, qualityIssue),
       temperature: attempt === 0 ? 0.72 : 0.62,
       task: request.scope,
     });
 
-    provider = draftingResponse.config.provider;
-    const draftedResult = mergeBodyWithPlan(
-      draftingResponse.content,
-      plan,
-      request.topic,
-      request.draft?.body?.trim() ?? "",
-    );
-    const adjustedBodyResult = await adjustBodyToTargetWordCount(request, plan, draftedResult.body);
-    const result = adjustedBodyResult
-      ? {
-          ...draftedResult,
-          body: adjustedBodyResult.body,
-        }
-      : draftedResult;
-    const wordCountStatus = buildWordCountStatus(result.body, request.targetWordCount, Boolean(adjustedBodyResult));
+    try {
+      provider = draftingResponse.config.provider;
+      const draftedResult = mergeBodyWithPlan(
+        draftingResponse.content,
+        plan,
+        request.topic,
+        request.draft?.body?.trim() ?? "",
+      );
+      const adjustedBodyResult = await adjustBodyToTargetWordCount(request, plan, draftedResult.body, qualityIssue);
+      const result = adjustedBodyResult
+        ? {
+            ...draftedResult,
+            body: adjustedBodyResult.body,
+          }
+        : draftedResult;
+      const wordCountStatus = buildWordCountStatus(result.body, request.targetWordCount, Boolean(adjustedBodyResult));
 
-    modelTrail.push(
-      adjustedBodyResult?.model
-        ? `${draftingResponse.model} -> ${adjustedBodyResult.model}`
-        : draftingResponse.model,
-    );
+      modelTrail.push(
+        adjustedBodyResult?.model
+          ? `${draftingResponse.model} -> ${adjustedBodyResult.model}`
+          : draftingResponse.model,
+      );
 
-    lastResult = result;
-    lastWordCountStatus = wordCountStatus;
+      lastResult = result;
+      lastWordCountStatus = wordCountStatus;
+      qualityIssue = undefined;
 
-    if (wordCountStatus.inRange) {
-      return {
-        provider,
-        model: modelTrail.join(" => "),
-        result,
-        wordCountStatus,
-      };
+      if (wordCountStatus.inRange) {
+        return {
+          provider,
+          model: modelTrail.join(" => "),
+          result,
+          wordCountStatus,
+        };
+      }
+    } catch (error) {
+      if (isQualityRetryError(error)) {
+        qualityIssue = error.message;
+        modelTrail.push(draftingResponse.model);
+        continue;
+      }
+
+      throw error;
     }
   }
 
   if (!lastResult || !lastWordCountStatus) {
-    throw new Error("AI 未生成可用正文，请重新生成。");
+    throw createQualityRetryExhaustedError();
   }
 
   console.warn("AI body word count did not converge to target", {
@@ -2168,6 +2223,25 @@ async function callCompatibleModel({
   };
 }
 
+export async function completeAIText({
+  systemPrompt,
+  userPrompt,
+  temperature = 0.2,
+  task = "title",
+}: {
+  systemPrompt: string;
+  userPrompt: string;
+  temperature?: number;
+  task?: AITextCompletionTask;
+}) {
+  return callCompatibleModel({
+    systemPrompt,
+    userPrompt,
+    temperature,
+    task,
+  });
+}
+
 function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string): AIWriteResult {
   const base = createBaseResult(request.topic, request.settings, request.draft);
   const parsed = extractJsonPayload(rawText);
@@ -2175,24 +2249,31 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
   const existingSummary = request.draft?.summary?.trim() ?? base.summary;
   const existingOutline = request.draft?.outline?.filter(Boolean).length ? request.draft.outline : [];
 
-  const titleCandidates = resolveSafeTitleCandidates(
-    normalizeStringList(parsed.titleCandidates, base.titleCandidates),
-    base.titleCandidates,
-    request.topic.title,
-  );
-  assertTitleCandidateDiversity(titleCandidates, request.topic.title);
+  const titleCandidates =
+    request.scope === "full"
+      ? []
+      : resolveSafeTitleCandidates(
+          normalizeStringList(parsed.titleCandidates, base.titleCandidates),
+          base.titleCandidates,
+          request.topic.title,
+        );
+  if (request.scope !== "full") {
+    assertTitleCandidateDiversity(titleCandidates, request.topic.title);
+  }
   const normalizedTitles = normalizeTitlesWithinLimit(
     normalizeText(parsed.title, titleCandidates[0] || base.title),
-    titleCandidates,
+    titleCandidates.length ? titleCandidates : [base.title],
     base.title,
   );
   const title = normalizedTitles.title;
   const selectedAngle = normalizeSelectedAngle(parsed.selectedAngle, base.selectedAngle);
   const summary = polishSummaryText(normalizeText(parsed.summary, base.summary));
-  const outline = polishOutlineItemsForTopic(request.topic, normalizeOutlineList(parsed.outline, base.outline));
   const body = polishBodyText(normalizeBodyText(parsed.body, base.body));
+  const outline = request.scope === "full"
+    ? deriveOutlineFromBody(body)
+    : polishOutlineItemsForTopic(request.topic, normalizeOutlineList(parsed.outline, base.outline));
 
-  if (request.scope !== "title") {
+  if (request.scope !== "title" && request.scope !== "full") {
     assertOutlineDiversity(outline);
   }
 
@@ -2227,7 +2308,7 @@ function mergeGeneratedResult(request: AIWriteGenerateRequest, rawText: string):
 
   return {
     title,
-    titleCandidates: normalizedTitles.titleCandidates,
+    titleCandidates: request.scope === "full" ? [] : normalizedTitles.titleCandidates,
     selectedAngle,
     summary,
     outline: outline.length ? outline : base.outline,
@@ -2306,6 +2387,43 @@ function mergeBodyWithPlan(
   };
 }
 
+async function rewriteBodyAfterAIQualityCheck(request: AIWriteGenerateRequest, result: AIWriteResult) {
+  const qualityIssue = getBodyQualityIssue(result.body, request.draft?.body?.trim() ?? "");
+  if (!qualityIssue) {
+    return null;
+  }
+
+  const plan: AIArticlePlan = {
+    title: result.title,
+    titleCandidates: result.titleCandidates,
+    selectedAngle: result.selectedAngle,
+    summary: result.summary,
+    outline: result.outline.length ? result.outline : deriveOutlineFromBody(result.body),
+    body: result.body,
+  };
+  const { config, model, content } = await callCompatibleModel({
+    systemPrompt: buildWordCountAdjustmentSystemPrompt(),
+    userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, result.body, qualityIssue),
+    temperature: 0.46,
+    task: "transform",
+  });
+  const parsed = extractJsonPayload(content);
+  const body = polishBodyText(normalizeBodyText(parsed.transformedText, content.trim() || result.body));
+
+  assertGeneratedBodyQuality(body, result.body);
+  assertResultConsistency(request.topic, { summary: result.summary, outline: result.outline, body }, { requireBody: true });
+
+  return {
+    provider: config.provider,
+    model,
+    result: {
+      ...result,
+      body,
+      outline: result.outline.length ? result.outline : deriveOutlineFromBody(body),
+    },
+  };
+}
+
 function tryReuseExistingPlan(request: AIWriteGenerateRequest) {
   if (!request.draft) return null;
 
@@ -2345,57 +2463,135 @@ function tryReuseExistingPlan(request: AIWriteGenerateRequest) {
   } satisfies AIArticlePlan;
 }
 
-export async function generateWechatArticle(request: AIWriteGenerateRequest) {
-  if (request.scope === "body" || request.scope === "full") {
-    const reusedPlan = tryReuseExistingPlan(request);
-    const planningResponse = reusedPlan
-      ? null
-      : await callCompatibleModel({
-          systemPrompt: buildPlanningSystemPrompt(request.tone),
-          userPrompt: buildPlanningUserPrompt(request),
-          temperature: 0.72,
-          task: "outline",
-        });
+async function generatePlanningWithQualityRetry(request: AIWriteGenerateRequest) {
+  let qualityIssue: string | undefined;
 
-    const plan = reusedPlan
-      ? reusedPlan
-      : mergePlanningResult(request, planningResponse ? planningResponse.content : "");
+  for (let attempt = 0; attempt <= QUALITY_REWRITE_MAX_ATTEMPTS; attempt += 1) {
+    const planningResponse = await callCompatibleModel({
+      systemPrompt: buildPlanningSystemPrompt(),
+      userPrompt: buildPlanningUserPrompt(request, qualityIssue),
+      temperature: attempt === 0 ? 0.72 : 0.62,
+      task: "outline",
+    });
+
+    try {
+      return {
+        response: planningResponse,
+        plan: mergePlanningResult(request, planningResponse.content),
+      };
+    } catch (error) {
+      if (isQualityRetryError(error)) {
+        qualityIssue = error.message;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw createQualityRetryExhaustedError();
+}
+
+async function generateFullArticleWithQualityRetry(request: AIWriteGenerateRequest) {
+  let qualityIssue: string | undefined;
+
+  for (let attempt = 0; attempt <= QUALITY_REWRITE_MAX_ATTEMPTS; attempt += 1) {
+    const { config, model, content } = await callCompatibleModel({
+      systemPrompt: buildGenerateSystemPrompt(request.scope),
+      userPrompt: buildGenerateUserPrompt(request, qualityIssue),
+      temperature: attempt === 0 ? 0.7 : 0.58,
+      task: request.scope,
+    });
+
+    try {
+      const result = mergeGeneratedResult(request, content);
+      const rewritten = await rewriteBodyAfterAIQualityCheck(request, result);
+      const finalResult = rewritten?.result ?? result;
+
+      return {
+        provider: rewritten?.provider ?? config.provider,
+        model: rewritten ? `${model} -> ${rewritten.model}` : model,
+        result: finalResult,
+        wordCountStatus: buildWordCountStatus(finalResult.body, request.targetWordCount, Boolean(rewritten)),
+      };
+    } catch (error) {
+      if (isQualityRetryError(error)) {
+        qualityIssue = error.message;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw createQualityRetryExhaustedError();
+}
+
+async function generatePartialArticleWithQualityRetry(request: AIWriteGenerateRequest) {
+  let qualityIssue: string | undefined;
+
+  for (let attempt = 0; attempt <= QUALITY_REWRITE_MAX_ATTEMPTS; attempt += 1) {
+    const { config, model, content } = await callCompatibleModel({
+      systemPrompt: buildGenerateSystemPrompt(request.scope),
+      userPrompt: buildGenerateUserPrompt(request, qualityIssue),
+      temperature: request.scope === "title" && !qualityIssue ? 0.82 : 0.64,
+      task: request.scope,
+    });
+
+    try {
+      const mergedResult = mergeGeneratedResult(request, content);
+      const adjustedResult =
+        request.scope === "title" || request.scope === "outline"
+          ? await adjustTitlesToLength(request, mergedResult)
+          : mergedResult;
+
+      return {
+        provider: config.provider,
+        model,
+        result: adjustedResult,
+        wordCountStatus: undefined,
+      };
+    } catch (error) {
+      if (isQualityRetryError(error)) {
+        qualityIssue = error.message;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw createQualityRetryExhaustedError();
+}
+
+export async function generateWechatArticle(request: AIWriteGenerateRequest) {
+  if (request.scope === "full") {
+    return generateFullArticleWithQualityRetry(request);
+  }
+
+  if (request.scope === "body") {
+    const reusedPlan = tryReuseExistingPlan(request);
+    const planningGeneration = reusedPlan ? null : await generatePlanningWithQualityRetry(request);
+    const plan = reusedPlan ?? planningGeneration!.plan;
     const bodyGeneration = await draftBodyWithStrictWordCount(request, plan);
     assertResultConsistency(request.topic, { summary: bodyGeneration.result.summary, outline: bodyGeneration.result.outline, body: bodyGeneration.result.body }, { requireBody: true });
 
     return {
       provider: bodyGeneration.provider,
-      model: planningResponse
-        ? `${planningResponse.model} -> ${bodyGeneration.model}`
+      model: planningGeneration
+        ? `${planningGeneration.response.model} -> ${bodyGeneration.model}`
         : bodyGeneration.model,
       result: bodyGeneration.result,
       wordCountStatus: bodyGeneration.wordCountStatus,
     };
   }
 
-  const { config, model, content } = await callCompatibleModel({
-    systemPrompt: buildGenerateSystemPrompt(request.scope, request.tone),
-    userPrompt: buildGenerateUserPrompt(request),
-    temperature: request.scope === "title" ? 0.82 : 0.7,
-    task: request.scope,
-  });
-  const mergedResult = mergeGeneratedResult(request, content);
-  const adjustedResult =
-    request.scope === "title" || request.scope === "outline"
-      ? await adjustTitlesToLength(request, mergedResult)
-      : mergedResult;
-
-  return {
-    provider: config.provider,
-    model,
-    result: adjustedResult,
-    wordCountStatus: undefined,
-  };
+  return generatePartialArticleWithQualityRetry(request);
 }
 
 export async function transformWechatText(request: AIWriteTransformRequest) {
   const { config, model, content } = await callCompatibleModel({
-    systemPrompt: buildTransformSystemPrompt(request.tone),
+    systemPrompt: buildTransformSystemPrompt(),
     userPrompt: buildTransformUserPrompt(request),
     temperature: 0.7,
     task: "transform",

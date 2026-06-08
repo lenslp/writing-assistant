@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { buildTopicSuggestionFromHotTopic } from "./article-analysis";
 import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
-import { hasPersistenceBackend } from "./persistence";
+import { hasPersistenceBackend, shouldUseSupabaseAdmin } from "./persistence";
 import { readHotTopicRefreshMeta, readHotTopics } from "./hot-topic-db";
 import { scrapeHotTopics } from "./hot-topic-sources";
 import type { HotTopicItem } from "./hot-topics";
-import { hasDatabaseUrl, prisma } from "./prisma";
+import { prisma } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
 import { upsertTopicRecord } from "./topic-db";
 
@@ -16,6 +16,14 @@ export const ARTICLE_ANALYSIS_CACHE_TAG = "article-analysis";
 const CORE_PLATFORM_SOURCES = ["微博", "抖音", "知乎", "今日头条", "百度"] as const;
 const HOT_TOPICS_RETENTION_DAYS = 7;
 const HOT_TOPIC_FETCH_JOB_KEEP_COUNT = 100;
+const HOT_TOPIC_WRITE_BATCH_SIZE = 60;
+const TOPIC_WRITE_CONCURRENCY = 2;
+
+async function runInBatches<T>(items: T[], batchSize: number, handler: (item: T) => Promise<unknown>) {
+  for (let index = 0; index < items.length; index += batchSize) {
+    await Promise.all(items.slice(index, index + batchSize).map(handler));
+  }
+}
 
 function stripHtmlTags(input: string) {
   return input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -87,7 +95,7 @@ function getHotTopicRetentionCutoff() {
 async function cleanupHotTopicHistory() {
   const cutoff = getHotTopicRetentionCutoff();
 
-  if (!hasDatabaseUrl()) {
+  if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
 
     await supabase
@@ -263,7 +271,7 @@ export async function refreshHotTopicsAndPersist() {
   let jobId: string | null = null;
 
   try {
-    if (!hasDatabaseUrl()) {
+    if (shouldUseSupabaseAdmin()) {
       const supabase = getSupabaseAdmin();
       await supabase
         .from("fetch_jobs")
@@ -369,46 +377,29 @@ export async function refreshHotTopicsAndPersist() {
     });
     jobId = job.id;
 
-    await Promise.all(
-      persistedItems.map((item) => {
-        const rawPayload = item.raw == null ? undefined : item.raw as Prisma.InputJsonValue;
+    await prisma.hotTopic.deleteMany({});
+    for (let index = 0; index < persistedItems.length; index += HOT_TOPIC_WRITE_BATCH_SIZE) {
+      const batch = persistedItems.slice(index, index + HOT_TOPIC_WRITE_BATCH_SIZE);
 
-        return prisma.hotTopic.upsert({
-          where: {
-            source_externalId: {
-              source: item.source,
-              externalId: item.externalId,
-            },
-          },
-          update: {
-            title: item.title,
-            url: item.url ?? null,
-            sourceType: item.sourceType,
-            heat: item.heat,
-            trendScore: Number.parseInt(item.trend.replace(/[^\d]/g, ""), 10) || 0,
-            summary: item.summary ?? null,
-            tags: item.tags,
-            fetchedAt: batchFetchedAt,
-            raw: rawPayload,
-          },
-          create: {
-            externalId: item.externalId,
-            title: item.title,
-            url: item.url ?? null,
-            source: item.source,
-            sourceType: item.sourceType,
-            heat: item.heat,
-            trendScore: Number.parseInt(item.trend.replace(/[^\d]/g, ""), 10) || 0,
-            summary: item.summary ?? null,
-            tags: item.tags,
-            fetchedAt: batchFetchedAt,
-            raw: rawPayload,
-          },
-        });
-      }),
-    );
+      await prisma.hotTopic.createMany({
+        data: batch.map((item) => ({
+          externalId: item.externalId,
+          title: item.title,
+          url: item.url ?? null,
+          source: item.source,
+          sourceType: item.sourceType,
+          heat: item.heat,
+          trendScore: Number.parseInt(item.trend.replace(/[^\d]/g, ""), 10) || 0,
+          summary: item.summary ?? null,
+          tags: item.tags,
+          fetchedAt: batchFetchedAt,
+          raw: item.raw == null ? Prisma.JsonNull : item.raw as Prisma.InputJsonValue,
+        })),
+        skipDuplicates: true,
+      });
+    }
 
-    await Promise.all(generatedTopics.map((topic) => upsertTopicRecord(topic)));
+    await runInBatches(generatedTopics, TOPIC_WRITE_CONCURRENCY, upsertTopicRecord);
 
     await prisma.fetchJob.update({
       where: { id: jobId },
@@ -439,7 +430,7 @@ export async function refreshHotTopicsAndPersist() {
   } catch (error) {
     const message = formatPersistenceError(error);
 
-    if (!hasDatabaseUrl()) {
+    if (shouldUseSupabaseAdmin()) {
       const supabase = getSupabaseAdmin();
 
       if (jobId) {
