@@ -6,6 +6,7 @@
   "engines": {
     "node": "22.x"
   },
+  "packageManager": "pnpm@11.4.0",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('.next', { recursive: true, force: true })\"",
     "dev": "next dev",
