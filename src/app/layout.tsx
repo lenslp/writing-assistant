@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "../styles/index.css";
+import { AppThemeProvider } from "./components/AppThemeProvider";
 import { AppShell } from "./components/AppShell";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./providers/auth-provider";
@@ -17,10 +18,12 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body>
-        <AuthProvider>
-          <AppShell>{children}</AppShell>
-          <Toaster richColors position="top-right" />
-        </AuthProvider>
+        <AppThemeProvider>
+          <AuthProvider>
+            <AppShell>{children}</AppShell>
+            <Toaster richColors position="top-right" />
+          </AuthProvider>
+        </AppThemeProvider>
       </body>
     </html>
   );

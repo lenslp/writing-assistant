@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { TopicCenter } from "../components/TopicCenter";
 
 function TopicCenterFallback() {
-  return <div className="p-8 text-sm text-[#8c8178]">正在加载选题中心...</div>;
+  return <div className="p-8 text-sm text-muted-foreground">正在加载选题中心...</div>;
 }
 
 export default function Page() {

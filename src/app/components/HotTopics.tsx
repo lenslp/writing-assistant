@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus, Flame, Search, RefreshCw,
@@ -146,25 +146,25 @@ function resolveDisplayDomain(topic: HotTopicItem): ActiveArticleDomain | null {
 
 function HotTopicsLoadingShell() {
   return (
-    <div className="mx-auto max-w-[1200px] space-y-5">
+    <div className="lens-page space-y-4">
       <div className="flex items-start justify-between">
         <div className="space-y-2">
-          <Skeleton className="h-7 w-28 rounded-lg bg-[#fff0e6]" />
-          <Skeleton className="h-4 w-72 rounded-lg bg-[#f1eadf]" />
+          <Skeleton className="h-7 w-28 rounded-lg bg-primary/10" />
+          <Skeleton className="h-4 w-72 rounded-lg bg-muted" />
         </div>
-        <div className="rounded-2xl border border-[#f0dfd0] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_100%)] px-4 py-3 shadow-sm">
-          <div className="flex items-center gap-2 text-[13px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+        <div className="rounded-2xl border border-border/70 bg-[var(--surface-strong)] px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-2 text-[13px] text-primary" style={{ fontWeight: 700 }}>
             <LoaderCircle className="h-4 w-4 animate-spin" />
             热点数据准备中
           </div>
-          <div className="mt-1.5 text-[12px] text-[#8c8178]">正在连接微博、GitHub Trending、抖音、百度等来源，首次加载会稍慢一点。</div>
+          <div className="mt-1.5 text-[12px] text-muted-foreground">正在连接微博、GitHub Trending、抖音、百度等来源，首次加载会稍慢一点。</div>
         </div>
       </div>
 
       <div className="lens-card p-4">
         <div className="grid gap-3 md:grid-cols-[1.2fr_0.9fr]">
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-[12px] text-[#8c8178]">
+            <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
               <Skeleton className="h-4 w-4 rounded-full" />
               <Skeleton className="h-4 w-44 rounded-lg" />
             </div>
@@ -181,18 +181,18 @@ function HotTopicsLoadingShell() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[#f0e5da] bg-[#fffaf5] p-4">
-            <div className="text-[12px] text-[#8c8178]">加载阶段</div>
+          <div className="rounded-2xl border border-border/70 bg-background p-4">
+            <div className="text-[12px] text-muted-foreground">加载阶段</div>
             <div className="mt-3 space-y-3">
               {loadingStages.map((stage, index) => (
                 <div key={stage} className="flex items-center gap-3">
                   <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] ${
-                    index === 0 ? "bg-[#d65f2b] text-white" : "bg-white text-[#8c8178]"
+                    index === 0 ? "bg-primary text-white" : "bg-card text-muted-foreground"
                   }`} style={{ fontWeight: 600 }}>
                     {index + 1}
                   </div>
                   <div className="flex-1">
-                    <div className="text-[12px] text-[#5d544c]" style={{ fontWeight: 600 }}>{stage}</div>
+                    <div className="text-[12px] text-foreground/75" style={{ fontWeight: 600 }}>{stage}</div>
                     <Skeleton className="mt-1 h-2 w-full rounded-full" />
                   </div>
                 </div>
@@ -202,8 +202,8 @@ function HotTopicsLoadingShell() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-[#eadfd4] bg-white shadow-sm">
-        <div className="grid grid-cols-[1fr_100px_90px_90px_140px] border-b border-[#f0e5da] px-5 py-2.5">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="grid grid-cols-[1fr_100px_90px_90px_140px] border-b border-border/70 px-5 py-2.5">
           {Array.from({ length: 5 }).map((_, index) => (
             <Skeleton key={`header-${index}`} className="h-4 w-16 rounded-md" />
           ))}
@@ -252,7 +252,6 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const [groupedPages, setGroupedPages] = useState<Record<string, number>>({});
   const [isReclassifying, setIsReclassifying] = useState(false);
   const [detailTopic, setDetailTopic] = useState<HotTopicItem | null>(null);
-  const autoRefreshStartedRef = useRef(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { upsertTopic } = useAppStore();
@@ -352,35 +351,6 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
     void loadItems(Boolean((shouldUseCachedPayload && cachedPayload) || hasInitialData));
   }, [applyHotTopicsPayload, initialData]);
-
-  useEffect(() => {
-    if (autoRefreshStartedRef.current) return;
-    autoRefreshStartedRef.current = true;
-
-    const refreshInBackground = async () => {
-      try {
-        const response = await fetch("/api/hot-topics/refresh", { method: "POST" });
-        const payload = await response.json().catch(() => null);
-
-        if (!response.ok) {
-          throw new Error(payload?.message ?? `Failed to refresh hot topics: ${response.status}`);
-        }
-
-        if (!payload || !applyHotTopicsPayload(payload)) {
-          await loadLatestHotTopics();
-        }
-
-        const nextWarning = formatFailedSourceWarning(payload?.failedSources, typeof payload?.message === "string" ? payload.message : "");
-        if (nextWarning) {
-          setRefreshWarning(nextWarning);
-        }
-      } catch (error) {
-        console.error("Failed to auto refresh hot topics:", error);
-      }
-    };
-
-    void refreshInBackground();
-  }, [applyHotTopicsPayload, loadLatestHotTopics]);
 
   const topicDomainMap = useMemo(
     () =>
@@ -552,11 +522,11 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   }
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-5">
+    <div className="lens-page space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="lens-title text-[20px]">热点中心</h1>
-          <p className="mt-1 text-[13px] text-[#8c8178]">聚合多来源热点，先筛出值得写的选题。</p>
+          <p className="mt-1 text-[13px] text-muted-foreground">聚合多来源热点，先筛出值得写的选题。</p>
         </div>
         <div className="flex items-center gap-2">
           {notice ? <span className="text-[12px] text-green-600">{notice}</span> : null}
@@ -575,16 +545,16 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       {/* Filters */}
       <div className="lens-card space-y-3 p-4">
         {isRefreshing ? (
-          <div className="rounded-xl border border-[#f0dfd0] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_100%)] px-4 py-3">
-            <div className="flex items-center gap-2 text-[13px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+          <div className="rounded-xl border border-border/70 bg-[var(--surface-strong)] px-4 py-3">
+            <div className="flex items-center gap-2 text-[13px] text-primary" style={{ fontWeight: 700 }}>
               <LoaderCircle className="h-4 w-4 animate-spin" />
               正在抓取最新热点并同步选题
             </div>
-            <div className="mt-1 text-[12px] text-[#8c8178]">
+            <div className="mt-1 text-[12px] text-muted-foreground">
               当前阶段：{refreshStage}，完成后会自动更新列表和选题池。
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
-              <div className="h-full w-1/2 animate-pulse rounded-full bg-[#d65f2b]" />
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-card/80">
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
             </div>
           </div>
         ) : null}
@@ -595,17 +565,17 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           </div>
         ) : null}
         <div className="lens-input flex items-center gap-2 px-3 py-2">
-          <Search className="w-4 h-4 text-[#9a9086]" />
+          <Search className="w-4 h-4 text-muted-foreground" />
           <input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             type="text"
             placeholder="搜索热点关键词..."
-            className="w-full border-none bg-transparent text-[13px] text-[#181715] outline-none placeholder:text-[#9a9086]"
+            className="w-full border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-12 flex-shrink-0 text-[12px] text-[#8c8178]">领域</span>
+          <span className="w-12 flex-shrink-0 text-[12px] text-muted-foreground">领域</span>
           <div className="flex items-center gap-1.5 flex-wrap">
             {categoryOptions.map((category) => (
               <button
@@ -622,14 +592,14 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-12 flex-shrink-0 text-[12px] text-[#8c8178]">数据源</span>
+          <span className="w-12 flex-shrink-0 text-[12px] text-muted-foreground">数据源</span>
           <div className="flex items-center gap-1.5 flex-wrap">
             {sourceOptions.map((source) => (
               <button
                 key={source}
                 onClick={() => setActiveSource(source)}
                 className={`px-3 py-1 rounded-full text-[12px] transition-colors ${
-                  activeSource === source ? "bg-[#181715] text-white" : "lens-chip"
+                  activeSource === source ? "bg-slate-950 dark:bg-white/10 text-white" : "lens-chip"
                 }`}
                 style={{ fontWeight: 700 }}
               >
@@ -652,13 +622,13 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             );
 
             return (
-              <div key={domain} className="flex h-full flex-col overflow-hidden rounded-[22px] border border-[#eadfd4] bg-white/86 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
-                <div className="flex-1 divide-y divide-[#f0e5da]">
+              <div key={domain} className="flex h-full flex-col overflow-hidden rounded-[22px] border border-border bg-card/90 shadow-[0_12px_36px_rgba(31,41,86,0.05)]">
+                <div className="flex-1 divide-y divide-border/70">
                 {visibleItems.map((topic, index) => (
-                  <div key={topic.id} className="px-5 py-4 transition-colors hover:bg-[#fffaf5]">
+                  <div key={topic.id} className="px-5 py-4 transition-colors hover:bg-background">
                     <div className="flex items-center gap-4">
                       <span className={`mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[14px] text-[13px] shadow-sm ${
-                        index + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE < 3 ? "bg-[#d65f2b] text-white" : "bg-[#f1eadf] text-[#8c8178]"
+                        index + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE < 3 ? "bg-primary text-white" : "bg-muted text-muted-foreground"
                       }`} style={{ fontWeight: 800 }}>
                         {index + 1 + (currentPage - 1) * HOT_TOPICS_GROUPED_PAGE_SIZE}
                       </span>
@@ -666,7 +636,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                         <div className="min-w-0">
                           <button
                             onClick={() => openTopic(topic, "topic")}
-                            className="line-clamp-2 self-start text-left text-[14px] leading-6 text-[#181715] transition-colors hover:text-[#d65f2b]"
+                            className="line-clamp-2 self-start text-left text-[14px] leading-6 text-foreground transition-colors hover:text-primary"
                             style={{ fontWeight: 700 }}
                           >
                             {topic.title}
@@ -678,7 +648,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                             {topic.heat.toLocaleString()}
                           </div>
                           <span className="text-[12px] text-emerald-600" style={{ fontWeight: 600 }}>{topic.trend}</span>
-                          <span className="text-[12px] text-[#8c8178]">{topic.time}</span>
+                          <span className="text-[12px] text-muted-foreground">{topic.time}</span>
                         </div>
                         <div className="flex items-center justify-end gap-2">
                           <button
@@ -707,8 +677,8 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                 ))}
               </div>
               {sourceItems.length > HOT_TOPICS_GROUPED_PAGE_SIZE ? (
-                <div className="flex items-center justify-between border-t border-[#f0e5da] bg-[#fffaf5] px-4 py-3">
-                  <span className="text-[12px] text-[#8c8178]">
+                <div className="flex items-center justify-between border-t border-border/70 bg-background px-4 py-3">
+                  <span className="text-[12px] text-muted-foreground">
                     共 {sourceItems.length} 条 · 第 {currentPage} / {totalPages} 页
                   </span>
                   <div className="flex items-center gap-2">
@@ -741,8 +711,8 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         </div>
       ) : (
         <div className="lens-card px-5 py-12 text-center">
-          <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>没有匹配到热点</div>
-          <div className="mt-1 text-[12px] text-[#8c8178]">先点击上方“抓取热点”，或调整关键词。</div>
+          <div className="text-[14px] text-foreground" style={{ fontWeight: 750 }}>没有匹配到热点</div>
+          <div className="mt-1 text-[12px] text-muted-foreground">先点击上方“抓取热点”，或调整关键词。</div>
         </div>
       )}
 
@@ -753,17 +723,17 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           onClick={() => setDetailTopic(null)}
         >
           <div
-            className="relative mx-4 w-full max-w-lg rounded-[22px] border border-[#eadfd4] bg-white shadow-[0_24px_80px_rgba(85,57,34,0.16)] animate-in fade-in zoom-in-95 duration-200"
+            className="relative mx-4 w-full max-w-lg rounded-[22px] border border-border bg-card shadow-[0_24px_80px_rgba(31,41,86,0.16)] animate-in fade-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-start justify-between gap-3 border-b border-[#f0e5da] px-6 py-4">
-              <h2 className="text-[16px] leading-6 text-[#181715]" style={{ fontWeight: 800 }}>
+            <div className="flex items-start justify-between gap-3 border-b border-border/70 px-6 py-4">
+              <h2 className="text-[16px] leading-6 text-foreground" style={{ fontWeight: 800 }}>
                 {detailTopic.title}
               </h2>
               <button
                 onClick={() => setDetailTopic(null)}
-                className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[#8c8178] transition-colors hover:bg-[#fff7ef] hover:text-[#d65f2b]"
+                className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -773,17 +743,17 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             <div className="space-y-4 px-6 py-5">
               {/* Meta row */}
               <div className="flex flex-wrap items-center gap-3">
-                <span className="rounded-full bg-[#fff0e6] px-2.5 py-1 text-[12px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary" style={{ fontWeight: 700 }}>
                   {detailTopic.source}
                 </span>
-                <div className="flex items-center gap-1 text-[12px] text-[#6f665d]">
+                <div className="flex items-center gap-1 text-[12px] text-muted-foreground">
                   <Flame className="h-3.5 w-3.5 text-orange-400" />
                   热度 {detailTopic.heat.toLocaleString()}
                 </div>
                 <span className="text-[12px] text-emerald-600" style={{ fontWeight: 600 }}>
                   {detailTopic.trend}
                 </span>
-                <div className="flex items-center gap-1 text-[12px] text-[#8c8178]">
+                <div className="flex items-center gap-1 text-[12px] text-muted-foreground">
                   <Clock className="h-3.5 w-3.5" />
                   {detailTopic.time}
                 </div>
@@ -791,14 +761,14 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
               {/* Summary */}
               {detailTopic.summary ? (
-                <div className="rounded-xl bg-[#fffaf5] px-4 py-3">
-                  <div className="mb-1.5 text-[12px] text-[#8c8178]" style={{ fontWeight: 700 }}>摘要</div>
-                  <p className="whitespace-pre-line text-[13px] leading-6 text-[#5d544c]">
+                <div className="rounded-xl bg-background px-4 py-3">
+                  <div className="mb-1.5 text-[12px] text-muted-foreground" style={{ fontWeight: 700 }}>摘要</div>
+                  <p className="whitespace-pre-line text-[13px] leading-6 text-foreground/75">
                     {detailTopic.summary}
                   </p>
                 </div>
               ) : (
-                <div className="rounded-xl bg-[#fffaf5] px-4 py-3 text-[13px] text-[#8c8178]">
+                <div className="rounded-xl bg-background px-4 py-3 text-[13px] text-muted-foreground">
                   暂无摘要信息
                 </div>
               )}
@@ -809,7 +779,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                   href={detailTopic.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-[12px] text-[#d65f2b] transition-colors hover:text-[#bf4513]"
+                  className="inline-flex items-center gap-1.5 text-[12px] text-primary transition-colors hover:text-primary"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   查看原文
@@ -818,7 +788,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             </div>
 
             {/* Footer actions */}
-            <div className="flex items-center justify-end gap-2 border-t border-[#f0e5da] px-6 py-3">
+            <div className="flex items-center justify-end gap-2 border-t border-border/70 px-6 py-3">
               <button
                 onClick={() => {
                   openTopic(detailTopic, "topic");

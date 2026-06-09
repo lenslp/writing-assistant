@@ -21,8 +21,19 @@ import {
   type DraftFormatting,
 } from "../lib/app-data";
 import { buildAutoImageCaption, buildAutoImagePrompt, buildAutoImageSearchQuery, buildImageSnippet, shouldPreferRealImage } from "../lib/article-auto-image";
-import { normalizeStructuredBodyText } from "../lib/body-structure";
 import { domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import {
+  buildHtml,
+  buildWechatArticleHtml,
+  buildMarkdown,
+  buildWechatText,
+  collectInlineTokens,
+  extractContentBlocks,
+  getInlineHighlightStyle,
+  getTemplatePreviewStyle,
+  getWechatDomainPreviewStyle,
+} from "../lib/format-render";
+import { writeRichClipboard } from "../lib/rich-clipboard";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
@@ -43,10 +54,10 @@ const moduleTools = [
 ] as const;
 
 const draftStatusStyles: Record<DraftStatus, { chip: string; dot: string }> = {
-  待生成: { chip: "bg-[#fff0e6] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
-  待修改: { chip: "bg-[#fff7ef] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
-  审核中: { chip: "bg-[#f1eadf] text-[#6f665d]", dot: "bg-[#8c8178]" },
-  已发布: { chip: "bg-[#fff0e6] text-[#d65f2b]", dot: "bg-[#d65f2b]" },
+  待生成: { chip: "bg-primary/10 text-primary", dot: "bg-primary" },
+  待修改: { chip: "bg-accent text-primary", dot: "bg-primary" },
+  审核中: { chip: "bg-muted text-muted-foreground", dot: "bg-muted-foreground" },
+  已发布: { chip: "bg-primary/10 text-primary", dot: "bg-primary" },
 };
 
 type ContentBlock =
@@ -93,191 +104,6 @@ type WechatDraftCheckItem = {
   message: string;
 };
 
-const AUTO_HIGHLIGHT_PATTERNS = [
-  /(?:先说结论|结论先说|一句话总结|核心在于|关键在于|本质上|更重要的是|最重要的是|真正重要的是|真正的问题是|需要注意的是|说白了|简单来说|换句话说|归根结底|一定要记住|记住一句话)/g,
-  /不是[^，。；！？\n]{1,30}而是[^，。；！？\n]{1,40}/g,
-];
-
-const IMAGE_MARKDOWN_PATTERN = /^!\[(.*?)\]\((.+)\)$/;
-const IMAGE_CAPTION_PATTERN = /^(?:图注|说明|caption)[:：]\s*(.+)$/i;
-const CODE_BLOCK_PATTERN = /^```(\w+)?\s*\n([\s\S]*?)\n```$/;
-
-function getInlineHighlightStyle(primary: string, accent: string): CSSProperties {
-  return {
-    backgroundImage: `linear-gradient(180deg, transparent 58%, color-mix(in srgb, ${accent} 28%, white) 58%)`,
-    padding: "0 1px",
-    color: primary,
-  };
-}
-
-function getInlineHighlightHtmlStyle(primary: string, accent: string) {
-  return `background-image:linear-gradient(180deg, transparent 58%, color-mix(in srgb, ${accent} 28%, white) 58%);padding:0 1px;color:${primary};`;
-}
-
-function collectInlineTokens(text: string, autoHighlight = false) {
-  const tokens: InlineToken[] = [];
-
-  for (const match of text.matchAll(/__([^_]+)__/g)) {
-    if (typeof match.index !== "number") continue;
-    tokens.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      kind: "bold",
-      content: match[1],
-    });
-  }
-
-  for (const match of text.matchAll(/「[^」]+」/g)) {
-    if (typeof match.index !== "number") continue;
-    tokens.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      kind: "quote",
-      content: match[0],
-    });
-  }
-
-  if (autoHighlight) {
-    for (const pattern of AUTO_HIGHLIGHT_PATTERNS) {
-      for (const match of text.matchAll(pattern)) {
-        if (typeof match.index !== "number") continue;
-        tokens.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          kind: "highlight",
-          content: match[0],
-        });
-      }
-    }
-  }
-
-  const priority = { bold: 0, quote: 1, highlight: 2 } as const;
-
-  return tokens
-    .sort((left, right) => left.start - right.start || priority[left.kind] - priority[right.kind] || right.end - left.end)
-    .reduce<InlineToken[]>((result, token) => {
-      const previous = result[result.length - 1];
-
-      if (previous && token.start < previous.end) {
-        return result;
-      }
-
-      result.push(token);
-      return result;
-    }, []);
-}
-
-function escapeHtml(text: string) {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function parseImageSection(section: string) {
-  const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
-  const firstLine = lines[0] ?? "";
-  const imageMatch = firstLine.match(IMAGE_MARKDOWN_PATTERN);
-
-  if (imageMatch) {
-    const alt = imageMatch[1].trim();
-    const src = imageMatch[2].trim();
-    const captionLine = lines.slice(1).find((line) => IMAGE_CAPTION_PATTERN.test(line));
-    const caption = captionLine?.match(IMAGE_CAPTION_PATTERN)?.[1]?.trim() ?? alt;
-
-    return {
-      type: "image" as const,
-      content: caption || alt || "配图",
-      src,
-      alt,
-      caption,
-      isPlaceholder: false,
-    };
-  }
-
-  if (section.startsWith("[图片占位")) {
-    return {
-      type: "image" as const,
-      content: section,
-      alt: "配图占位",
-      caption: section,
-      isPlaceholder: true,
-    };
-  }
-
-  return null;
-}
-
-function splitBodySections(body: string) {
-  const normalized = normalizeStructuredBodyText(body).replace(/\r\n/g, "\n");
-  const lines = normalized.split("\n");
-  const sections: string[] = [];
-  let buffer: string[] = [];
-  let inCodeBlock = false;
-
-  const flush = () => {
-    const section = buffer.join("\n").trim();
-    if (section) sections.push(section);
-    buffer = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("```")) {
-      if (!inCodeBlock && buffer.length) flush();
-      buffer.push(trimmed);
-      inCodeBlock = !inCodeBlock;
-      if (!inCodeBlock) flush();
-      continue;
-    }
-
-    if (!inCodeBlock && !trimmed) {
-      flush();
-      continue;
-    }
-
-    buffer.push(trimmed);
-  }
-
-  flush();
-  return sections;
-}
-
-function renderInlineHtml(text: string, options?: { autoHighlight?: boolean; highlightStyle?: string }) {
-  const tokens = collectInlineTokens(text, options?.autoHighlight);
-
-  if (!tokens.length) {
-    return escapeHtml(text);
-  }
-
-  let cursor = 0;
-  let html = "";
-
-  for (const token of tokens) {
-    if (token.start > cursor) {
-      html += escapeHtml(text.slice(cursor, token.start));
-    }
-
-    if (token.kind === "bold") {
-      html += `<strong>${escapeHtml(token.content)}</strong>`;
-    } else if (token.kind === "quote") {
-      html += `<span style="color:#2563eb;">${escapeHtml(token.content)}</span>`;
-    } else {
-      html += `<span style="${options?.highlightStyle ?? ""}">${escapeHtml(token.content)}</span>`;
-    }
-
-    cursor = token.end;
-  }
-
-  if (cursor < text.length) {
-    html += escapeHtml(text.slice(cursor));
-  }
-
-  return html;
-}
-
 function renderInlineNodes(text: string, options?: { autoHighlight?: boolean; highlightStyle?: CSSProperties }) {
   const tokens = collectInlineTokens(text, options?.autoHighlight);
 
@@ -309,576 +135,6 @@ function renderInlineNodes(text: string, options?: { autoHighlight?: boolean; hi
   }
 
   return nodes;
-}
-
-function extractContentBlocks(body: string): ContentBlock[] {
-  return splitBodySections(body)
-    .filter(Boolean)
-    .map((section) => {
-      const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
-      const codeMatch = section.match(CODE_BLOCK_PATTERN);
-      const imageBlock = parseImageSection(section);
-
-      if (codeMatch) {
-        return {
-          type: "code",
-          language: codeMatch[1]?.trim() || "",
-          content: codeMatch[2].trim(),
-        } satisfies ContentBlock;
-      }
-
-      if (imageBlock) {
-        return imageBlock satisfies ContentBlock;
-      }
-
-      if (section.startsWith("## ")) {
-        return { type: "heading", content: section.slice(3).trim() } satisfies ContentBlock;
-      }
-
-      if (section.startsWith(">")) {
-        return { type: "quote", content: section.replace(/^>\s?/gm, "").trim() } satisfies ContentBlock;
-      }
-
-      if (section === "---") {
-        return { type: "divider" } satisfies ContentBlock;
-      }
-
-      if (section.startsWith("【金句】")) {
-        return { type: "golden", content: section.replace("【金句】", "").trim() } satisfies ContentBlock;
-      }
-
-      if (section.startsWith("【重点】")) {
-        return { type: "highlight", content: section.replace("【重点】", "").trim() } satisfies ContentBlock;
-      }
-
-      if (lines.length > 1 && lines.every((line) => line.startsWith("- "))) {
-        return {
-          type: "unordered-list",
-          items: lines.map((line) => line.replace(/^- /, "").trim()),
-        } satisfies ContentBlock;
-      }
-
-      if (lines.length > 1 && lines.every((line) => /^\d+[.)、]\s+/.test(line))) {
-        return {
-          type: "ordered-list",
-          items: lines.map((line) => line.replace(/^\d+[.)、]\s+/, "").trim()),
-        } satisfies ContentBlock;
-      }
-
-      return { type: "paragraph", content: section } satisfies ContentBlock;
-    });
-}
-
-function buildWechatText(draft: Draft, body: string, settingsCta: string) {
-  const plainBody = extractContentBlocks(body)
-    .map((block) => {
-      if (block.type === "image") {
-        if (block.isPlaceholder) {
-          return block.content;
-        }
-
-        return [`[配图] ${block.caption || block.alt || "配图"}`, block.src ? `图片链接：${block.src}` : ""]
-          .filter(Boolean)
-          .join("\n");
-      }
-
-      if (block.type === "code") {
-        return [`\`\`\`${block.language || ""}`, block.content, "```"].filter(Boolean).join("\n");
-      }
-
-      if (block.type === "unordered-list") {
-        return block.items.map((item) => `- ${item}`).join("\n");
-      }
-
-      if (block.type === "ordered-list") {
-        return block.items.map((item, index) => `${index + 1}. ${item}`).join("\n");
-      }
-
-      if (block.type === "divider") {
-        return "---";
-      }
-
-      return block.content;
-    })
-    .join("\n\n");
-
-  return [draft.title, "", draft.summary, "", plainBody, "", settingsCta].filter(Boolean).join("\n");
-}
-
-function buildMarkdown(draft: Draft, body: string) {
-  return [`# ${draft.title}`, "", draft.summary, "", body].filter(Boolean).join("\n");
-}
-
-function buildHtml(
-  draft: Draft,
-  body: string,
-  formatting: DraftFormatting,
-  primary: string,
-  accent: string,
-  publishChannel: Draft["publishedChannel"],
-  accountName: string,
-  domain: ArticleDomain,
-) {
-  const isWechatChannel = publishChannel === "公众号";
-  const metaDate = formatDraftTime(draft.publishedAt ?? draft.updatedAt).split(" ")[0];
-  const inlineHighlightHtmlStyle = getInlineHighlightHtmlStyle(primary, accent);
-  const domainStyle = getWechatDomainPreviewStyle(domain, primary, accent);
-  const htmlSections = extractContentBlocks(body)
-    .map((block) => {
-      if (block.type === "heading") {
-        if (!isWechatChannel) {
-          return `<h2 style="font-size:20px;font-weight:700;margin:24px 0 12px;color:${primary};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
-        }
-
-        if (domainStyle.headingMode === "underline") {
-          return `<h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:30px 0 15px;color:${domainStyle.headingTextColor};display:inline-block;padding-bottom:6px;border-bottom:2px solid ${primary};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
-        }
-
-        if (domainStyle.headingMode === "center") {
-          return `<div style="text-align:center;margin:34px 0 18px;"><h2 style="display:inline-block;font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.8;margin:0;color:${domainStyle.headingTextColor};padding-bottom:6px;border-bottom:2px solid ${accent};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-        }
-
-        if (domainStyle.headingMode === "card") {
-          return `<div style="margin:30px 0 15px;padding:12px 16px;border-radius:16px;background:linear-gradient(135deg, color-mix(in srgb, ${accent} 22%, white), color-mix(in srgb, ${primary} 18%, white));border:1px solid color-mix(in srgb, ${primary} 18%, white);"><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.7;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-        }
-
-        return `<div style="display:flex;align-items:flex-start;gap:12px;margin:30px 0 15px;"><span style="display:inline-block;width:6px;height:32px;border-radius:999px;background:linear-gradient(180deg, ${primary}, ${accent});opacity:0.9;flex-shrink:0;margin-top:2px;"></span><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-      }
-
-      if (block.type === "quote") {
-        return isWechatChannel
-          ? `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-radius:12px;font-size:15px;line-height:1.8;color:${domainStyle.quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
-          : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${primary};background:#f8fbff;border-radius:${formatting.roundedQuote ? "0 12px 12px 0" : "0"};line-height:1.9;color:#475569;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`;
-      }
-
-      if (block.type === "divider") {
-        return `<hr style="margin:28px 0;border:none;border-top:1px solid ${domainStyle.dividerColor};" />`;
-      }
-
-      if (block.type === "image") {
-        if (block.src) {
-          const caption = block.caption || block.alt || "配图";
-          return isWechatChannel
-            ? `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
-            : `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:20px;border:1px solid #cbd5e1;background:#fff;object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:#6b7280;font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
-        }
-
-        return isWechatChannel
-          ? `<div style="margin:24px 0;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};overflow:hidden;border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};"><div style="height:180px;background:${String(domainStyle.imageFrameStyle.background)};display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid ${String(domainStyle.imagePlaceholderChipStyle.borderColor)};background:${String(domainStyle.imagePlaceholderChipStyle.background)};color:${String(domainStyle.imagePlaceholderChipStyle.color)};font-size:12px;">配图占位</span></div><div style="padding:10px 12px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;">${escapeHtml(block.content)}</div></div>`
-          : `<div style="margin:24px 0;padding:28px 16px;border:1px dashed #cbd5e1;border-radius:16px;text-align:center;color:#94a3b8;">${escapeHtml(block.content)}</div>`;
-      }
-
-      if (block.type === "code") {
-        const language = block.language ? escapeHtml(block.language) : "code";
-        return isWechatChannel
-          ? `<figure style="margin:24px 0;border:1px solid ${domainStyle.highlightBorderColor};border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`
-          : `<figure style="margin:24px 0;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`;
-      }
-
-      if (block.type === "golden") {
-        return isWechatChannel
-          ? `<div style="margin:24px 0;padding:16px 18px;border-radius:10px;background:${domainStyle.goldenBackground};border-left:3px solid ${domainStyle.goldenBorderColor};color:${domainStyle.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
-          : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:linear-gradient(135deg, ${primary}15, ${accent}22);color:#111827;font-weight:600;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
-      }
-
-      if (block.type === "highlight") {
-        return isWechatChannel
-          ? `<div style="margin:22px 0;padding:14px 16px;border-radius:14px;border:1px solid ${domainStyle.highlightBorderColor};background:${domainStyle.highlightBackground};color:#1f2937;line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
-          : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${primary}20;background:${primary}08;color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
-      }
-
-      if (block.type === "unordered-list") {
-        return `<ul style="margin:20px 0 24px;padding-left:20px;color:${isWechatChannel ? "#4a4a4a" : "#1f2937"};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ul>`;
-      }
-
-      if (block.type === "ordered-list") {
-        return `<ol style="margin:20px 0 24px;padding-left:20px;color:${isWechatChannel ? "#4a4a4a" : "#1f2937"};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ol>`;
-      }
-
-      return isWechatChannel
-        ? `<p style="font-size:${domainStyle.paragraphFontSize};line-height:${domainStyle.paragraphLineHeight};margin:0 0 18px;color:${domainStyle.paragraphColor};letter-spacing:${domainStyle.paragraphLetterSpacing};font-family:${domainStyle.paragraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
-        : `<p style="font-size:${formatting.fontSize};line-height:${formatting.lineHeight};margin:0 0 ${formatting.paragraphSpacing};color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`;
-    })
-    .join("");
-
-  if (isWechatChannel) {
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;"><div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}${htmlSections}</article></body></html>`;
-  }
-
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>${draft.title}</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fb;padding:24px;"><article style="max-width:720px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><h1 style="font-size:32px;line-height:1.35;margin-bottom:16px;color:#111827;">${draft.title}</h1><p style="font-size:16px;line-height:1.9;margin-bottom:24px;color:#4b5563;">${draft.summary}</p>${htmlSections}</article></body></html>`;
-}
-
-function getTemplatePreviewStyle(template: DraftFormatting["template"], primary: string, accent: string) {
-  if (template === "暖色调") {
-    return {
-      shellGradient: "linear-gradient(180deg, rgba(255,247,237,0.98), rgba(255,255,255,1))",
-      shellTint: "radial-gradient(circle at top left, rgba(251,146,60,0.16), transparent 42%)",
-      heroGradient: `linear-gradient(145deg, ${primary}18, ${accent}28 55%, rgba(255,255,255,0.92))`,
-      heroBorder: `${primary}28`,
-      sectionBackground: "rgba(255,247,237,0.72)",
-      bodyOverlay: "radial-gradient(circle at top right, rgba(251,146,60,0.10), transparent 30%)",
-      accentSoft: "rgba(251,146,60,0.14)",
-    };
-  }
-
-  if (template === "商务灰") {
-    return {
-      shellGradient: "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(255,255,255,1))",
-      shellTint: "radial-gradient(circle at top left, rgba(124,58,237,0.12), transparent 44%)",
-      heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${accent}14 52%, ${primary}10)`,
-      heroBorder: "rgba(148,163,184,0.28)",
-      sectionBackground: "rgba(248,250,252,0.9)",
-      bodyOverlay: "linear-gradient(180deg, rgba(15,23,42,0.02), transparent 18%)",
-      accentSoft: "rgba(124,58,237,0.10)",
-    };
-  }
-
-  if (template === "深色") {
-    return {
-      shellGradient: "linear-gradient(180deg, rgba(2,6,23,0.98), rgba(15,23,42,1))",
-      shellTint: "radial-gradient(circle at top left, rgba(16,185,129,0.18), transparent 46%)",
-      heroGradient: `linear-gradient(150deg, rgba(15,23,42,0.98), ${primary}18 58%, rgba(15,23,42,0.94))`,
-      heroBorder: "rgba(71,85,105,0.5)",
-      sectionBackground: "rgba(15,23,42,0.7)",
-      bodyOverlay: "radial-gradient(circle at top right, rgba(16,185,129,0.10), transparent 32%)",
-      accentSoft: "rgba(16,185,129,0.12)",
-    };
-  }
-
-  if (template === "极简白") {
-    return {
-      shellGradient: "linear-gradient(180deg, rgba(255,255,255,0.99), rgba(249,250,251,1))",
-      shellTint: "radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 42%)",
-      heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.95), ${primary}10 60%, rgba(255,255,255,1))`,
-      heroBorder: "rgba(226,232,240,0.9)",
-      sectionBackground: "rgba(248,250,252,0.9)",
-      bodyOverlay: "linear-gradient(180deg, rgba(148,163,184,0.06), transparent 16%)",
-      accentSoft: "rgba(37,99,235,0.10)",
-    };
-  }
-
-  return {
-    shellGradient: "linear-gradient(180deg, rgba(239,246,255,0.98), rgba(255,255,255,1))",
-    shellTint: "radial-gradient(circle at top left, rgba(59,130,246,0.14), transparent 44%)",
-    heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${primary}16 56%, ${accent}10)`,
-    heroBorder: `${primary}20`,
-    sectionBackground: "rgba(239,246,255,0.78)",
-    bodyOverlay: "radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 30%)",
-    accentSoft: "rgba(59,130,246,0.10)",
-  };
-}
-
-function getWechatDomainPreviewStyle(domain: ArticleDomain, primary: string, accent: string) {
-  const config = domainConfigs[domain];
-
-  const base = {
-    badgeText: `${config.icon} ${config.label}`,
-    badgeStyle: {
-      background: `linear-gradient(135deg, ${primary}, ${accent})`,
-      color: "#ffffff",
-    } as CSSProperties,
-    titleStyle: {
-      color: "rgba(0,0,0,0.9)",
-      fontWeight: 500,
-      fontFamily: "inherit",
-      textAlign: "left" as const,
-      fontSize: "24px",
-      lineHeight: 1.45,
-      letterSpacing: "0.01em",
-    },
-    metaAlign: "flex-start" as const,
-    summaryStyle: {
-      background: "#f8fafc",
-      border: `1px solid ${primary}18`,
-      color: "#4a4a4a",
-      borderRadius: "14px",
-      padding: "16px 18px",
-    } as CSSProperties,
-    summaryTextAlign: "left" as const,
-    summaryFontStyle: "normal" as const,
-    headingMode: "bar" as "bar" | "underline" | "center" | "card",
-    headingTextColor: "rgba(0,0,0,0.9)",
-    headingFontWeight: 700,
-    headingFontFamily: "inherit",
-    paragraphColor: "#4a4a4a",
-    paragraphFontSize: "16px",
-    paragraphLineHeight: 1.88,
-    paragraphLetterSpacing: "0.018em",
-    paragraphFontFamily: "inherit",
-    quoteBackground: "#efefef",
-    quoteTextColor: "rgba(0,0,0,0.58)",
-    highlightBackground: "#f8f8f8",
-    highlightBorderColor: `${primary}22`,
-    goldenBackground: "#f6f7f9",
-    goldenBorderColor: primary,
-    goldenTextColor: "#1f2937",
-    goldenTextAlign: "left" as const,
-    dividerColor: "#efefef",
-    imageFrameStyle: {
-      borderColor: "#f0f0f0",
-      background: "#fafafa",
-      borderRadius: "10px",
-      boxShadow: "none",
-    } as CSSProperties,
-    imageCaptionColor: "#999999",
-    imagePlaceholderChipStyle: {
-      borderColor: "#e5e7eb",
-      background: "#ffffff",
-      color: "#888888",
-    } as CSSProperties,
-  };
-
-  if (domain === "教育") {
-    return {
-      ...base,
-      titleStyle: {
-        ...base.titleStyle,
-        fontWeight: 700,
-        color: "#2f3a2f",
-        letterSpacing: "0.015em",
-      },
-      summaryStyle: {
-        background: "linear-gradient(135deg, #fff5eb, #ffe8d9)",
-        border: "none",
-        color: "#4b5563",
-        borderRadius: "16px",
-        padding: "16px 18px",
-      } as CSSProperties,
-      headingMode: "bar" as const,
-      headingTextColor: "#2c3e50",
-      headingFontWeight: 700,
-      paragraphColor: "#555555",
-      paragraphLineHeight: 1.95,
-      quoteBackground: "#fffaf1",
-      quoteTextColor: "#6b5f55",
-      highlightBackground: "#fff7ed",
-      highlightBorderColor: "#fdba74",
-      goldenBackground: "linear-gradient(135deg, #fff7ed, #ffedd5)",
-      goldenBorderColor: "#fb923c",
-      goldenTextColor: "#7c4a03",
-      dividerColor: "#f3dfc8",
-      imageFrameStyle: {
-        borderColor: "#f6d7b8",
-        background: "#fffaf5",
-        borderRadius: "14px",
-        boxShadow: "0 8px 24px rgba(251,146,60,0.08)",
-      } as CSSProperties,
-    };
-  }
-
-  if (domain === "旅游") {
-    return {
-      ...base,
-      titleStyle: {
-        ...base.titleStyle,
-        color: "#1f4d63",
-        fontWeight: 700,
-        letterSpacing: "0.02em",
-      },
-      summaryStyle: {
-        background: "linear-gradient(135deg, #e0f2fe, #dbeafe)",
-        border: "none",
-        color: "#33536b",
-        borderRadius: "18px",
-        padding: "16px 18px",
-      } as CSSProperties,
-      headingMode: "underline" as const,
-      headingTextColor: "#1e3a5f",
-      headingFontWeight: 700,
-      paragraphColor: "#475569",
-      paragraphLineHeight: 1.95,
-      paragraphLetterSpacing: "0.022em",
-      quoteBackground: "#f0f9ff",
-      quoteTextColor: "#486274",
-      highlightBackground: "#f0f9ff",
-      highlightBorderColor: "#7dd3fc",
-      goldenBackground: "linear-gradient(135deg, #eef9ff, #dff6ff)",
-      goldenBorderColor: "#38bdf8",
-      goldenTextColor: "#0f4c5f",
-      dividerColor: "#d7ecf7",
-      imageFrameStyle: {
-        borderColor: "#d6eef8",
-        background: "#f6fcff",
-        borderRadius: "18px",
-        boxShadow: "0 10px 30px rgba(14,165,233,0.10)",
-      } as CSSProperties,
-      imageCaptionColor: "#7b99aa",
-    };
-  }
-
-  if (domain === "情感") {
-    return {
-      ...base,
-      titleStyle: {
-        color: "#3d3d3d",
-        fontWeight: 600,
-        fontFamily: "Georgia, 'Songti SC', 'STSong', serif",
-        textAlign: "center" as const,
-        fontSize: "25px",
-        lineHeight: 1.58,
-        letterSpacing: "0.025em",
-      },
-      metaAlign: "center" as const,
-      summaryStyle: {
-        background: "transparent",
-        border: "none",
-        color: "#666666",
-        borderRadius: "0px",
-        padding: "12px 0 0",
-      } as CSSProperties,
-      summaryTextAlign: "center" as const,
-      summaryFontStyle: "italic" as const,
-      headingMode: "center" as const,
-      headingTextColor: "#3d3d3d",
-      headingFontWeight: 600,
-      headingFontFamily: "Georgia, 'Songti SC', 'STSong', serif",
-      paragraphColor: "#555555",
-      paragraphLineHeight: 2.02,
-      paragraphLetterSpacing: "0.028em",
-      paragraphFontFamily: "Georgia, 'Songti SC', 'STSong', serif",
-      quoteBackground: "#fffafb",
-      quoteTextColor: "#7a6b70",
-      highlightBackground: "#fff1f2",
-      highlightBorderColor: "#f9a8d4",
-      goldenBackground: "linear-gradient(135deg, #fff6f8, #fff1f2)",
-      goldenBorderColor: "#ec4899",
-      goldenTextColor: "#7a284d",
-      goldenTextAlign: "center" as const,
-      dividerColor: "#f4d7df",
-      imageFrameStyle: {
-        borderColor: "#f2d7df",
-        background: "#fffafb",
-        borderRadius: "18px",
-        boxShadow: "0 10px 28px rgba(244,114,182,0.08)",
-      } as CSSProperties,
-      imageCaptionColor: "#a17f89",
-    };
-  }
-
-  if (domain === "社会") {
-    return {
-      ...base,
-      titleStyle: {
-        color: "#1a1a1a",
-        fontWeight: 800,
-        fontFamily: "inherit",
-        textAlign: "center" as const,
-        fontSize: "25px",
-        lineHeight: 1.42,
-        letterSpacing: "0.012em",
-      },
-      metaAlign: "center" as const,
-      summaryStyle: {
-        background: "linear-gradient(135deg, #fff9e6, #fff3e0)",
-        border: "2px dashed #ffd93d",
-        color: "#333333",
-        borderRadius: "18px",
-        padding: "16px 18px",
-      } as CSSProperties,
-      summaryTextAlign: "center" as const,
-      headingMode: "card" as const,
-      headingTextColor: "#1a1a1a",
-      headingFontWeight: 800,
-      paragraphColor: "#333333",
-      paragraphLineHeight: 1.92,
-      paragraphLetterSpacing: "0.015em",
-      quoteBackground: "#f7f7f2",
-      quoteTextColor: "#5d6058",
-      highlightBackground: "#fff9e6",
-      highlightBorderColor: "#facc15",
-      goldenBackground: "linear-gradient(135deg, #fffef0, #fff7cc)",
-      goldenBorderColor: "#eab308",
-      goldenTextColor: "#5f4600",
-      dividerColor: "#e6dcc2",
-      imageFrameStyle: {
-        borderColor: "#e8dfc6",
-        background: "#fffdf7",
-        borderRadius: "12px",
-        boxShadow: "0 10px 26px rgba(234,179,8,0.08)",
-      } as CSSProperties,
-    };
-  }
-
-  if (domain === "汽车") {
-    return {
-      ...base,
-      titleStyle: {
-        ...base.titleStyle,
-        color: "#111827",
-        fontWeight: 800,
-        letterSpacing: "0.005em",
-      },
-      summaryStyle: {
-        background: "linear-gradient(135deg, #1e293b, #334155)",
-        border: "none",
-        color: "#e2e8f0",
-        borderRadius: "18px",
-        padding: "18px 18px",
-      } as CSSProperties,
-      headingMode: "bar" as const,
-      headingTextColor: "#1a1a1a",
-      headingFontWeight: 800,
-      paragraphColor: "#333333",
-      paragraphLineHeight: 1.84,
-      paragraphLetterSpacing: "0.012em",
-      quoteBackground: "#f3f6fa",
-      quoteTextColor: "#4b5563",
-      highlightBackground: "#eff6ff",
-      highlightBorderColor: "#93c5fd",
-      goldenBackground: "linear-gradient(135deg, #f8fbff, #e8f1ff)",
-      goldenBorderColor: "#3b82f6",
-      goldenTextColor: "#1e3a8a",
-      dividerColor: "#d9e3ef",
-      imageFrameStyle: {
-        borderColor: "#cbd5e1",
-        background: "#f8fafc",
-        borderRadius: "12px",
-        boxShadow: "0 12px 26px rgba(15,23,42,0.10)",
-      } as CSSProperties,
-      imageCaptionColor: "#7b8794",
-    };
-  }
-
-  if (domain === "科技") {
-    return {
-      ...base,
-      titleStyle: {
-        ...base.titleStyle,
-        color: "#0f172a",
-        fontWeight: 800,
-        letterSpacing: "-0.005em",
-      },
-      summaryStyle: {
-        background: "linear-gradient(135deg, #eff6ff, #eef2ff)",
-        border: `1px solid ${primary}18`,
-        color: "#334155",
-        borderRadius: "16px",
-        padding: "16px 18px",
-      } as CSSProperties,
-      headingTextColor: "#0f172a",
-      headingFontWeight: 800,
-      paragraphColor: "#334155",
-      paragraphLineHeight: 1.86,
-      paragraphLetterSpacing: "0.012em",
-      quoteBackground: "#f4f8ff",
-      quoteTextColor: "#475569",
-      highlightBackground: "#eef4ff",
-      highlightBorderColor: "#93c5fd",
-      goldenBackground: "linear-gradient(135deg, #f8fbff, #edf4ff)",
-      goldenBorderColor: "#2563eb",
-      goldenTextColor: "#1e40af",
-      dividerColor: "#dbe6f5",
-      imageFrameStyle: {
-        borderColor: "#d8e5f7",
-        background: "#f8fbff",
-        borderRadius: "14px",
-        boxShadow: "0 10px 28px rgba(37,99,235,0.08)",
-      } as CSSProperties,
-      imageCaptionColor: "#7b8da5",
-    };
-  }
-
-  return base;
 }
 
 export function FormatEditor() {
@@ -1098,6 +354,24 @@ export function FormatEditor() {
     () => getInlineHighlightStyle(activeScheme.primary, activeScheme.accent),
     [activeScheme.accent, activeScheme.primary],
   );
+  const wechatPreviewHtml = useMemo(
+    () => buildWechatArticleHtml(
+      {
+        title,
+        summary,
+        updatedAt: currentDraft?.updatedAt ?? new Date().toISOString(),
+        publishedAt: currentDraft?.publishedAt,
+      },
+      body,
+      formatting,
+      activeScheme.primary,
+      activeScheme.accent,
+      previewAccountName,
+      articleDomain,
+      { includeHeader: false },
+    ),
+    [activeScheme.accent, activeScheme.primary, articleDomain, body, currentDraft?.publishedAt, currentDraft?.updatedAt, formatting, previewAccountName, summary, title],
+  );
   const headingCount = useMemo(() => previewBlocks.filter((block) => block.type === "heading").length, [previewBlocks]);
   const leadParagraphIndex = useMemo(() => previewBlocks.findIndex((block) => block.type === "paragraph"), [previewBlocks]);
   const estimatedCards = Math.max(1, previewBlocks.filter((block) => block.type === "golden" || block.type === "highlight" || block.type === "quote").length);
@@ -1129,12 +403,12 @@ export function FormatEditor() {
     ? {
         label: "待保存",
         description: "当前内容有改动",
-        className: "border-[#f0dfd0] bg-[#fff7ef] text-[#d65f2b]",
+        className: "border-border/70 bg-accent text-primary",
       }
     : {
         label: "已同步",
         description: "草稿内容已落盘",
-        className: "border-[#eadfd4] bg-[#fffaf5] text-[#6f665d]",
+        className: "border-border bg-background text-muted-foreground",
       };
 
   const openImagePanel = () => {
@@ -1454,7 +728,23 @@ export function FormatEditor() {
   const handleCopy = async () => {
     if (!currentDraft) return;
     setIsToolbarMoreOpen(false);
-    await navigator.clipboard.writeText(buildWechatText({ ...currentDraft, title, summary }, body, settings.ctaEngage));
+    const wechatHtml = buildWechatArticleHtml(
+      { ...currentDraft, title, summary },
+      body,
+      formatting,
+      activeScheme.primary,
+      activeScheme.accent,
+      previewAccountName,
+      articleDomain,
+      { includeHeader: false },
+    );
+    const wechatText = buildWechatText(
+      { ...currentDraft, title, summary },
+      body,
+      settings.ctaEngage,
+      { includeTitle: false, includeCta: false },
+    );
+    await writeRichClipboard(wechatHtml, wechatText);
     updateDraft(currentDraft.id, {
       title,
       summary,
@@ -1592,6 +882,7 @@ export function FormatEditor() {
           title,
           summary,
           body,
+          formatting,
           author: previewAccountName,
           domain: articleDomain,
           accountId: selectedWechatAccountId,
@@ -1633,8 +924,8 @@ export function FormatEditor() {
   if (!currentDraft) {
     return (
       <div className="lens-card-strong mx-auto max-w-[720px] space-y-4 px-6 py-16 text-center">
-        <div className="text-[22px] text-[#181715]" style={{ fontWeight: 850 }}>还没有可排版的草稿</div>
-        <p className="text-[14px] text-[#6f665d]">先去生成一篇文章草稿，再回来做多平台排版。</p>
+        <div className="text-[22px] text-foreground" style={{ fontWeight: 850 }}>还没有可排版的草稿</div>
+        <p className="text-[14px] text-muted-foreground">先去生成一篇文章草稿，再回来做多平台排版。</p>
         <div className="flex items-center justify-center gap-3">
           <Link href="/topic-center" className="lens-btn-primary px-4 py-2 text-[13px]">去选题中心</Link>
           <Link href="/drafts" className="lens-btn-secondary px-4 py-2 text-[13px]">查看草稿箱</Link>
@@ -1644,8 +935,8 @@ export function FormatEditor() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#fffaf5]">
-      <div className="overflow-x-auto overflow-y-hidden border-b border-[#eadfd4] bg-white/86">
+    <div className="flex h-full flex-col bg-background">
+      <div className="overflow-x-auto overflow-y-hidden border-b border-border bg-card/90">
         <div className="flex min-w-max items-center gap-2 px-4 py-2">
         <div className="flex items-center gap-2 shrink-0">
           <button onClick={handleSave} disabled={!isDirty} className="lens-btn-secondary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:opacity-50" style={{ fontWeight: 750 }}>
@@ -1656,13 +947,13 @@ export function FormatEditor() {
               <select
                 value={selectedWechatAccountId ?? wechatAccounts[0]?.id ?? ""}
                 onChange={(event) => setSelectedWechatAccountId(event.target.value || null)}
-                className="w-[168px] appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 pr-8 text-[12px] text-[#6f665d]"
+                className="w-[168px] appearance-none rounded-lg border border-border bg-card px-3 py-1.5 pr-8 text-[12px] text-muted-foreground"
               >
                 {wechatAccounts.map((account) => (
                   <option key={account.id} value={account.id}>{account.name}</option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             </div>
           ) : null}
           <button
@@ -1677,26 +968,26 @@ export function FormatEditor() {
           <button
             onClick={() => void handlePushToWechatDraft()}
             disabled={wechatDraftLoading}
-            className="lens-btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+            className="lens-btn-primary flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-primary/40"
             style={{ fontWeight: 500 }}
           >
             {wechatDraftLoading ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             推送草稿箱
           </button>
         </div>
-        <div className="mx-1 h-6 w-px shrink-0 bg-[#eadfd4]" />
+        <div className="mx-1 h-6 w-px shrink-0 bg-border" />
         <div className="flex items-center gap-1 shrink-0">
           <div className="relative shrink-0">
             <select
               value={publishChannel}
               onChange={(event) => setPublishChannel(event.target.value as (typeof publishChannels)[number])}
-              className="w-[110px] appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 pr-8 text-[12px] text-[#6f665d]"
+              className="w-[110px] appearance-none rounded-lg border border-border bg-card px-3 py-1.5 pr-8 text-[12px] text-muted-foreground"
             >
               {publishChannels.map((channel) => (
                 <option key={channel} value={channel}>{channel}</option>
               ))}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           </div>
           <div ref={toolbarMoreRef} className="relative shrink-0">
             <button
@@ -1712,24 +1003,24 @@ export function FormatEditor() {
             <button
               type="button"
               onClick={() => setIsToolbarActionOpen((current) => !current)}
-              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-[#181715] px-2.5 py-1.5 text-[12px] text-white hover:bg-black"
+              className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-slate-950 dark:bg-white/10 px-2.5 py-1.5 text-[12px] text-white hover:bg-black"
               style={{ fontWeight: 750 }}
             >
               发布操作 <ChevronDown className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
-        {notice ? <span className="shrink-0 whitespace-nowrap px-1 text-[12px] text-[#d65f2b]">{notice}</span> : null}
+        {notice ? <span className="shrink-0 whitespace-nowrap px-1 text-[12px] text-primary">{notice}</span> : null}
         </div>
       </div>
       {wechatDraftCheckItems.length ? (
-        <div className="border-b border-[#eadfd4] bg-[#fff7ef] px-4 py-2">
+        <div className="border-b border-border bg-accent px-4 py-2">
           <div className="flex flex-wrap gap-2">
             {wechatDraftCheckItems.map((item) => (
               <span
                 key={item.key}
                 className={`rounded-full px-2.5 py-1 text-[11px] ${
-                  item.ok ? "bg-white text-[#d65f2b]" : "bg-red-50 text-red-600"
+                  item.ok ? "bg-card text-primary" : "bg-red-50 text-red-600"
                 }`}
                 title={item.message}
               >
@@ -1742,7 +1033,7 @@ export function FormatEditor() {
       {isToolbarMoreOpen && toolbarMoreMenuPosition ? createPortal(
         <div
           ref={toolbarMoreMenuRef}
-          className="fixed z-50 min-w-[188px] rounded-xl border border-[#eadfd4] bg-white p-1.5 shadow-[0_18px_40px_rgba(85,57,34,0.12)]"
+          className="fixed z-50 min-w-[188px] rounded-xl border border-border bg-card p-1.5 shadow-[0_18px_40px_rgba(31,41,86,0.12)]"
           style={{
             top: toolbarMoreMenuPosition.top,
             left: toolbarMoreMenuPosition.left,
@@ -1751,28 +1042,28 @@ export function FormatEditor() {
           <button
             type="button"
             onClick={handleRestoreDraft}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <RotateCcw className="h-3.5 w-3.5" /> 恢复原稿
           </button>
           <button
             type="button"
             onClick={() => void handleCopy()}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <Copy className="h-3.5 w-3.5" /> 复制公众号格式
           </button>
           <button
             type="button"
             onClick={() => handleExport("html")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <FileCode className="h-3.5 w-3.5" /> 导出 HTML
           </button>
           <button
             type="button"
             onClick={() => handleExport("md")}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <Download className="h-3.5 w-3.5" /> 导出 Markdown
           </button>
@@ -1782,7 +1073,7 @@ export function FormatEditor() {
       {isToolbarActionOpen && toolbarActionMenuPosition ? createPortal(
         <div
           ref={toolbarActionMenuRef}
-          className="fixed z-50 min-w-[196px] rounded-xl border border-[#eadfd4] bg-white p-1.5 shadow-[0_18px_40px_rgba(85,57,34,0.12)]"
+          className="fixed z-50 min-w-[196px] rounded-xl border border-border bg-card p-1.5 shadow-[0_18px_40px_rgba(31,41,86,0.12)]"
           style={{
             top: toolbarActionMenuPosition.top,
             left: toolbarActionMenuPosition.left,
@@ -1791,14 +1082,14 @@ export function FormatEditor() {
           <button
             type="button"
             onClick={handlePublish}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <Save className="h-3.5 w-3.5" /> 直接发布
           </button>
           <button
             type="button"
             onClick={handleBackToWriting}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent"
           >
             <Palette className="h-3.5 w-3.5" /> 返回编辑
           </button>
@@ -1809,7 +1100,7 @@ export function FormatEditor() {
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImage} />
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <div className="flex w-[72px] min-w-[72px] flex-col items-center gap-1 border-r border-[#eadfd4] bg-[#fff7ef] py-3">
+        <div className="flex w-[72px] min-w-[72px] flex-col items-center gap-1 border-r border-border bg-accent py-3">
           {moduleTools.map(({ icon: Icon, label }) => {
             const isImageToolActive = label === "图片" && isImagePanelOpen;
 
@@ -1820,8 +1111,8 @@ export function FormatEditor() {
                 aria-pressed={isImageToolActive}
                 className={`w-14 h-14 flex flex-col items-center justify-center rounded-lg transition-colors gap-1 ${
                   isImageToolActive
-                    ? "bg-[#fff0e6] text-[#d65f2b] shadow-[inset_0_0_0_1px_rgba(214,95,43,0.16)]"
-                    : "text-[#6f665d] hover:bg-white hover:text-[#d65f2b]"
+                    ? "bg-primary/10 text-primary shadow-[inset_0_0_0_1px_rgba(111,92,255,0.16)]"
+                    : "text-muted-foreground hover:bg-card hover:text-primary"
                 }`}
               >
                 <Icon className="w-4.5 h-4.5" />
@@ -1831,19 +1122,19 @@ export function FormatEditor() {
           })}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden bg-[#f8f4ef] px-4 py-5">
+        <div className="min-h-0 flex-1 overflow-hidden bg-background px-4 py-5">
           <div className="mx-auto flex h-full max-w-[980px] min-h-0 flex-col">
-            <div className="mb-4 flex items-center justify-between rounded-2xl border border-[#eadfd4] bg-white/78 px-4 py-3 backdrop-blur">
+            <div className="mb-4 flex items-center justify-between rounded-2xl border border-border bg-card/80 px-4 py-3 backdrop-blur">
               <div>
-                <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>排版预览</div>
-                <div className="text-[12px] text-[#8c8178]">独立滚动预览，支持移动端与桌面宽度切换</div>
+                <div className="text-[14px] text-foreground" style={{ fontWeight: 800 }}>排版预览</div>
+                <div className="text-[12px] text-muted-foreground">独立滚动预览，支持移动端与桌面宽度切换</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setPreviewMode("mobile")}
                   className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                    previewMode === "mobile" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                    previewMode === "mobile" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:bg-accent"
                   }`}
                   style={{ fontWeight: 750 }}
                 >
@@ -1853,7 +1144,7 @@ export function FormatEditor() {
                   type="button"
                   onClick={() => setPreviewMode("desktop")}
                   className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                    previewMode === "desktop" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                    previewMode === "desktop" ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:bg-accent"
                   }`}
                   style={{ fontWeight: 750 }}
                 >
@@ -1873,8 +1164,8 @@ export function FormatEditor() {
             <div
               className={`flex-1 min-h-0 overflow-hidden rounded-[28px] border p-5 ${
                 isWechatChannel
-                  ? "border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.06)]"
-                  : "border-[#eadfd4]/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.82),rgba(255,250,245,0.76))] shadow-[0_20px_80px_rgba(85,57,34,0.08)]"
+                  ? "border-border bg-card shadow-[0_18px_60px_rgba(31,41,86,0.06)]"
+                  : "border-border/70 bg-[var(--surface-strong)] shadow-[0_20px_80px_rgba(31,41,86,0.08)]"
               }`}
             >
               <div className="flex h-full min-h-0 justify-center overflow-hidden">
@@ -1884,27 +1175,18 @@ export function FormatEditor() {
                     width: previewWidth,
                     background: phoneShellBackground,
                     color: textPrimary,
-                    borderColor: isDarkTemplate ? "#1f2937" : "#e5e7eb",
+                    borderColor: previewThemeStyle.deviceBorder,
+                    boxShadow: isDarkTemplate
+                      ? "0 24px 64px rgba(2,6,23,0.44)"
+                      : "0 24px 64px rgba(15,23,42,0.12)",
                   }}
                 >
                   <div className="flex h-full min-h-0 flex-col">
                     <div
                       className="px-4 py-3 flex items-center gap-2 border-b"
                       style={{
-                        background: isWechatChannel
-                          ? "#ffffff"
-                          : formatting.template === "暖色调"
-                            ? "#fff7ed"
-                            : formatting.template === "商务灰"
-                              ? "#f3f4f6"
-                              : formatting.template === "深色"
-                                ? "#111827"
-                                : "#ededed",
-                        borderColor: isWechatChannel
-                          ? "#efefef"
-                          : formatting.template === "深色"
-                            ? "#374151"
-                            : "#e5e7eb",
+                        background: previewThemeStyle.deviceHeaderBackground,
+                        borderColor: previewThemeStyle.deviceHeaderBorder,
                       }}
                     >
                       <div
@@ -1932,7 +1214,7 @@ export function FormatEditor() {
 
                     <div ref={previewScrollRef} className="flex-1 min-h-0 overflow-y-auto">
                       <div
-                        className={isWechatChannel ? "bg-white px-4 py-5" : "px-6 py-6"}
+                        className={isWechatChannel ? "bg-card px-4 py-5" : "px-6 py-6"}
                         style={
                           isWechatChannel
                             ? { background: surfaceBackground }
@@ -1944,282 +1226,54 @@ export function FormatEditor() {
                       >
                         {isWechatChannel ? (
                           <div className="mx-auto max-w-[640px]">
-                            <div className="border-b pb-5" style={{ borderColor: "#f1f1f1" }}>
-                              <h1
-                                className="tracking-[0.01em]"
-                                style={{
-                                  fontSize: String(domainPreviewStyle.titleStyle.fontSize),
-                                  lineHeight: Number(domainPreviewStyle.titleStyle.lineHeight),
-                                  letterSpacing: String(domainPreviewStyle.titleStyle.letterSpacing),
-                                  color: String(domainPreviewStyle.titleStyle.color),
-                                  fontWeight: Number(domainPreviewStyle.titleStyle.fontWeight),
-                                  textAlign: domainPreviewStyle.titleStyle.textAlign,
-                                  fontFamily: String(domainPreviewStyle.titleStyle.fontFamily),
-                                }}
-                              >
-                                {title}
-                              </h1>
-                              <div
-                                className="mt-3 flex flex-wrap items-center gap-2 text-[12px]"
-                                style={{
-                                  color: textMuted,
-                                  justifyContent: domainPreviewStyle.metaAlign,
-                                }}
-                              >
-                                <span className="text-[15px]" style={{ fontWeight: 400, color: "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
-                                <span>·</span>
-                                <span>{articleDate}</span>
-                              </div>
-                            </div>
-
-                            {summary ? (
-                              <div className="pt-5">
-                                <div
-                                  className="text-[16px] leading-[1.85]"
-                                  style={{
-                                    ...domainPreviewStyle.summaryStyle,
-                                    textAlign: domainPreviewStyle.summaryTextAlign,
-                                    fontStyle: domainPreviewStyle.summaryFontStyle,
-                                  }}
-                                >
-                                  {renderInlineNodes(summary, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                </div>
-                              </div>
-                            ) : null}
-
-                            <div className="pt-5">
-                              {previewBlocks.map((block, index) => {
-                                if (block.type === "heading") {
-                                  if (domainPreviewStyle.headingMode === "underline") {
-                                    return (
-                                      <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px]">
-                                        <h2
-                                          className="inline-block border-b-2 pb-[6px] text-[20px] leading-[1.7]"
-                                          style={{
-                                            borderColor: activeScheme.primary,
-                                            color: domainPreviewStyle.headingTextColor,
-                                            fontWeight: domainPreviewStyle.headingFontWeight,
-                                            fontFamily: domainPreviewStyle.headingFontFamily,
-                                          }}
-                                        >
-                                          {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                        </h2>
-                                      </div>
-                                    );
-                                  }
-
-                                  if (domainPreviewStyle.headingMode === "center") {
-                                    return (
-                                      <div key={`${block.type}-${block.content}-${index}`} className="mb-[18px] mt-[34px] text-center">
-                                        <h2
-                                          className="inline-block border-b-2 pb-[6px] text-[20px] leading-[1.8]"
-                                          style={{
-                                            borderColor: activeScheme.accent,
-                                            color: domainPreviewStyle.headingTextColor,
-                                            fontWeight: domainPreviewStyle.headingFontWeight,
-                                            fontFamily: domainPreviewStyle.headingFontFamily,
-                                          }}
-                                        >
-                                          {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                        </h2>
-                                      </div>
-                                    );
-                                  }
-
-                                  if (domainPreviewStyle.headingMode === "card") {
-                                    return (
-                                      <div
-                                        key={`${block.type}-${block.content}-${index}`}
-                                        className="mb-[15px] mt-[30px] rounded-[18px] border px-4 py-3"
-                                        style={{
-                                          background: `linear-gradient(135deg, color-mix(in srgb, ${activeScheme.accent} 22%, white), color-mix(in srgb, ${activeScheme.primary} 18%, white))`,
-                                          borderColor: `color-mix(in srgb, ${activeScheme.primary} 18%, white)`,
-                                        }}
-                                      >
-                                        <h2
-                                          className="text-[20px] leading-[1.7]"
-                                          style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
-                                        >
-                                          {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                        </h2>
-                                      </div>
-                                    );
-                                  }
-
-                                  return (
-                                    <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px] flex items-start gap-3">
-                                      <span
-                                        className="mt-[8px] inline-block h-[22px] w-[6px] rounded-full flex-shrink-0"
-                                        style={{
-                                          background: `linear-gradient(180deg, ${activeScheme.primary}, ${activeScheme.accent})`,
-                                          opacity: 0.9,
-                                        }}
-                                      />
-                                      <h2
-                                        className="text-[20px] leading-[1.75]"
-                                        style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
-                                      >
-                                        {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                      </h2>
-                                    </div>
-                                  );
-                                }
-
-                                if (block.type === "quote") {
-                                  return (
-                                    <div
-                                      key={`${block.type}-${block.content}-${index}`}
-                                      className="my-6 rounded-[12px] px-4 py-4"
-                                      style={{ background: domainPreviewStyle.quoteBackground }}
-                                    >
-                                      <p className="text-[15px] leading-[1.85]" style={{ color: domainPreviewStyle.quoteTextColor }}>
-                                        {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                      </p>
-                                    </div>
-                                  );
-                                }
-
-                                if (block.type === "divider") {
-                                  return <div key={`${block.type}-${index}`} className="my-7 h-px" style={{ background: domainPreviewStyle.dividerColor }} />;
-                                }
-
-                                if (block.type === "image") {
-                                  if (block.src) {
-                                    return (
-                                      <figure
-                                        key={`${block.type}-${block.src}-${index}`}
-                                        className="my-7 overflow-hidden"
-                                      >
-                                        <img
-                                          src={block.src}
-                                          alt={block.alt || block.caption || "文章配图"}
-                                          className="block w-full rounded-[10px] border object-cover"
-                                          style={{
-                                            borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
-                                            borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
-                                            background: String(domainPreviewStyle.imageFrameStyle.background),
-                                            boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
-                                          }}
-                                        />
-                                        <figcaption className="px-2 pt-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
-                                          {block.caption || block.alt || "文章配图"}
-                                        </figcaption>
-                                      </figure>
-                                    );
-                                  }
-
-                                  return (
-                                    <div
-                                      key={`${block.type}-${block.content}-${index}`}
-                                      className="my-7 overflow-hidden rounded-[8px] border"
-                                      style={{
-                                        borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
-                                        background: String(domainPreviewStyle.imageFrameStyle.background),
-                                        borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
-                                        boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
-                                      }}
-                                    >
-                                      <div
-                                        className="flex h-44 items-center justify-center"
-                                        style={{ background: String(domainPreviewStyle.imageFrameStyle.background) }}
-                                      >
-                                        <div
-                                          className="rounded-full border px-4 py-2 text-[12px]"
-                                          style={domainPreviewStyle.imagePlaceholderChipStyle}
-                                        >
-                                          配图占位
-                                        </div>
-                                      </div>
-                                      <div className="px-4 py-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
-                                        {block.content}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                if (block.type === "golden") {
-                                  return (
-                                    <div
-                                      key={`${block.type}-${block.content}-${index}`}
-                                      className="my-6 rounded-[10px] border-l-[3px] px-4 py-4"
-                                      style={{ borderColor: domainPreviewStyle.goldenBorderColor, background: domainPreviewStyle.goldenBackground }}
-                                    >
-                                      <p className="text-[16px] leading-[1.85]" style={{ color: domainPreviewStyle.goldenTextColor, fontWeight: 600, textAlign: domainPreviewStyle.goldenTextAlign }}>
-                                        {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                      </p>
-                                    </div>
-                                  );
-                                }
-
-                                if (block.type === "highlight") {
-                                  return (
-                                    <div
-                                      key={`${block.type}-${block.content}-${index}`}
-                                      className="my-6 rounded-[10px] border px-4 py-4"
-                                      style={{ background: highlightBackground, borderColor: domainPreviewStyle.highlightBorderColor }}
-                                    >
-                                      <p className="text-[16px] leading-[1.85]" style={{ color: "#1f2937", fontWeight: 500 }}>
-                                        {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                      </p>
-                                    </div>
-                                  );
-                                }
-
-                                if (block.type === "unordered-list") {
-                                  return (
-                                    <ul key={`${block.type}-${index}`} className="my-5 space-y-3">
-                                      {block.items.map((item, itemIndex) => (
-                                        <li
-                                          key={`${item}-${itemIndex}`}
-                                          className="flex items-start gap-3 text-[16px] leading-[1.8]"
-                                          style={{ color: textSecondary }}
-                                        >
-                                          <span className="mt-[11px] h-[5px] w-[5px] rounded-full bg-[#6b7280] flex-shrink-0" />
-                                          <span>{renderInlineNodes(item, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  );
-                                }
-
-                                if (block.type === "ordered-list") {
-                                  return (
-                                    <ol key={`${block.type}-${index}`} className="my-5 space-y-3">
-                                      {block.items.map((item, itemIndex) => (
-                                        <li
-                                          key={`${item}-${itemIndex}`}
-                                          className="flex items-start gap-3 text-[16px] leading-[1.8]"
-                                          style={{ color: textSecondary }}
-                                        >
-                                          <span className="min-w-[18px] text-[15px] leading-[1.8] text-[#6b7280]">
-                                            {itemIndex + 1}.
-                                          </span>
-                                          <span>{renderInlineNodes(item, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}</span>
-                                        </li>
-                                      ))}
-                                    </ol>
-                                  );
-                                }
-
-                                return (
-                                  <p
-                                    key={`${block.type}-${block.content}-${index}`}
-                                    className="mb-[18px] text-[16px] leading-[1.8] tracking-[0.02em]"
+                            <div
+                              className="rounded-[22px] border px-4 py-4"
+                              style={{
+                                background: previewThemeStyle.titlePanelBackground,
+                                borderColor: previewThemeStyle.titlePanelBorder,
+                                boxShadow: previewThemeStyle.titlePanelShadow,
+                              }}
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div
+                                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px]"
                                     style={{
-                                      color: domainPreviewStyle.paragraphColor,
-                                      fontWeight: 400,
-                                      fontSize: domainPreviewStyle.paragraphFontSize,
-                                      lineHeight: domainPreviewStyle.paragraphLineHeight,
-                                      letterSpacing: domainPreviewStyle.paragraphLetterSpacing,
-                                      fontFamily: domainPreviewStyle.paragraphFontFamily,
+                                      background: previewThemeStyle.badgeBackground,
+                                      color: previewThemeStyle.badgeColor,
+                                      border: previewThemeStyle.badgeBorder,
+                                      fontWeight: 700,
                                     }}
                                   >
-                                    {renderInlineNodes(block.content, { autoHighlight: true, highlightStyle: inlineHighlightStyle })}
-                                  </p>
-                                );
-                              })}
+                                    <span>{domainMeta.icon}</span>
+                                    <span>{domainMeta.label}</span>
+                                  </div>
+                                  <div className="mt-3 text-[12px]" style={{ color: textMuted, fontWeight: 700 }}>
+                                    公众号标题单独填写
+                                  </div>
+                                  <div className="mt-1 text-[18px] leading-[1.55]" style={{ color: textPrimary, fontWeight: 700 }}>
+                                    {title}
+                                  </div>
+                                </div>
+                                <div className="text-right text-[11px]" style={{ color: textMuted }}>
+                                  <div>{articleDate}</div>
+                                  <div className="mt-1">{readingMinutes} 分钟阅读</div>
+                                </div>
+                              </div>
+                              <div className="mt-3 text-[12px] leading-[1.7]" style={{ color: textMuted }}>
+                                下方为复制到公众号编辑器、以及推送到草稿箱时实际使用的正文 HTML 预览。
+                              </div>
                             </div>
 
+                            <div
+                              className="mt-5 rounded-[22px] border px-5 py-5"
+                              style={{
+                                background: previewThemeStyle.contentCardBackground,
+                                borderColor: previewThemeStyle.contentCardBorder,
+                                boxShadow: previewThemeStyle.titlePanelShadow,
+                              }}
+                              dangerouslySetInnerHTML={{ __html: wechatPreviewHtml }}
+                            />
                           </div>
                         ) : (
                           <>
@@ -2227,7 +1281,7 @@ export function FormatEditor() {
                               className="relative overflow-hidden rounded-[28px] border px-5 pb-5 pt-5"
                               style={{
                                 background: `${previewThemeStyle.shellTint}, ${previewThemeStyle.shellGradient}`,
-                                borderColor: previewThemeStyle.heroBorder,
+                                borderColor: previewThemeStyle.contentCardBorder,
                                 boxShadow: isDarkTemplate
                                   ? "0 20px 60px rgba(2,6,23,0.35)"
                                   : "0 20px 60px rgba(15,23,42,0.08)",
@@ -2268,10 +1322,29 @@ export function FormatEditor() {
                               <div
                                 className="relative mt-4 overflow-hidden rounded-[24px] border px-5 py-6"
                                 style={{
-                                  background: previewThemeStyle.heroGradient,
-                                  borderColor: previewThemeStyle.heroBorder,
+                                  background: previewThemeStyle.titlePanelBackground,
+                                  borderColor: previewThemeStyle.titlePanelBorder,
+                                  boxShadow: previewThemeStyle.titlePanelShadow,
                                 }}
                               >
+                                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                  <span
+                                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px]"
+                                    style={{
+                                      background: previewThemeStyle.badgeBackground,
+                                      color: previewThemeStyle.badgeColor,
+                                      border: previewThemeStyle.badgeBorder,
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    <span>{formatting.template}</span>
+                                    <span className="opacity-70">/</span>
+                                    <span>{publishChannel}</span>
+                                  </span>
+                                  <span className="text-[11px]" style={{ color: textMuted }}>
+                                    预计 {readingMinutes} 分钟读完
+                                  </span>
+                                </div>
                                 <h1 className="max-w-[92%] text-[23px] leading-[1.35] tracking-[-0.02em]" style={{ fontWeight: 800, color: textPrimary }}>
                                   {title}
                                 </h1>
@@ -2286,8 +1359,9 @@ export function FormatEditor() {
                                 <div
                                   className="mt-5 rounded-[24px] border px-4 py-4"
                                   style={{
-                                    background: previewThemeStyle.sectionBackground,
-                                    borderColor: `${activeScheme.primary}18`,
+                                    background: previewThemeStyle.contentCardBackground,
+                                    borderColor: previewThemeStyle.contentCardBorder,
+                                    boxShadow: previewThemeStyle.titlePanelShadow,
                                   }}
                                 >
                                   <div className="mb-2 flex items-center gap-2">
@@ -2306,7 +1380,14 @@ export function FormatEditor() {
                               ) : null}
                             </div>
 
-                            <div className="mt-6 space-y-1">
+                            <div
+                              className="mt-6 rounded-[28px] border px-5 py-5"
+                              style={{
+                                background: previewThemeStyle.contentCardBackground,
+                                borderColor: previewThemeStyle.contentCardBorder,
+                                boxShadow: previewThemeStyle.titlePanelShadow,
+                              }}
+                            >
                               <div className="mb-4 flex items-center justify-between">
                                 <div className="text-[11px] uppercase tracking-[0.24em]" style={{ color: textMuted, fontWeight: 700 }}>
                                   正文
@@ -2516,7 +1597,7 @@ export function FormatEditor() {
                                 className="mt-10 rounded-[24px] border px-4 py-4 space-y-3"
                                 style={{
                                   background: previewThemeStyle.sectionBackground,
-                                  borderColor: `${activeScheme.primary}16`,
+                                  borderColor: previewThemeStyle.contentCardBorder,
                                 }}
                               >
                                 <div className="flex items-center justify-between">
@@ -2543,8 +1624,9 @@ export function FormatEditor() {
                             <div
                               className="mt-10 rounded-[28px] border px-5 py-6 text-center"
                               style={{
-                                background: `linear-gradient(145deg, ${activeScheme.primary}10, ${activeScheme.accent}18)`,
-                                borderColor: `${activeScheme.primary}18`,
+                                background: previewThemeStyle.titlePanelBackground,
+                                borderColor: previewThemeStyle.titlePanelBorder,
+                                boxShadow: previewThemeStyle.titlePanelShadow,
                               }}
                             >
                               <div className="text-[11px] uppercase tracking-[0.24em]" style={{ color: activeScheme.primary, fontWeight: 700 }}>
@@ -2581,31 +1663,31 @@ export function FormatEditor() {
         </div>
 
         <div
-          className={`space-y-5 overflow-y-auto border-l border-[#eadfd4] bg-white p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[352px] min-w-[352px] xl:w-[368px] xl:min-w-[368px]"}`}
+          className={`space-y-5 overflow-y-auto border-l border-border bg-card p-4 ${isImagePanelOpen ? "w-[360px] min-w-[360px] xl:w-[380px] xl:min-w-[380px]" : "w-[352px] min-w-[352px] xl:w-[368px] xl:min-w-[368px]"}`}
         >
           {isImagePanelOpen ? (
             <>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-[18px] text-[#181715]" style={{ fontWeight: 850 }}>插入图片</div>
-                  <div className="mt-1 text-[12px] leading-6 text-[#8c8178]">侧栏插图不会打断中间预览区，适合边看正文边决定插入位置。</div>
+                  <div className="text-[18px] text-foreground" style={{ fontWeight: 850 }}>插入图片</div>
+                  <div className="mt-1 text-[12px] leading-6 text-muted-foreground">侧栏插图不会打断中间预览区，适合边看正文边决定插入位置。</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsImagePanelOpen(false)}
-                  className="rounded-lg p-2 text-[#8c8178] transition-colors hover:bg-[#fff7ef] hover:text-[#d65f2b]"
+                  className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-                <div className="rounded-2xl border border-[#eadfd4] bg-[#fffaf5] p-3">
+                <div className="rounded-2xl border border-border bg-background p-3">
                 <div className="grid grid-cols-4 gap-2">
                   {[
-                    { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-[#d65f2b]" },
-                    { key: "link" as const, label: "图片链接", icon: Link2, color: "text-[#d65f2b]" },
-                    { key: "search" as const, label: "联网搜图", icon: Search, color: "text-[#d65f2b]" },
-                    { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-[#d65f2b]" },
+                    { key: "upload" as const, label: "本地上传", icon: Upload, color: "text-primary" },
+                    { key: "link" as const, label: "图片链接", icon: Link2, color: "text-primary" },
+                    { key: "search" as const, label: "联网搜图", icon: Search, color: "text-primary" },
+                    { key: "ai" as const, label: "AI 配图", icon: WandSparkles, color: "text-primary" },
                   ].map(({ key, label, icon: Icon, color }) => (
                     <button
                       key={key}
@@ -2613,21 +1695,21 @@ export function FormatEditor() {
                       onClick={() => setActiveImageTab(key)}
                       className={`rounded-xl border px-3 py-3 text-left transition-colors ${
                         activeImageTab === key
-                          ? "border-[#d65f2b] bg-[#fff0e6]"
-                          : "border-transparent bg-white hover:bg-[#fff7ef]"
+                          ? "border-primary bg-primary/10"
+                          : "border-transparent bg-card hover:bg-accent"
                       }`}
                     >
                       <Icon className={`mb-2 h-4 w-4 ${color}`} />
-                      <div className="text-[12px] text-[#181715]" style={{ fontWeight: 750 }}>{label}</div>
+                      <div className="text-[12px] text-foreground" style={{ fontWeight: 750 }}>{label}</div>
                     </button>
                   ))}
                 </div>
               </div>
 
               {activeImageTab === "upload" ? (
-                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>本地上传</div>
-                  <p className="mt-2 text-[12px] leading-6 text-[#8c8178]">上传后会直接插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-[14px] text-foreground" style={{ fontWeight: 800 }}>本地上传</div>
+                  <p className="mt-2 text-[12px] leading-6 text-muted-foreground">上传后会直接插入正文；若云存储未配置，会退化为本地内嵌图片。</p>
                   <button
                     type="button"
                     disabled={imageLoading === "upload"}
@@ -2642,14 +1724,14 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "link" ? (
-                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>图片链接</div>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-[14px] text-foreground" style={{ fontWeight: 800 }}>图片链接</div>
                   <div className="mt-3 space-y-3">
                     <input
                       value={imageUrl}
                       onChange={(event) => setImageUrl(event.target.value)}
                       placeholder="https://example.com/image.jpg"
-                      className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
+                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground focus:border-primary"
                     />
                     <button
                       type="button"
@@ -2664,24 +1746,24 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "search" ? (
-                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>联网搜图</div>
-                  <div className="mt-2 rounded-xl border border-[#f0dfd0] bg-[#fff7ef] p-3">
-                    <div className="text-[12px] text-[#d65f2b]" style={{ fontWeight: 800 }}>更真实的配图</div>
-                    <p className="mt-1 text-[12px] leading-6 text-[#8c8178]">所有领域默认优先找真实摄影图；默认不加文字，找不到再回退 AI。</p>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-[14px] text-foreground" style={{ fontWeight: 800 }}>联网搜图</div>
+                  <div className="mt-2 rounded-xl border border-border/70 bg-accent p-3">
+                    <div className="text-[12px] text-primary" style={{ fontWeight: 800 }}>更真实的配图</div>
+                    <p className="mt-1 text-[12px] leading-6 text-muted-foreground">所有领域默认优先找真实摄影图；默认不加文字，找不到再回退 AI。</p>
                   </div>
                   <div className="mt-3 space-y-3">
                     <input
                       value={imageSearchQuery}
                       onChange={(event) => setImageSearchQuery(event.target.value)}
                       placeholder="例如：travel landscape street photography"
-                      className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
+                      className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground focus:border-primary"
                     />
                     <button
                       type="button"
                       disabled={imageLoading === "search"}
                       onClick={handleSearchImage}
-                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-primary/40"
                       style={{ fontWeight: 800 }}
                     >
                       {imageLoading === "search" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
@@ -2697,12 +1779,12 @@ export function FormatEditor() {
                               insertImageToBody(item.url, imageCaption || title || "文章配图");
                               setIsImagePanelOpen(false);
                             }}
-                            className="overflow-hidden rounded-xl border border-[#eadfd4] bg-white text-left transition hover:border-[#d65f2b]/40 hover:shadow-sm"
+                            className="overflow-hidden rounded-xl border border-border bg-card text-left transition hover:border-primary/40 hover:shadow-sm"
                           >
                             <img src={item.thumbnailUrl || item.url} alt="真实图片候选" className="h-28 w-full object-cover" loading="lazy" />
                             <div className="space-y-1 px-3 py-2">
-                              <div className="line-clamp-2 text-[11px] text-[#5d544c]">{item.title || "真实图片候选"}</div>
-                              <div className="text-[11px] text-[#8c8178]">点击插入</div>
+                              <div className="line-clamp-2 text-[11px] text-foreground/75">{item.title || "真实图片候选"}</div>
+                              <div className="text-[11px] text-muted-foreground">点击插入</div>
                             </div>
                           </button>
                         ))}
@@ -2713,12 +1795,12 @@ export function FormatEditor() {
               ) : null}
 
               {activeImageTab === "ai" ? (
-                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                  <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>AI 配图</div>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-[14px] text-foreground" style={{ fontWeight: 800 }}>AI 配图</div>
                   <div className="mt-3 space-y-3">
-                    <div className="rounded-xl border border-[#f0dfd0] bg-[#fff7ef] p-3">
-                      <div className="text-[12px] text-[#d65f2b]" style={{ fontWeight: 800 }}>智能配图</div>
-                      <p className="mt-1 text-[12px] leading-6 text-[#8c8178]">会根据文章内容自动配图；默认优先联网搜真实图，失败时再回退 AI。</p>
+                    <div className="rounded-xl border border-border/70 bg-accent p-3">
+                      <div className="text-[12px] text-primary" style={{ fontWeight: 800 }}>智能配图</div>
+                      <p className="mt-1 text-[12px] leading-6 text-muted-foreground">会根据文章内容自动配图；默认优先联网搜真实图，失败时再回退 AI。</p>
                       <button
                         type="button"
                         disabled={imageLoading === "generate" || imageLoading === "search"}
@@ -2736,13 +1818,13 @@ export function FormatEditor() {
                       onChange={(event) => setImagePrompt(event.target.value)}
                       rows={6}
                       placeholder="描述你想要的配图风格、主体和氛围"
-                      className="w-full resize-none rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
+                      className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-[12px] leading-6 outline-none placeholder:text-muted-foreground focus:border-primary"
                     />
                     <button
                       type="button"
                       disabled={imageLoading === "generate" || imageLoading === "search"}
                       onClick={handleGenerateImage}
-                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+                      className="lens-btn-primary inline-flex items-center gap-2 px-3 py-2 text-[12px] disabled:cursor-not-allowed disabled:bg-primary/40"
                       style={{ fontWeight: 800 }}
                     >
                       {imageLoading === "generate" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <WandSparkles className="h-3.5 w-3.5" />}
@@ -2752,19 +1834,19 @@ export function FormatEditor() {
                 </div>
               ) : null}
 
-              <div className="space-y-4 rounded-2xl border border-[#eadfd4] bg-white p-4">
+              <div className="space-y-4 rounded-2xl border border-border bg-card p-4">
                 <div>
-                  <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>图注</div>
+                  <div className="mb-2 text-[13px] text-foreground" style={{ fontWeight: 750 }}>图注</div>
                   <input
                     value={imageCaption}
                     onChange={(event) => setImageCaption(event.target.value)}
                     placeholder="图片说明 / 图注"
-                    className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[12px] outline-none placeholder:text-[#9a9086] focus:border-[#d65f2b]"
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground focus:border-primary"
                   />
                 </div>
 
                 <div>
-                  <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 750 }}>插入位置</div>
+                  <div className="mb-2 text-[13px] text-foreground" style={{ fontWeight: 750 }}>插入位置</div>
                   <div className="flex flex-wrap gap-2">
                     {[
                       { value: "auto" as const, label: "智能插入" },
@@ -2777,8 +1859,8 @@ export function FormatEditor() {
                         onClick={() => setImageInsertMode(option.value)}
                         className={`rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
                           imageInsertMode === option.value
-                            ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
-                            : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border bg-card text-muted-foreground hover:bg-accent"
                         }`}
                         style={{ fontWeight: 500 }}
                       >
@@ -2786,7 +1868,7 @@ export function FormatEditor() {
                       </button>
                     ))}
                   </div>
-                  <p className="mt-2 text-[12px] leading-6 text-[#8c8178]">默认优先替换图片占位；如果没有占位，就插入到正文当前光标位置。</p>
+                  <p className="mt-2 text-[12px] leading-6 text-muted-foreground">默认优先替换图片占位；如果没有占位，就插入到正文当前光标位置。</p>
                 </div>
               </div>
             </>
@@ -2794,7 +1876,7 @@ export function FormatEditor() {
             <>
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>当前草稿</div>
-            <div className="rounded-[22px] border border-[#eadfd4] bg-white shadow-[0_10px_28px_rgba(85,57,34,0.05)]">
+            <div className="rounded-[22px] border border-border bg-card shadow-[0_10px_28px_rgba(31,41,86,0.05)]">
               <div className="space-y-4 px-4 py-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -2820,37 +1902,37 @@ export function FormatEditor() {
                   </span>
                 </div>
 
-                <div className="text-[16px] leading-7 text-[#181715]" style={{ fontWeight: 750 }}>
+                <div className="text-[16px] leading-7 text-foreground" style={{ fontWeight: 750 }}>
                   {title || currentDraft.title}
                 </div>
 
-                <div className="flex items-center justify-between text-[12px] text-[#8c8178]">
+                <div className="flex items-center justify-between text-[12px] text-muted-foreground">
                   <span>{draftSyncBadge.description}</span>
                   <span className="whitespace-nowrap">更新于 {articleDate}</span>
                 </div>
 
-                <div className="rounded-2xl bg-[#fffaf5] px-3 py-3">
-                  <div className="line-clamp-3 text-[12px] leading-6 text-[#6f665d]">
+                <div className="rounded-2xl bg-background px-3 py-3">
+                  <div className="line-clamp-3 text-[12px] leading-6 text-muted-foreground">
                     {currentDraftPreview}
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 border-t border-[#f0e5da] px-4 py-4">
+              <div className="grid grid-cols-2 gap-2 border-t border-border/70 px-4 py-4">
                 {currentDraftMetrics.map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-[#eadfd4]/80 bg-white px-3 py-3">
+                  <div key={item.label} className="rounded-2xl border border-border/80 bg-card px-3 py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-[11px] text-[#8c8178]">{item.label}</div>
-                      <div className="text-[11px] text-[#8c8178]">{item.hint}</div>
+                      <div className="text-[11px] text-muted-foreground">{item.label}</div>
+                      <div className="text-[11px] text-muted-foreground">{item.hint}</div>
                     </div>
-                    <div className="mt-2 text-[16px] text-[#181715]" style={{ fontWeight: 750 }}>
+                    <div className="mt-2 text-[16px] text-foreground" style={{ fontWeight: 750 }}>
                       {item.value}
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="border-t border-[#f0e5da] px-4 py-3 text-[12px] leading-6 text-[#8c8178]">
+              <div className="border-t border-border/70 px-4 py-3 text-[12px] leading-6 text-muted-foreground">
                 {domainMeta.description}
               </div>
             </div>
@@ -2859,13 +1941,13 @@ export function FormatEditor() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="text-[13px]" style={{ fontWeight: 600 }}>内容编辑</div>
-              <span className="text-[11px] text-[#8c8178]">{isDirty ? "未保存修改" : "已同步"}</span>
+              <span className="text-[11px] text-muted-foreground">{isDirty ? "未保存修改" : "已同步"}</span>
             </div>
             <div className="space-y-3">
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="block text-[11px] text-[#8c8178]">标题</label>
-                  <span className={`text-[11px] ${isWechatTitleTooLong ? "text-red-500" : "text-[#8c8178]"}`}>
+                  <label className="block text-[11px] text-muted-foreground">标题</label>
+                  <span className={`text-[11px] ${isWechatTitleTooLong ? "text-red-500" : "text-muted-foreground"}`}>
                     {titleLength} / {WECHAT_TITLE_LIMIT}
                   </span>
                 </div>
@@ -2873,10 +1955,10 @@ export function FormatEditor() {
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   aria-invalid={isWechatTitleTooLong}
-                  className={`w-full rounded-lg bg-[#fffaf5] px-3 py-2 text-[13px] outline-none focus:bg-white ${
+                  className={`w-full rounded-lg bg-background px-3 py-2 text-[13px] outline-none focus:bg-card ${
                     isWechatTitleTooLong
                       ? "border border-red-200 text-red-600 focus:border-red-300"
-                      : "border border-[#eadfd4] focus:border-[#d65f2b]"
+                      : "border border-border focus:border-primary"
                   }`}
                 />
                 {isWechatTitleTooLong ? (
@@ -2884,15 +1966,15 @@ export function FormatEditor() {
                 ) : null}
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-[#8c8178]">导读摘要</label>
+                <label className="mb-1 block text-[11px] text-muted-foreground">导读摘要</label>
                 <textarea
                   value={summary}
                   onChange={(event) => setSummary(event.target.value)}
-                  className="min-h-24 w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-[#d65f2b] focus:bg-white"
+                  className="min-h-24 w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-primary focus:bg-card"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] text-[#8c8178]">正文内容</label>
+                <label className="mb-1 block text-[11px] text-muted-foreground">正文内容</label>
                 <textarea
                   ref={bodyTextareaRef}
                   value={body}
@@ -2906,7 +1988,7 @@ export function FormatEditor() {
                   onClick={syncBodySelection}
                   onKeyUp={syncBodySelection}
                   onSelect={syncBodySelection}
-                  className="min-h-56 w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-[#d65f2b] focus:bg-white"
+                  className="min-h-56 w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-primary focus:bg-card"
                 />
               </div>
             </div>
@@ -2921,8 +2003,8 @@ export function FormatEditor() {
                   onClick={() => setFormatting((current) => ({ ...current, template }))}
                   className={`px-3 py-2 rounded-lg text-[12px] border transition-colors ${
                     formatting.template === template
-                      ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
-                      : "border-[#eadfd4] bg-[#fffaf5] text-[#6f665d] hover:bg-[#fff7ef]"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:bg-accent"
                   }`}
                   style={{ fontWeight: 500 }}
                 >
@@ -2940,12 +2022,12 @@ export function FormatEditor() {
                   key={scheme.name}
                   onClick={() => setFormatting((current) => ({ ...current, colorScheme: scheme.name }))}
                   className={`w-full flex items-center gap-2 p-2 rounded-lg cursor-pointer border transition-colors ${
-                    formatting.colorScheme === scheme.name ? "border-[#d65f2b] bg-[#fff0e6]" : "border-transparent hover:bg-[#fff7ef]"
+                    formatting.colorScheme === scheme.name ? "border-primary bg-primary/10" : "border-transparent hover:bg-accent"
                   }`}
                 >
                   <div className="w-6 h-6 rounded-full" style={{ background: scheme.primary }} />
                   <div className="w-6 h-6 rounded-full" style={{ background: scheme.accent }} />
-                  <span className="text-[12px] text-[#6f665d]" style={{ fontWeight: 500 }}>{scheme.name}</span>
+                  <span className="text-[12px] text-muted-foreground" style={{ fontWeight: 500 }}>{scheme.name}</span>
                 </button>
               ))}
             </div>
@@ -3016,18 +2098,18 @@ function SelectField({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-[11px] text-[#8c8178]">{label}</label>
+      <label className="mb-1 block text-[11px] text-muted-foreground">{label}</label>
       <div className="relative">
         <select
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full appearance-none rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-1.5 text-[12px]"
+          className="w-full appearance-none rounded-lg border border-border bg-background px-3 py-1.5 text-[12px]"
         >
           {options.map((option) => (
             <option key={option}>{option}</option>
           ))}
         </select>
-        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8c8178]" />
+        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
       </div>
     </div>
   );
@@ -3044,13 +2126,13 @@ function ToggleField({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <label className="text-[12px] text-[#8c8178]">{label}</label>
+      <label className="text-[12px] text-muted-foreground">{label}</label>
       <button
         type="button"
         onClick={onChange}
-        className={`relative h-5 w-9 cursor-pointer rounded-full transition-colors ${checked ? "bg-[#d65f2b]" : "bg-[#d8cfc5]"}`}
+        className={`relative h-5 w-9 cursor-pointer rounded-full transition-colors ${checked ? "bg-primary" : "bg-muted"}`}
       >
-        <div className={`w-4 h-4 bg-white rounded-full absolute top-0.5 shadow-sm transition-all ${checked ? "right-0.5" : "left-0.5"}`} />
+        <div className={`w-4 h-4 bg-card rounded-full absolute top-0.5 shadow-sm transition-all ${checked ? "right-0.5" : "left-0.5"}`} />
       </button>
     </div>
   );

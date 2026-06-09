@@ -18,9 +18,10 @@ import {
 } from "../lib/app-data";
 import {
   extractContentBlocks, collectInlineTokens,
-  getInlineHighlightStyle, getWechatDomainPreviewStyle, buildHtml,
+  getInlineHighlightStyle, getWechatDomainPreviewStyle, buildHtml, buildWechatArticleHtml, buildWechatText,
   getTemplatePreviewStyle, escapeHtml,
 } from "../lib/format-render";
+import { writeRichClipboard } from "../lib/rich-clipboard";
 import {
   buildAutoImageCaption,
   buildAutoImagePrompt,
@@ -41,7 +42,6 @@ import { domainConfigs, resolveArticleDomain } from "../lib/content-domains";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
-import { Progress } from "./ui/progress";
 
 const generationLabels: Record<AIWriteScope, string> = {
   title: "AI 文章生成中",
@@ -536,6 +536,32 @@ export function WritingPage() {
     return extractContentBlocks(htmlBody);
   }, [body, selectedTitle]);
   const editorBody = useMemo(() => stripTitleLineFromBody(body, selectedTitle), [body, selectedTitle]);
+  const wechatPreviewTitle = useMemo(
+    () => inferTitleFromBody(body, selectedTitle || currentDraft?.title || ""),
+    [body, currentDraft?.title, selectedTitle],
+  );
+  const wechatPreviewBody = useMemo(
+    () => stripTitleLineFromBody(body, wechatPreviewTitle).trim(),
+    [body, wechatPreviewTitle],
+  );
+  const wechatPreviewHtml = useMemo(
+    () => buildWechatArticleHtml(
+      {
+        title: wechatPreviewTitle,
+        summary,
+        updatedAt: currentDraft?.updatedAt ?? new Date().toISOString(),
+        publishedAt: currentDraft?.publishedAt,
+      },
+      wechatPreviewBody,
+      formatting,
+      activeScheme.primary,
+      activeScheme.accent,
+      previewAccountName,
+      selectedDomain,
+      { includeHeader: false },
+    ),
+    [activeScheme.accent, activeScheme.primary, currentDraft?.publishedAt, currentDraft?.updatedAt, formatting, previewAccountName, selectedDomain, summary, wechatPreviewBody, wechatPreviewTitle],
+  );
 
   const headingCount = useMemo(() => previewBlocks.filter((block) => block.type === "heading").length, [previewBlocks]);
   const estimatedCards = useMemo(() => Math.max(1, previewBlocks.filter((block) => block.type === "golden" || block.type === "highlight" || block.type === "quote").length), [previewBlocks]);
@@ -674,6 +700,9 @@ export function WritingPage() {
 
     return Math.min(100, ((resolvedIndex + activeStageOffset) / segmentCount) * 100);
   }, [generationStageSteps, isWritingBusy]);
+  const generationStageTrackInset = generationStageSteps.length
+    ? `${100 / (generationStageSteps.length * 2)}%`
+    : "0%";
   const isBodyDraftGenerating =
     isWritingBusy &&
     (visibleGenerationTask === "body" || visibleGenerationTask === "full");
@@ -1406,8 +1435,23 @@ export function WritingPage() {
     if (!draft) return;
     const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
     const htmlBody = stripTitleLineFromBody(body, inferredTitle);
-    const html = buildHtml({ ...draft, title: inferredTitle, summary: "" }, htmlBody, formatting, activeScheme.primary, activeScheme.accent, "公众号", previewAccountName, selectedDomain);
-    navigator.clipboard.writeText(html).then(() => {
+    const html = buildWechatArticleHtml(
+      { ...draft, title: inferredTitle, summary },
+      htmlBody,
+      formatting,
+      activeScheme.primary,
+      activeScheme.accent,
+      previewAccountName,
+      selectedDomain,
+      { includeHeader: false },
+    );
+    const plainText = buildWechatText(
+      { ...draft, title: inferredTitle, summary },
+      htmlBody,
+      "",
+      { includeTitle: false, includeCta: false },
+    );
+    writeRichClipboard(html, plainText).then(() => {
       setSaveNotice("已复制公众号格式");
       window.setTimeout(() => setSaveNotice(""), 2000);
     }).catch(() => {
@@ -1421,7 +1465,7 @@ export function WritingPage() {
     if (!draft) return;
     const inferredTitle = inferTitleFromBody(body, selectedTitle || draft.title);
     const htmlBody = stripTitleLineFromBody(body, inferredTitle);
-    const html = buildHtml({ ...draft, title: inferredTitle, summary: "" }, htmlBody, formatting, activeScheme.primary, activeScheme.accent, "公众号", previewAccountName, selectedDomain);
+    const html = buildHtml({ ...draft, title: inferredTitle, summary }, htmlBody, formatting, activeScheme.primary, activeScheme.accent, "公众号", previewAccountName, selectedDomain);
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1477,6 +1521,7 @@ export function WritingPage() {
           title: inferredTitle,
           summary,
           body: articleBody,
+          formatting,
           author: previewAccountName,
           domain: selectedDomain,
         }),
@@ -1500,6 +1545,7 @@ export function WritingPage() {
           title: inferredTitle,
           summary,
           body: articleBody,
+          formatting,
           author: previewAccountName,
           domain: selectedDomain,
         }),
@@ -1536,281 +1582,53 @@ export function WritingPage() {
     if (isWechatChannel) {
       return (
         <div className="mx-auto max-w-[640px]">
-          <div className="border-b pb-5" style={{ borderColor: isDarkTemplate ? "#1f2937" : "#f1f1f1" }}>
-            <h1
-              className="tracking-[0.01em]"
-              style={{
-                fontSize: String(domainPreviewStyle.titleStyle.fontSize),
-                lineHeight: Number(domainPreviewStyle.titleStyle.lineHeight),
-                letterSpacing: String(domainPreviewStyle.titleStyle.letterSpacing),
-                color: textPrimary,
-                fontWeight: Number(domainPreviewStyle.titleStyle.fontWeight),
-                textAlign: domainPreviewStyle.titleStyle.textAlign,
-                fontFamily: String(domainPreviewStyle.titleStyle.fontFamily),
-              }}
-            >
-              {selectedTitle}
-            </h1>
-            <div
-              className="mt-3 flex flex-wrap items-center gap-2 text-[12px]"
-              style={{
-                color: textMuted,
-                justifyContent: domainPreviewStyle.metaAlign,
-              }}
-            >
-              <span className="text-[15px]" style={{ fontWeight: 400, color: isDarkTemplate ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
-              <span>·</span>
-              <span>{articleDate}</span>
+          <div
+            className="rounded-[22px] border px-4 py-4"
+            style={{
+              background: previewThemeStyle.titlePanelBackground,
+              borderColor: previewThemeStyle.titlePanelBorder,
+              boxShadow: previewThemeStyle.titlePanelShadow,
+            }}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div
+                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px]"
+                  style={{
+                    background: previewThemeStyle.badgeBackground,
+                    color: previewThemeStyle.badgeColor,
+                    border: previewThemeStyle.badgeBorder,
+                    fontWeight: 700,
+                  }}
+                >
+                  <span>{domainConfigs[selectedDomain].icon}</span>
+                  <span>{domainConfigs[selectedDomain].label}</span>
+                </div>
+                <div className="mt-3 text-[12px]" style={{ color: textMuted, fontWeight: 700 }}>
+                  公众号标题单独填写
+                </div>
+                <div className="mt-1 text-[18px] leading-[1.55]" style={{ color: textPrimary, fontWeight: 700 }}>
+                  {wechatPreviewTitle}
+                </div>
+              </div>
+              <div className="text-right text-[11px]" style={{ color: textMuted }}>
+                <div>{articleDate}</div>
+              </div>
+            </div>
+            <div className="mt-3 text-[12px] leading-[1.7]" style={{ color: textMuted }}>
+              下方为复制到公众号编辑器、以及推送到草稿箱时实际使用的正文 HTML 预览。
             </div>
           </div>
 
-          <div className="pt-5">
-            {previewBlocks.map((block, index) => {
-              if (block.type === "heading") {
-                if (domainPreviewStyle.headingMode === "underline") {
-                  return (
-                    <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px]">
-                      <h2
-                        className="inline-block border-b-2 pb-[6px] text-[18px] leading-[1.7]"
-                        style={{
-                          borderColor: activeScheme.primary,
-                          color: domainPreviewStyle.headingTextColor,
-                          fontWeight: domainPreviewStyle.headingFontWeight,
-                          fontFamily: domainPreviewStyle.headingFontFamily,
-                        }}
-                      >
-                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                      </h2>
-                    </div>
-                  );
-                }
-
-                if (domainPreviewStyle.headingMode === "center") {
-                  return (
-                    <div key={`${block.type}-${block.content}-${index}`} className="mb-[18px] mt-[34px] text-center">
-                      <h2
-                        className="inline-block border-b-2 pb-[6px] text-[18px] leading-[1.8]"
-                        style={{
-                          borderColor: activeScheme.accent,
-                          color: domainPreviewStyle.headingTextColor,
-                          fontWeight: domainPreviewStyle.headingFontWeight,
-                          fontFamily: domainPreviewStyle.headingFontFamily,
-                        }}
-                      >
-                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                      </h2>
-                    </div>
-                  );
-                }
-
-                if (domainPreviewStyle.headingMode === "card") {
-                  return (
-                    <div
-                      key={`${block.type}-${block.content}-${index}`}
-                      className="mb-[15px] mt-[30px] rounded-[14px] border px-4 py-3"
-                      style={{
-                        background: `linear-gradient(135deg, color-mix(in srgb, ${activeScheme.accent} 22%, white), color-mix(in srgb, ${activeScheme.primary} 18%, white))`,
-                        borderColor: `color-mix(in srgb, ${activeScheme.primary} 18%, white)`,
-                      }}
-                    >
-                      <h2
-                        className="text-[18px] leading-[1.7]"
-                        style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
-                      >
-                        {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                      </h2>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={`${block.type}-${block.content}-${index}`} className="mb-[15px] mt-[30px] flex items-start gap-3">
-                    <span
-                      className="mt-[6px] inline-block h-[24px] w-[6px] rounded-full flex-shrink-0"
-                      style={{
-                        background: `linear-gradient(180deg, ${activeScheme.primary}, ${activeScheme.accent})`,
-                        opacity: 0.9,
-                      }}
-                    />
-                    <h2
-                      className="text-[18px] leading-[1.75]"
-                      style={{ fontWeight: domainPreviewStyle.headingFontWeight, color: domainPreviewStyle.headingTextColor, fontFamily: domainPreviewStyle.headingFontFamily }}
-                    >
-                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                    </h2>
-                  </div>
-                );
-              }
-
-              if (block.type === "quote") {
-                return (
-                  <div
-                    key={`${block.type}-${block.content}-${index}`}
-                    className="my-6 rounded-[12px] px-4 py-4"
-                    style={{ background: domainPreviewStyle.quoteBackground }}
-                  >
-                    <p className="text-[15px] leading-[1.85]" style={{ color: domainPreviewStyle.quoteTextColor }}>
-                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                    </p>
-                  </div>
-                );
-              }
-
-              if (block.type === "divider") {
-                return <div key={`${block.type}-${index}`} className="my-7 h-px" style={{ background: domainPreviewStyle.dividerColor }} />;
-              }
-
-              if (block.type === "image") {
-                if (block.src) {
-                  return (
-                    <figure
-                      key={`${block.type}-${block.src}-${index}`}
-                      className="my-7 overflow-hidden"
-                    >
-                      <img
-                        src={block.src}
-                        alt={block.alt || block.caption || "文章配图"}
-                        className="block w-full rounded-[10px] border object-cover"
-                        style={{
-                          borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
-                          borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
-                          background: String(domainPreviewStyle.imageFrameStyle.background),
-                          boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
-                        }}
-                      />
-                      <figcaption className="px-2 pt-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
-                        {block.caption || block.alt || "文章配图"}
-                      </figcaption>
-                    </figure>
-                  );
-                }
-
-                return (
-                  <div
-                    key={`${block.type}-${block.content}-${index}`}
-                    className="my-7 overflow-hidden rounded-[8px] border"
-                    style={{
-                      borderColor: String(domainPreviewStyle.imageFrameStyle.borderColor),
-                      background: String(domainPreviewStyle.imageFrameStyle.background),
-                      borderRadius: String(domainPreviewStyle.imageFrameStyle.borderRadius),
-                      boxShadow: String(domainPreviewStyle.imageFrameStyle.boxShadow),
-                    }}
-                  >
-                    <div
-                      className="flex h-44 items-center justify-center"
-                      style={{ background: String(domainPreviewStyle.imageFrameStyle.background) }}
-                    >
-                      <div
-                        className="rounded-full border px-4 py-2 text-[12px]"
-                        style={domainPreviewStyle.imagePlaceholderChipStyle}
-                      >
-                        配图占位
-                      </div>
-                    </div>
-                    <div className="px-4 py-3 text-center text-[12px]" style={{ color: domainPreviewStyle.imageCaptionColor }}>
-                      {block.content}
-                    </div>
-                  </div>
-                );
-              }
-
-              if (block.type === "golden") {
-                return (
-                  <div
-                    key={`${block.type}-${block.content}-${index}`}
-                    className="my-6 rounded-[10px] border-l-[3px] px-4 py-4"
-                    style={{ borderColor: domainPreviewStyle.goldenBorderColor, background: domainPreviewStyle.goldenBackground }}
-                  >
-                    <p className="text-[16px] leading-[1.85]" style={{ color: domainPreviewStyle.goldenTextColor, fontWeight: 600, textAlign: domainPreviewStyle.goldenTextAlign }}>
-                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                    </p>
-                  </div>
-                );
-              }
-
-              if (block.type === "highlight") {
-                return (
-                  <div
-                    key={`${block.type}-${block.content}-${index}`}
-                    className="my-6 rounded-[10px] border px-4 py-4"
-                    style={{ background: highlightBackground, borderColor: domainPreviewStyle.highlightBorderColor }}
-                  >
-                    <p className="text-[16px] leading-[1.85]" style={{ color: textPrimary, fontWeight: 500 }}>
-                      {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                    </p>
-                  </div>
-                );
-              }
-
-              if (block.type === "unordered-list") {
-                return (
-                  <ul key={`${block.type}-${index}`} className="my-5 space-y-3">
-                    {block.items.map((item, itemIndex) => (
-                      <li
-                        key={`${item}-${itemIndex}`}
-                        className="flex items-start gap-3 text-[16px] leading-[1.8]"
-                        style={{ color: textSecondary }}
-                      >
-                        <span className="mt-[11px] h-[5px] w-[5px] rounded-full bg-[#6b7280] flex-shrink-0" />
-                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                );
-              }
-
-              if (block.type === "ordered-list") {
-                return (
-                  <ol key={`${block.type}-${index}`} className="my-5 space-y-3">
-                    {block.items.map((item, itemIndex) => (
-                      <li
-                        key={`${item}-${itemIndex}`}
-                        className="flex items-start gap-3 text-[16px] leading-[1.8]"
-                        style={{ color: textSecondary }}
-                      >
-                        <span className="min-w-[18px] text-[15px] leading-[1.8] text-[#6b7280]">
-                          {itemIndex + 1}.
-                        </span>
-                        <span>{renderInlineNodes(item, activeScheme.primary, activeScheme.accent)}</span>
-                      </li>
-                    ))}
-                  </ol>
-                );
-              }
-
-              if (block.type === "code") {
-                const language = block.language ? block.language : "code";
-                return (
-                  <figure key={`${block.type}-${block.content}-${index}`} className="my-6 border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                    <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-[11px] text-gray-500 uppercase">
-                      <span>代码</span>
-                      <span>{language}</span>
-                    </div>
-                    <pre className="p-3 overflow-x-auto text-[13px] bg-slate-900 text-slate-100 font-mono leading-relaxed">
-                      <code>{block.content}</code>
-                    </pre>
-                  </figure>
-                );
-              }
-
-              return (
-                <p
-                  key={`${block.type}-${block.content}-${index}`}
-                  className="mb-[18px] text-[16px] leading-[1.8] tracking-[0.02em]"
-                  style={{
-                    color: domainPreviewStyle.paragraphColor,
-                    fontWeight: 400,
-                    fontSize: domainPreviewStyle.paragraphFontSize,
-                    lineHeight: domainPreviewStyle.paragraphLineHeight,
-                    letterSpacing: domainPreviewStyle.paragraphLetterSpacing,
-                    fontFamily: domainPreviewStyle.paragraphFontFamily,
-                  }}
-                >
-                  {renderInlineNodes(block.content, activeScheme.primary, activeScheme.accent)}
-                </p>
-              );
-            })}
-          </div>
+          <div
+            className="mt-5 rounded-[22px] border px-5 py-5"
+            style={{
+              background: previewThemeStyle.contentCardBackground,
+              borderColor: previewThemeStyle.contentCardBorder,
+              boxShadow: previewThemeStyle.titlePanelShadow,
+            }}
+            dangerouslySetInnerHTML={{ __html: wechatPreviewHtml }}
+          />
         </div>
       );
     } else {
@@ -2078,8 +1896,8 @@ export function WritingPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[#fffaf5]">
-      <div className="flex h-12 min-h-[48px] items-center gap-2 border-b border-[#eadfd4] bg-white/86 px-4">
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex h-12 min-h-[48px] items-center gap-2 border-b border-border bg-card/90 px-4">
         <button
           onClick={() => void handleGenerate("full")}
           disabled={isWritingBusy}
@@ -2090,16 +1908,16 @@ export function WritingPage() {
         </button>
         <div className="flex-1" />
         {visiblePendingAction ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fff0e6] px-2.5 py-1 text-[12px] text-[#d65f2b]">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary">
             <LoaderCircle className="h-3 w-3 animate-spin" />
             {visiblePendingAction}
           </span>
         ) : null}
-        {!visiblePendingAction && saveNotice ? <span className="text-[12px] text-[#d65f2b]">{saveNotice}</span> : null}
+        {!visiblePendingAction && saveNotice ? <span className="text-[12px] text-primary">{saveNotice}</span> : null}
         {isWritingBusy ? (
           <button
             onClick={handlePauseGeneration}
-            className="flex items-center gap-1.5 rounded-lg border border-[#f0dfd0] bg-[#fff7ef] px-3.5 py-1.5 text-[12px] text-[#d65f2b] hover:bg-[#fff0e6]"
+            className="flex items-center gap-1.5 rounded-lg border border-border/70 bg-accent px-3.5 py-1.5 text-[12px] text-primary hover:bg-primary/10"
             style={{ fontWeight: 600 }}
           >
             <Pause className="w-3.5 h-3.5" /> 暂停生成
@@ -2116,7 +1934,7 @@ export function WritingPage() {
         <button
           onClick={() => void handlePushToWechatDraft()}
           disabled={isWritingBusy || isWechatPushing || !editorBody.trim()}
-          className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-[#e8a17e]"
+          className="lens-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-[12px] disabled:cursor-not-allowed disabled:bg-primary/40"
           style={{ fontWeight: 600 }}
         >
           {isWechatPushing ? <LoaderCircle className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -2131,14 +1949,14 @@ export function WritingPage() {
             <Download className="w-3.5 h-3.5" /> 导出
             <ChevronDown className="w-3 h-3" />
           </button>
-          <div className="invisible absolute right-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-[#eadfd4] bg-white py-1 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
-            <button onClick={handleCopyHtml} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+          <div className="invisible absolute right-0 top-full z-20 mt-1 min-w-[160px] rounded-xl border border-border bg-card py-1 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
+            <button onClick={handleCopyHtml} className="w-full px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent">
               复制公众号格式
             </button>
-            <button onClick={handleExportHtml} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+            <button onClick={handleExportHtml} className="w-full px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent">
               导出 HTML
             </button>
-            <button onClick={handleExportMarkdown} className="w-full px-3 py-2 text-left text-[12px] text-[#6f665d] hover:bg-[#fff7ef]">
+            <button onClick={handleExportMarkdown} className="w-full px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-accent">
               导出 Markdown
             </button>
           </div>
@@ -2152,66 +1970,103 @@ export function WritingPage() {
       ) : null}
 
       {generationStageSteps.length ? (
-        <div className="border-b border-[#eadfd4] bg-[#fffaf5]/80 px-5 py-2.5">
+        <div className="border-b border-border bg-background/80 px-5 py-2.5">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-5">
             <div className="flex min-w-[190px] items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#fff0e6] text-[#d65f2b] shadow-[0_6px_18px_rgba(214,95,43,0.12)]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary shadow-[0_6px_18px_rgba(111,92,255,0.12)]">
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
               </span>
               <div className="min-w-0">
-                <div className="text-[12px] text-[#181715]" style={{ fontWeight: 850 }}>
+                <div className="text-[12px] text-foreground" style={{ fontWeight: 850 }}>
                   {visiblePendingAction || "生成中"}
                 </div>
-                <div className="text-[10px] text-[#8c8178]">{Math.round(generationStageProgress)}% · 正在推进写作流程</div>
+                <div className="text-[10px] text-muted-foreground">{Math.round(generationStageProgress)}% · 正在推进写作流程</div>
               </div>
             </div>
 
             <div className="min-w-0 flex-1">
-              <Progress
-                value={generationStageProgress}
-                className="h-2 bg-[#f1eadf]"
-                indicatorClassName="bg-[#d65f2b]"
-              />
-              <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2">
-                {generationStageSteps.map((step) => (
+              <div className="relative min-h-11 overflow-hidden py-1">
+                <div
+                  className="absolute top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-border"
+                  style={{ left: generationStageTrackInset, right: generationStageTrackInset }}
+                >
                   <div
-                    key={step.key}
-                    className={`flex min-w-0 items-center gap-1.5 text-[10px] ${
-                      step.status === "active" ? "text-[#d65f2b]" : step.status === "done" ? "text-[#6f665d]" : "text-[#a5988c]"
-                    }`}
-                    style={{ fontWeight: step.status === "active" ? 850 : 700 }}
+                    className="relative h-full overflow-hidden rounded-full bg-primary transition-[width] duration-500 ease-out"
+                    style={{ width: `${generationStageProgress}%` }}
                   >
                     <span
-                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                        step.status === "active"
-                          ? "border-[#d65f2b] bg-white"
-                          : step.status === "done"
-                            ? "border-[#eadfd4] bg-[#fff7ef]"
-                            : "border-[#e4d8cc] bg-white"
-                      }`}
-                    >
-                      {step.status === "done" ? (
-                        <CheckCircle2 className="h-3 w-3" />
-                      ) : (
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                      )}
-                    </span>
-                    <span className="truncate">{step.label}</span>
+                      className="absolute inset-y-0 rounded-full opacity-70"
+                      style={{
+                        left: "-36%",
+                        width: "36%",
+                        background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 45%, transparent 100%)",
+                        animation: "writing-progress-flow 1.35s linear infinite",
+                      }}
+                    />
                   </div>
-                ))}
+                </div>
+                <div
+                  className="relative grid min-h-9 min-w-0 items-center gap-4"
+                  style={{ gridTemplateColumns: `repeat(${generationStageSteps.length}, minmax(0, 1fr))` }}
+                >
+                  {generationStageSteps.map((step) => (
+                    <div
+                      key={step.key}
+                      className="flex min-w-0 justify-center"
+                    >
+                      <div
+                        className={`inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1.5 text-[10px] shadow-[0_4px_12px_rgba(24,23,21,0.06)] ${
+                          step.status === "active"
+                            ? "border-primary/30 bg-card text-primary"
+                            : step.status === "done"
+                              ? "border-border bg-background text-muted-foreground"
+                              : "border-border bg-background text-muted-foreground/60"
+                        }`}
+                        style={{ fontWeight: step.status === "active" ? 850 : 700 }}
+                      >
+                        <span
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                            step.status === "active"
+                              ? "border-primary bg-card"
+                              : step.status === "done"
+                                ? "border-border bg-accent"
+                                : "border-border/70 bg-card"
+                          }`}
+                        >
+                          {step.status === "done" ? (
+                            <CheckCircle2 className="h-3 w-3" />
+                          ) : (
+                            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+                          )}
+                        </span>
+                        <span className="truncate">{step.label}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
+          <style jsx>{`
+            @keyframes writing-progress-flow {
+              0% {
+                transform: translateX(0);
+              }
+              100% {
+                transform: translateX(380%);
+              }
+            }
+          `}</style>
         </div>
       ) : null}
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-[260px] min-w-[260px] space-y-5 overflow-y-auto border-r border-[#eadfd4] bg-[#fff7ef] p-4">
+        <div className="w-[260px] min-w-[260px] space-y-5 overflow-y-auto border-r border-border bg-accent p-4">
           <div>
-            <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>写作参数</div>
+            <div className="mb-2 text-[13px] text-foreground" style={{ fontWeight: 800 }}>写作参数</div>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-[12px] text-[#8c8178]">目标字数</label>
+                <label className="mb-1 block text-[12px] text-muted-foreground">目标字数</label>
                 <input
                   type="number"
                   min={300}
@@ -2222,18 +2077,18 @@ export function WritingPage() {
                     const parsed = Number.parseInt(event.target.value, 10);
                     setTargetWordCount(Number.isFinite(parsed) ? parsed : 1200);
                   }}
-                  className="w-full rounded-lg border border-[#eadfd4] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#d65f2b]"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] outline-none focus:border-primary"
                 />
-                <p className="mt-1 text-[11px] text-[#8c8178]">AI 会按这个长度生成正文。</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">AI 会按这个长度生成正文。</p>
               </div>
             </div>
           </div>
 
-          <div className="mt-4 border-t border-[#eadfd4] pt-4">
-            <div className="mb-2 text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>排版设置</div>
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="mb-2 text-[13px] text-foreground" style={{ fontWeight: 800 }}>排版设置</div>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-[12px] text-[#8c8178]">模板</label>
+                <label className="mb-1 block text-[12px] text-muted-foreground">模板</label>
                 <div className="grid grid-cols-3 gap-1.5">
                   {templates.map((t) => (
                     <button
@@ -2241,8 +2096,8 @@ export function WritingPage() {
                       onClick={() => setFormatting((f) => ({ ...f, template: t }))}
                       className={`px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
                         formatting.template === t
-                          ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
-                          : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card text-muted-foreground hover:bg-accent"
                       }`}
                       style={{ fontWeight: 700 }}
                     >
@@ -2252,7 +2107,7 @@ export function WritingPage() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-[12px] text-[#8c8178]">配色</label>
+                <label className="mb-1 block text-[12px] text-muted-foreground">配色</label>
                 <div className="flex gap-2">
                   {colorSchemes.map((s) => (
                     <button
@@ -2260,7 +2115,7 @@ export function WritingPage() {
                       onClick={() => setFormatting((f) => ({ ...f, colorScheme: s.name }))}
                       title={s.name}
                       className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
-                        formatting.colorScheme === s.name ? "scale-110 border-[#181715]" : "border-[#eadfd4]"
+                        formatting.colorScheme === s.name ? "scale-110 border-foreground" : "border-border"
                       }`}
                       style={{ backgroundColor: s.primary }}
                     />
@@ -2268,11 +2123,11 @@ export function WritingPage() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-[12px] text-[#8c8178]">字号</label>
+                <label className="mb-1 block text-[12px] text-muted-foreground">字号</label>
                 <select
                   value={formatting.fontSize}
                   onChange={(e) => setFormatting((f) => ({ ...f, fontSize: e.target.value as DraftFormatting["fontSize"] }))}
-                  className="w-full cursor-pointer appearance-none rounded-lg border border-[#eadfd4] bg-white px-3 py-1.5 text-[12px]"
+                  className="w-full cursor-pointer appearance-none rounded-lg border border-border bg-card px-3 py-1.5 text-[12px]"
                 >
                   <option value="15px">15px 紧凑</option>
                   <option value="16px">16px 默认</option>
@@ -2283,11 +2138,11 @@ export function WritingPage() {
           </div>
         </div>
 
-        <div className="relative flex flex-1 flex-col overflow-hidden bg-[#f8f4ef] px-4 py-5">
+        <div className="relative flex flex-1 flex-col overflow-hidden bg-background px-4 py-5">
           <div className="grid flex-1 min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 overflow-hidden">
-            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.08)]">
-              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f0e5da] px-4 py-2.5">
-                <div className="text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>编辑</div>
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-border bg-card shadow-[0_18px_60px_rgba(31,41,86,0.08)]">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4 py-2.5">
+                <div className="text-[13px] text-foreground" style={{ fontWeight: 800 }}>编辑</div>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
                   {[
                     { icon: Undo2, mode: "undo" as const, label: "撤销" },
@@ -2311,7 +2166,7 @@ export function WritingPage() {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => applyToolbarAction(mode)}
                       disabled={isWritingBusy}
-                      className="flex h-7 w-7 items-center justify-center rounded text-[#8c8178] hover:bg-[#fff7ef] hover:text-[#d65f2b] disabled:cursor-not-allowed disabled:text-[#d8cfc5]"
+                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-primary disabled:cursor-not-allowed disabled:text-muted-foreground/40"
                     >
                       <Icon className="h-3.5 w-3.5" />
                     </button>
@@ -2322,7 +2177,7 @@ export function WritingPage() {
               <div
                 ref={editorScrollRef}
                 onScroll={() => syncScroll("editor")}
-                className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto bg-white px-5 py-5" : "min-h-0 flex-1 overflow-y-auto px-6 py-6"}
+                className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto bg-card px-5 py-5" : "min-h-0 flex-1 overflow-y-auto px-6 py-6"}
                 style={
                   isWechatChannel
                     ? { background: surfaceBackground }
@@ -2366,10 +2221,10 @@ export function WritingPage() {
 
                   {isBodyDraftGenerating && !editorBody.trim() ? (
                     <div className="space-y-3">
-                      <div className="rounded-lg border border-[#f0dfd0] bg-[#fff7ef] px-3 py-3 text-[12px] text-[#d65f2b]">
+                      <div className="rounded-lg border border-border/70 bg-accent px-3 py-3 text-[12px] text-primary">
                         {visiblePendingAction || "正文生成中，正在组织正文内容和段落细节…"}
                       </div>
-                      <div className="rounded-lg bg-[#fffaf5] px-4 py-4">
+                      <div className="rounded-lg bg-background px-4 py-4">
                         <div className="space-y-3">
                           {[
                             "w-[92%]",
@@ -2380,7 +2235,7 @@ export function WritingPage() {
                             "w-[94%]",
                             "w-[81%]",
                           ].map((widthClass, index) => (
-                            <div key={index} className={`h-4 animate-pulse rounded bg-[#f1eadf] ${widthClass}`} />
+                            <div key={index} className={`h-4 animate-pulse rounded bg-muted ${widthClass}`} />
                           ))}
                         </div>
                       </div>
@@ -2404,14 +2259,14 @@ export function WritingPage() {
               </div>
             </section>
 
-            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.08)]">
-              <div className="flex shrink-0 items-center justify-between border-b border-[#f0e5da] px-4 py-2.5">
-                <div className="text-[13px] text-[#181715]" style={{ fontWeight: 800 }}>实时预览</div>
-                <div className="text-[11px] text-[#8c8178]">
+            <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-border bg-card shadow-[0_18px_60px_rgba(31,41,86,0.08)]">
+              <div className="flex shrink-0 items-center justify-between border-b border-border/70 px-4 py-2.5">
+                <div className="text-[13px] text-foreground" style={{ fontWeight: 800 }}>实时预览</div>
+                <div className="text-[11px] text-muted-foreground">
                   {previewMode === "mobile" ? "手机" : "桌面"}
                 </div>
               </div>
-              <div ref={previewScrollRef} onScroll={() => syncScroll("preview")} className="min-h-0 flex-1 overflow-y-auto bg-[#f8f4ef] p-5">
+              <div ref={previewScrollRef} onScroll={() => syncScroll("preview")} className="min-h-0 flex-1 overflow-y-auto bg-background p-5">
                 <div
                   className="mx-auto min-h-full overflow-hidden rounded-[24px] border shadow-lg"
                   style={{
@@ -2423,7 +2278,7 @@ export function WritingPage() {
                   }}
                 >
                   <div
-                    className={isWechatChannel ? "bg-white px-4 py-5" : "px-6 py-6"}
+                    className={isWechatChannel ? "bg-card px-4 py-5" : "px-6 py-6"}
                     style={
                       isWechatChannel
                         ? { background: surfaceBackground }

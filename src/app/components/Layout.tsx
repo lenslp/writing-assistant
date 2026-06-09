@@ -4,19 +4,22 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Flame, Lightbulb, FileText, Settings,
-  Search, Plus, PenTool, LogOut
+  Search, Plus, PenTool, LogOut, Bell, ChevronDown, BarChart3, CheckCheck,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ThemeToggle } from "./ThemeToggle";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "工作台" },
-  { to: "/hot-topics", icon: Flame, label: "热点中心" },
+  { to: "/dashboard", icon: LayoutDashboard, label: "工作台" },
+  { to: "/hot-topics", icon: Flame, label: "发现灵感" },
   { to: "/topic-center", icon: Lightbulb, label: "选题中心" },
-  { to: "/writing", icon: PenTool, label: "写作生成" },
-  { to: "/drafts", icon: FileText, label: "草稿箱" },
-  { to: "/settings", icon: Settings, label: "设置" },
+  { to: "/writing", icon: PenTool, label: "创作中心" },
+  { to: "/drafts", icon: FileText, label: "我的草稿" },
+  { to: "/review-center", icon: CheckCheck, label: "审核管理" },
+  { to: "/article-analysis", icon: BarChart3, label: "数据分析" },
+  { to: "/settings", icon: Settings, label: "设置中心" },
 ];
 
 type LayoutProps = {
@@ -28,7 +31,7 @@ export function Layout({ children }: LayoutProps) {
   const pathname = usePathname();
   const { drafts, topics, selectTopic } = useAppStore();
   const { user, signOut } = useAuth();
-  const isFullWidth = pathname === "/writing";
+  const isFullWidth = pathname === "/writing" || pathname === "/format-editor";
   const [keyword, setKeyword] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -88,39 +91,47 @@ export function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#fffaf5] text-[#181715]">
-      <aside className="flex w-[232px] min-w-[232px] flex-col border-r border-[#eadfd4] bg-[#fff7ef]">
-        <div className="flex h-16 items-center border-b border-[#eadfd4] px-5">
-          <div className="mr-3 grid h-9 w-9 place-items-center rounded-2xl bg-[#d65f2b] text-white shadow-[0_12px_26px_rgba(214,95,43,0.2)]">
-            <PenTool className="h-4.5 w-4.5" />
+    <div className="lens-app-surface fixed inset-0 flex overflow-hidden text-foreground">
+      <div className="pointer-events-none absolute inset-0 opacity-80">
+        <div className="absolute left-[260px] top-[-160px] h-[360px] w-[360px] rounded-full bg-primary/15 blur-[90px]" />
+        <div className="absolute bottom-[-180px] right-[120px] h-[420px] w-[420px] rounded-full bg-sky-400/10 blur-[110px]" />
+      </div>
+
+      <aside className="relative z-10 flex w-[244px] min-w-[244px] flex-col border-r border-sidebar-border bg-sidebar/90 backdrop-blur-2xl">
+        <div className="flex h-20 items-center border-b border-sidebar-border px-5">
+          <div className="mr-3 grid h-11 w-11 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-white shadow-[0_16px_38px_rgba(111,92,255,0.30)]">
+            <PenTool className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-[15px] tracking-tight text-[#181715]" style={{ fontWeight: 800 }}>写作助手</div>
-            <div className="text-[11px] text-[#8c8178]">Creator Writing Desk</div>
+            <div className="text-[16px] tracking-tight text-sidebar-foreground" style={{ fontWeight: 900 }}>写作助手</div>
+            <div className="text-[11px] text-muted-foreground">AI Creator Studio</div>
           </div>
         </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-4 py-5">
           {navItems.map(({ to, icon: Icon, label }) => (
             <Link
               key={to}
               href={to}
-              className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-[13.5px] transition-colors ${
+              className={`group flex items-center gap-3 rounded-2xl px-3.5 py-3 text-[13.5px] transition-all ${
                 pathname === to
-                  ? "bg-[#fff0e6] text-[#d65f2b] shadow-sm"
-                  : "text-[#6f665d] hover:bg-white/70 hover:text-[#181715]"
+                  ? "border border-primary/25 bg-primary/10 text-primary shadow-[0_12px_28px_rgba(111,92,255,0.14)]"
+                  : "border border-transparent text-muted-foreground hover:border-border hover:bg-card/70 hover:text-foreground"
               }`}
-              style={{ fontWeight: pathname === to ? 800 : 650 }}
+              style={{ fontWeight: pathname === to ? 900 : 750 }}
             >
               <Icon className="h-[18px] w-[18px]" />
               {label}
             </Link>
           ))}
         </nav>
-        <div className="border-t border-[#eadfd4] p-3">
-          <div className="flex items-center gap-2 rounded-2xl bg-white/60 px-3 py-2">
+        <div className="border-t border-sidebar-border p-4">
+          <div className="flex items-center gap-3 rounded-3xl border border-border bg-card/70 px-3 py-3 shadow-sm backdrop-blur">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-[13px] text-white shadow-[0_12px_28px_rgba(111,92,255,0.25)]" style={{ fontWeight: 900 }}>
+              {(user?.email ?? "L").slice(0, 1).toUpperCase()}
+            </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[11px] text-[#9a9086]">当前账号</div>
-              <div className="truncate text-[12px] text-[#5d544c]">{user?.email ?? "未登录"}</div>
+              <div className="truncate text-[13px] text-foreground" style={{ fontWeight: 850 }}>数字Lens</div>
+              <div className="truncate text-[11px] text-muted-foreground">{user?.email ?? "未登录"}</div>
             </div>
             <button
               type="button"
@@ -128,7 +139,7 @@ export function Layout({ children }: LayoutProps) {
               disabled={signingOut}
               aria-label="退出登录"
               title="退出登录"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#8c8178] hover:bg-white hover:text-[#d65f2b] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-accent hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -136,11 +147,11 @@ export function Layout({ children }: LayoutProps) {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="flex h-16 min-h-[64px] items-center gap-3 border-b border-[#eadfd4] bg-white/82 px-5 backdrop-blur">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-20 min-h-[80px] items-center gap-3 border-b border-border bg-card/70 px-4 backdrop-blur-2xl xl:px-5">
           <div className="flex-1 max-w-md">
-            <div className="flex items-center gap-2 rounded-xl border border-[#eadfd4] bg-[#fffaf5] px-3 py-2 transition-colors focus-within:border-[#d65f2b] focus-within:bg-white focus-within:ring-3 focus-within:ring-[#d65f2b]/15">
-              <Search className="h-4 w-4 text-[#9a9086]" />
+            <div className="lens-input flex h-11 items-center gap-2 rounded-2xl px-3.5">
+              <Search className="h-4 w-4 text-muted-foreground" />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -152,25 +163,47 @@ export function Layout({ children }: LayoutProps) {
                     handleGlobalSearch();
                   }
                 }}
-                placeholder="搜索热点、选题、草稿..."
-                className="w-full border-none bg-transparent text-[13px] text-[#181715] outline-none placeholder:text-[#9a9086]"
+                placeholder="搜索选题、文章、灵感..."
+                className="w-full border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
               />
-              <kbd className="hidden rounded bg-[#f1eadf] px-1.5 py-0.5 text-[10px] text-[#8c8178] sm:inline">⌘K</kbd>
+              <kbd className="hidden rounded-lg bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">⌘K</kbd>
             </div>
           </div>
+          <div className="hidden items-center gap-2 rounded-2xl border border-border bg-card/70 px-3 py-2 text-[12px] text-foreground shadow-sm backdrop-blur lg:flex">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-55" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            </span>
+            All Systems Operational
+          </div>
+          <ThemeToggle compact />
+          <button
+            type="button"
+            className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-card/70 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/35 hover:text-primary"
+            aria-label="通知"
+            title="通知"
+          >
+            <Bell className="h-4 w-4" />
+          </button>
           <div className="flex items-center gap-2">
             <button
               onClick={() => router.push("/topic-center")}
-              className="flex items-center gap-1.5 rounded-xl bg-[#d65f2b] px-4 py-2 text-[13px] text-white shadow-[0_12px_26px_rgba(214,95,43,0.18)] transition-colors hover:bg-[#bf4513]"
-              style={{ fontWeight: 800 }}
+              className="lens-btn-primary flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px]"
+              style={{ fontWeight: 900 }}
             >
               <Plus className="h-4 w-4" />
               新建文章
+              <ChevronDown className="h-3.5 w-3.5 opacity-80" />
             </button>
           </div>
         </header>
 
-        <main id="app-scroll-root" className={`min-h-0 flex-1 ${isFullWidth ? "overflow-hidden" : "overflow-auto p-6"}`}>
+        <main
+          id="app-scroll-root"
+          className={`min-h-0 flex-1 overscroll-contain ${
+            isFullWidth ? "overflow-hidden" : "overflow-x-hidden overflow-y-auto p-4 [scrollbar-gutter:stable] xl:p-5"
+          }`}
+        >
           {children}
         </main>
       </div>

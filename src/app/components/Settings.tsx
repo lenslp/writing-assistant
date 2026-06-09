@@ -308,6 +308,7 @@ export function Settings() {
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
     if (!element) return;
+    const scrollRoot = document.getElementById("app-scroll-root");
 
     if (sectionNavigationLockRef.current) {
       window.clearTimeout(sectionNavigationLockRef.current);
@@ -319,6 +320,17 @@ export function Settings() {
       isProgrammaticScrollRef.current = false;
       sectionNavigationLockRef.current = null;
     }, 700);
+
+    if (scrollRoot) {
+      const scrollRootTop = scrollRoot.getBoundingClientRect().top;
+      const elementTop = element.getBoundingClientRect().top - scrollRootTop + scrollRoot.scrollTop;
+      scrollRoot.scrollTo({
+        top: Math.max(0, elementTop - 32),
+        behavior: "smooth",
+      });
+      return;
+    }
+
     element.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -891,10 +903,10 @@ export function Settings() {
   };
 
   return (
-    <div className="mx-auto max-w-[1320px]">
-      <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)]">
-        <aside className="hidden xl:block">
-          <div className="sticky top-6 overflow-hidden rounded-[24px] border border-[#eadfd4] bg-[linear-gradient(180deg,#fff4ea_0%,#ffffff_58%,#fffaf5_100%)] shadow-[0_18px_50px_rgba(85,57,34,0.08)] [transform:translateZ(0)] [backface-visibility:hidden] will-change-transform">
+    <div className="lens-page">
+      <div className="grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="sticky top-0 hidden max-h-[calc(100dvh-128px)] self-start overflow-y-auto overflow-x-hidden rounded-[24px] border border-border bg-[var(--surface-strong)] shadow-[0_18px_50px_rgba(31,41,86,0.08)] xl:block">
+          <div>
             <div className="px-3 py-3">
               {settingsSections.map((section, index) => {
                 const Icon = section.icon;
@@ -907,15 +919,15 @@ export function Settings() {
                     onClick={() => scrollToSection(section.id)}
                     className={`group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors transition-shadow ${
                       isActive
-                        ? "bg-[#d65f2b] text-white shadow-[0_12px_30px_rgba(214,95,43,0.22)]"
-                        : "text-[#6f665d] hover:bg-white hover:text-[#181715]"
+                        ? "bg-primary text-white shadow-[0_12px_30px_rgba(111,92,255,0.22)]"
+                        : "text-muted-foreground hover:bg-card hover:text-foreground"
                     }`}
                   >
                     <div
                       className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border text-[12px] ${
                         isActive
                           ? "border-white/20 bg-white/14 text-white"
-                          : "border-[#eadfd4] bg-[#fffaf5] text-[#8c8178] group-hover:border-[#f0dfd0] group-hover:bg-[#fff0e6] group-hover:text-[#d65f2b]"
+                          : "border-border bg-background text-muted-foreground group-hover:border-border/70 group-hover:bg-primary/10 group-hover:text-primary"
                       }`}
                       style={{ fontWeight: 700 }}
                     >
@@ -924,13 +936,13 @@ export function Settings() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px]" style={{ fontWeight: 600 }}>{section.title}</span>
-                        <span className={`text-[10px] ${isActive ? "text-orange-100" : "text-[#8c8178]"}`}>{String(index + 1).padStart(2, "0")}</span>
+                        <span className={`text-[10px] ${isActive ? "text-orange-100" : "text-muted-foreground"}`}>{String(index + 1).padStart(2, "0")}</span>
                       </div>
-                      <div className={`mt-1 line-clamp-2 text-[11px] leading-5 ${isActive ? "text-orange-100/90" : "text-[#8c8178]"}`}>
+                      <div className={`mt-1 line-clamp-2 text-[11px] leading-5 ${isActive ? "text-orange-100/90" : "text-muted-foreground"}`}>
                         {section.hint}
                       </div>
                     </div>
-                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "translate-x-0 text-white" : "text-[#d8cfc5] group-hover:translate-x-0.5 group-hover:text-[#d65f2b]"}`} />
+                    <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${isActive ? "translate-x-0 text-white" : "text-muted-foreground/40 group-hover:translate-x-0.5 group-hover:text-primary"}`} />
                   </button>
                 );
               })}
@@ -938,14 +950,14 @@ export function Settings() {
           </div>
         </aside>
 
-        <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h1 className="lens-title text-[20px]">账号设置</h1>
-              <p className="mt-1 text-[13px] text-[#6f665d]">配置账号人设、可覆盖领域、写作风格和默认排版偏好，AI 会在生成每篇文章时综合参考</p>
+              <p className="mt-1 text-[13px] text-muted-foreground">配置账号人设、可覆盖领域、写作风格和默认排版偏好，AI 会在生成每篇文章时综合参考</p>
             </div>
             <div className="w-full lg:w-auto">
-              <div className="rounded-[22px] border border-[#eadfd4] bg-white/86 p-3 shadow-[0_12px_36px_rgba(85,57,34,0.05)] backdrop-blur">
+              <div className="rounded-[22px] border border-border bg-card/90 p-3 shadow-[0_12px_36px_rgba(31,41,86,0.05)] backdrop-blur">
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
@@ -973,13 +985,13 @@ export function Settings() {
           </div>
 
           {notice ? (
-            <div className="rounded-2xl border border-[#f0dfd0] bg-[#fff7ef] px-4 py-3 text-[13px] text-[#d65f2b] shadow-[0_10px_28px_rgba(85,57,34,0.05)]" style={{ fontWeight: 600 }}>
+            <div className="rounded-2xl border border-border/70 bg-accent px-4 py-3 text-[13px] text-primary shadow-[0_10px_28px_rgba(31,41,86,0.05)]" style={{ fontWeight: 600 }}>
               {notice}
             </div>
           ) : null}
 
           <div className="xl:hidden">
-            <div className="overflow-x-auto rounded-2xl border border-[#eadfd4] bg-white px-3 py-3 shadow-sm">
+            <div className="overflow-x-auto rounded-2xl border border-border bg-card px-3 py-3 shadow-sm">
               <div className="flex min-w-max gap-2">
                 {settingsSections.map((section) => {
                   const Icon = section.icon;
@@ -992,8 +1004,8 @@ export function Settings() {
                       onClick={() => scrollToSection(section.id)}
                       className={`flex items-center gap-2 rounded-full border px-3 py-2 text-[12px] transition-colors ${
                         isActive
-                          ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]"
-                          : "border-[#eadfd4] bg-[#fffaf5] text-[#6f665d] hover:bg-white"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted-foreground hover:bg-card"
                       }`}
                       style={{ fontWeight: 500 }}
                     >
@@ -1018,14 +1030,14 @@ export function Settings() {
 
       <Section id="default-template" title="默认排版模板">
         <div>
-          <label className="text-[12px] text-[#8c8178] mb-1.5 block">首选模板</label>
+          <label className="text-[12px] text-muted-foreground mb-1.5 block">首选模板</label>
           <div className="grid grid-cols-4 gap-2">
             {["极简白", "科技蓝", "商务灰", "暖色调"].map((template) => (
               <button
                 key={template}
                 onClick={() => updateField("defaultTemplate", template)}
                 className={`p-3 rounded-lg border text-[12px] text-center transition-colors ${
-                  form.defaultTemplate === template ? "bg-[#fff0e6] border-[#d65f2b] text-[#d65f2b]" : "bg-[#fffaf5] border-[#eadfd4] text-[#6f665d] hover:bg-[#f1eadf]"
+                  form.defaultTemplate === template ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted"
                 }`}
                 style={{ fontWeight: 500 }}
               >
@@ -1037,12 +1049,12 @@ export function Settings() {
       </Section>
 
       <Section id="ai-writer" title="AI 写作模型">
-        <div className="rounded-[22px] border border-[#eadfd4] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_58%,#fffaf5_100%)] p-5 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+        <div className="rounded-[22px] border border-border bg-[var(--surface-strong)] p-5 shadow-[0_12px_36px_rgba(31,41,86,0.05)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div className="text-[12px] uppercase tracking-[0.16em] text-[#8c8178]">Profiles</div>
-              <div className="mt-1 text-[16px] text-[#181715]" style={{ fontWeight: 700 }}>写作模型配置列表</div>
-              <div className="mt-1 text-[12px] leading-5 text-[#8c8178]">
+              <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Profiles</div>
+              <div className="mt-1 text-[16px] text-foreground" style={{ fontWeight: 700 }}>写作模型配置列表</div>
+              <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
                 支持保存多套模型入口，通过列表快速切换默认配置。API Key 只会保存在本地，不会上传或泄露。
               </div>
             </div>
@@ -1058,7 +1070,7 @@ export function Settings() {
           </div>
 
           {(aiProvider?.profiles?.length ?? 0) === 0 ? (
-            <div className="mt-5 rounded-2xl border border-dashed border-[#eadfd4] bg-white/80 px-4 py-5 text-[13px] leading-6 text-[#8c8178]">
+            <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
               当前还没有本地写作模型配置。新增一套后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
@@ -1072,34 +1084,34 @@ export function Settings() {
                   key={profile.id}
                   className={`rounded-2xl border px-4 py-4 transition-colors ${
                     profile.isActive
-                      ? "border-[#d65f2b] bg-[#fff0e6]"
-                      : "border-[#eadfd4] bg-white"
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-card"
                   }`}
                 >
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-[14px] text-[#181715]" style={{ fontWeight: 700 }}>{profile.name}</div>
-                        <span className="rounded-full bg-[#f1eadf] px-2 py-0.5 text-[10px] text-[#8c8178]" style={{ fontWeight: 700 }}>
+                        <div className="text-[14px] text-foreground" style={{ fontWeight: 700 }}>{profile.name}</div>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground" style={{ fontWeight: 700 }}>
                           {meta.tag}
                         </span>
                         {profile.isActive ? (
-                          <span className="rounded-full bg-[#ffe3d3] px-2 py-0.5 text-[10px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary" style={{ fontWeight: 700 }}>
                             默认
                           </span>
                         ) : null}
                         {aiProvider?.source !== "local" ? (
-                          <span className="rounded-full bg-[#fff7ef] px-2 py-0.5 text-[10px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+                          <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] text-primary" style={{ fontWeight: 700 }}>
                             {aiProvider?.source === "environment" ? "环境变量" : "默认值"}
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-2 text-[13px] leading-6 text-[#6f665d]">
+                      <div className="mt-2 text-[13px] leading-6 text-muted-foreground">
                         {profile.providerType === "anthropic" ? "Anthropic 协议" : "OpenAI 协议"} · {profile.model}
                       </div>
-                      <div className="text-[12px] leading-5 text-[#8c8178]">{profile.baseUrl}</div>
+                      <div className="text-[12px] leading-5 text-muted-foreground">{profile.baseUrl}</div>
                       {(profile.fastModel || profile.longformModel) ? (
-                        <div className="mt-2 text-[12px] leading-5 text-[#8c8178]">
+                        <div className="mt-2 text-[12px] leading-5 text-muted-foreground">
                           {profile.fastModel ? `快模型：${profile.fastModel}` : "快模型未设置"}
                           {" · "}
                           {profile.longformModel ? `长文模型：${profile.longformModel}` : "长文模型未设置"}
@@ -1113,7 +1125,7 @@ export function Settings() {
                           type="button"
                           onClick={() => void handleActivateAIProviderConfig(profile.id)}
                           disabled={aiProviderLoading}
-                          className="rounded-xl border border-[#d65f2b] px-3 py-2 text-[12px] text-[#d65f2b] hover:bg-[#fff0e6] disabled:opacity-60"
+                          className="rounded-xl border border-primary px-3 py-2 text-[12px] text-primary hover:bg-primary/10 disabled:opacity-60"
                           style={{ fontWeight: 600 }}
                         >
                           设为默认
@@ -1122,7 +1134,7 @@ export function Settings() {
                       <button
                         type="button"
                         onClick={() => openEditAIProviderDialog(profile)}
-                        className="rounded-xl border border-[#eadfd4] px-3 py-2 text-[12px] text-[#6f665d] hover:bg-[#fffaf5]"
+                        className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
                         style={{ fontWeight: 500 }}
                       >
                         {aiProvider?.source === "local" ? "编辑" : "复制为本地"}
@@ -1146,12 +1158,12 @@ export function Settings() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#f0e5da] bg-[#fffaf5]/70 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
           <button
             type="button"
             onClick={() => void loadAIProviderConfig()}
             disabled={aiProviderLoading}
-            className="rounded-xl border border-[#eadfd4] px-4 py-2.5 text-[13px] text-[#6f665d] hover:bg-[#fffaf5] disabled:opacity-60"
+            className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
             style={{ fontWeight: 500 }}
           >
             重新读取
@@ -1161,7 +1173,7 @@ export function Settings() {
               type="button"
               onClick={() => void handleDeleteAIProviderConfig()}
               disabled={aiProviderLoading}
-              className="rounded-xl border border-[#f0dfd0] px-4 py-2.5 text-[13px] text-[#d65f2b] hover:bg-[#fff7ef] disabled:opacity-60"
+              className="rounded-xl border border-border/70 px-4 py-2.5 text-[13px] text-primary hover:bg-accent disabled:opacity-60"
               style={{ fontWeight: 500 }}
             >
               清空写作模型配置
@@ -1176,12 +1188,12 @@ export function Settings() {
           }
           closeAIProviderDialog();
         }}>
-          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden rounded-[24px] border border-[#eadfd4] p-0 shadow-[0_24px_80px_rgba(85,57,34,0.16)]">
-            <DialogHeader className="border-b border-[#f0e5da] px-6 py-5">
-              <DialogTitle className="text-[20px] text-[#181715]">
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden rounded-[24px] border border-border p-0 shadow-[0_24px_80px_rgba(31,41,86,0.16)]">
+            <DialogHeader className="border-b border-border/70 px-6 py-5">
+              <DialogTitle className="text-[20px] text-foreground">
                 {aiProviderForm.id ? "编辑写作模型配置" : "新增写作模型配置"}
               </DialogTitle>
-              <DialogDescription className="mt-1 text-[13px] leading-6 text-[#8c8178]">
+              <DialogDescription className="mt-1 text-[13px] leading-6 text-muted-foreground">
                 支持 OpenAI 和 Anthropic 两种协议，保存后可直接设为默认配置。
               </DialogDescription>
             </DialogHeader>
@@ -1207,19 +1219,19 @@ export function Settings() {
                       onClick={() => handleApplyAIProviderPreset(preset)}
                       className={`rounded-2xl border px-4 py-4 text-left transition-all ${
                         active
-                          ? "border-[#d65f2b] bg-[#fff0e6] shadow-[0_12px_24px_rgba(214,95,43,0.12)]"
-                          : "border-[#eadfd4] bg-white hover:border-[#d65f2b]/30 hover:bg-[#fffaf5]"
+                          ? "border-primary bg-primary/10 shadow-[0_12px_24px_rgba(111,92,255,0.12)]"
+                          : "border-border bg-card hover:border-primary/30 hover:bg-background"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className={`text-[14px] ${active ? "text-[#d65f2b]" : "text-[#181715]"}`} style={{ fontWeight: 700 }}>
+                        <div className={`text-[14px] ${active ? "text-primary" : "text-foreground"}`} style={{ fontWeight: 700 }}>
                           {preset.name}
                         </div>
-                        <span className={`text-[10px] ${active ? "text-[#d65f2b]" : "text-[#8c8178]"}`} style={{ fontWeight: 700 }}>
+                        <span className={`text-[10px] ${active ? "text-primary" : "text-muted-foreground"}`} style={{ fontWeight: 700 }}>
                           {meta.tag}
                         </span>
                       </div>
-                      <div className={`mt-2 text-[11px] leading-5 ${active ? "text-[#d65f2b]" : "text-[#8c8178]"}`}>
+                      <div className={`mt-2 text-[11px] leading-5 ${active ? "text-primary" : "text-muted-foreground"}`}>
                         {meta.hint}
                       </div>
                     </button>
@@ -1227,10 +1239,10 @@ export function Settings() {
                 })}
               </div>
 
-              <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                <div className="text-[12px] uppercase tracking-[0.16em] text-[#8c8178]">Connection</div>
-                <div className="mt-1 text-[15px] text-[#181715]" style={{ fontWeight: 700 }}>连接配置</div>
-                <div className="mt-1 text-[12px] leading-5 text-[#8c8178]">{aiProviderProtocolHint}</div>
+              <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Connection</div>
+                <div className="mt-1 text-[15px] text-foreground" style={{ fontWeight: 700 }}>连接配置</div>
+                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">{aiProviderProtocolHint}</div>
 
                 <div className="mt-4 grid gap-3">
                   <Field
@@ -1254,23 +1266,23 @@ export function Settings() {
                   />
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-[#f0e5da] bg-[#fffaf5]/70">
+                <div className="mt-4 rounded-2xl border border-border/70 bg-background/70">
                   <button
                     type="button"
                     onClick={() => setIsAIModelRolesOpen((current) => !current)}
                     className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
                   >
                     <div>
-                      <div className="text-[13px] text-[#181715]" style={{ fontWeight: 700 }}>高级模型分工</div>
-                      <div className="mt-0.5 text-[12px] leading-5 text-[#8c8178]">不填写时，标题、大纲和正文都会使用上面的写作模型。</div>
+                      <div className="text-[13px] text-foreground" style={{ fontWeight: 700 }}>高级模型分工</div>
+                      <div className="mt-0.5 text-[12px] leading-5 text-muted-foreground">不填写时，标题、大纲和正文都会使用上面的写作模型。</div>
                     </div>
                     <ChevronRight
-                      className={`h-4 w-4 shrink-0 text-[#8c8178] transition-transform ${isAIModelRolesOpen ? "rotate-90" : ""}`}
+                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${isAIModelRolesOpen ? "rotate-90" : ""}`}
                     />
                   </button>
 
                   {isAIModelRolesOpen ? (
-                    <div className="grid gap-3 border-t border-[#f0e5da] px-4 pb-4 pt-3 lg:grid-cols-2">
+                    <div className="grid gap-3 border-t border-border/70 px-4 pb-4 pt-3 lg:grid-cols-2">
                       <Field
                         label="快模型（可选）"
                         value={aiProviderForm.fastModel}
@@ -1288,7 +1300,7 @@ export function Settings() {
                 </div>
               </div>
 
-              <label className="flex items-center gap-2 text-[12px] text-[#6f665d]">
+              <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={aiProviderForm.setAsActive}
@@ -1304,7 +1316,7 @@ export function Settings() {
                       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                       : aiProviderTestFeedback.type === "error"
                         ? "border-red-200 bg-red-50 text-red-600"
-                        : "border-[#eadfd4] bg-[#fffaf5] text-[#8c8178]"
+                        : "border-border bg-background text-muted-foreground"
                   }`}
                 >
                   {aiProviderTestFeedback.message}
@@ -1313,13 +1325,13 @@ export function Settings() {
               </div>
             </div>
 
-            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-between border-t border-[#f0e5da] bg-white/95 px-6 py-4 backdrop-blur">
+            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-between border-t border-border/70 bg-white/95 px-6 py-4 backdrop-blur">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => void handleTestAIProviderConfig()}
                   disabled={aiProviderLoading || aiProviderTesting}
-                  className="rounded-xl border border-[#d65f2b] px-4 py-2.5 text-[13px] text-[#d65f2b] hover:bg-[#fff0e6] disabled:opacity-60"
+                  className="rounded-xl border border-primary px-4 py-2.5 text-[13px] text-primary hover:bg-primary/10 disabled:opacity-60"
                   style={{ fontWeight: 500 }}
                 >
                   {aiProviderTesting ? "测试中" : "测试连接"}
@@ -1329,7 +1341,7 @@ export function Settings() {
                 <button
                   type="button"
                   onClick={closeAIProviderDialog}
-                  className="rounded-xl border border-[#eadfd4] px-4 py-2.5 text-[13px] text-[#6f665d] hover:bg-[#fffaf5]"
+                  className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background"
                   style={{ fontWeight: 500 }}
                 >
                   取消
@@ -1338,7 +1350,7 @@ export function Settings() {
                   type="button"
                   onClick={() => void handleSaveAIProviderConfig()}
                   disabled={aiProviderLoading}
-                  className="rounded-xl bg-[#d65f2b] px-4 py-2.5 text-[13px] text-white hover:bg-[#bf4513] disabled:bg-[#e8a17e]"
+                  className="rounded-xl bg-primary px-4 py-2.5 text-[13px] text-white hover:bg-primary/90 disabled:bg-primary/40"
                   style={{ fontWeight: 600 }}
                 >
                   {aiProviderLoading ? "保存中" : aiProviderForm.id ? "保存配置" : "添加配置"}
@@ -1350,12 +1362,12 @@ export function Settings() {
       </Section>
 
       <Section id="ai-image" title="AI 图片模型">
-        <div className="rounded-[22px] border border-[#eadfd4] bg-[linear-gradient(135deg,#fff4ea_0%,#ffffff_58%,#fffaf5_100%)] p-5 shadow-[0_12px_36px_rgba(85,57,34,0.05)]">
+        <div className="rounded-[22px] border border-border bg-[var(--surface-strong)] p-5 shadow-[0_12px_36px_rgba(31,41,86,0.05)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div className="text-[12px] uppercase tracking-[0.16em] text-[#8c8178]">Profiles</div>
-              <div className="mt-1 text-[16px] text-[#181715]" style={{ fontWeight: 700 }}>图片模型配置列表</div>
-              <div className="mt-1 text-[12px] leading-5 text-[#8c8178]">
+              <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Profiles</div>
+              <div className="mt-1 text-[16px] text-foreground" style={{ fontWeight: 700 }}>图片模型配置列表</div>
+              <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
                 用于 AI 配图生成。支持保存多套配置，并快速切换默认图片模型。
               </div>
             </div>
@@ -1371,7 +1383,7 @@ export function Settings() {
           </div>
 
           {(aiImageProvider?.profiles?.length ?? 0) === 0 ? (
-            <div className="mt-5 rounded-2xl border border-dashed border-[#eadfd4] bg-white/80 px-4 py-5 text-[13px] leading-6 text-[#8c8178]">
+            <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
               当前还没有本地图片模型配置。新增一套后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
@@ -1382,27 +1394,27 @@ export function Settings() {
                 key={profile.id}
                 className={`rounded-2xl border px-4 py-4 transition-colors ${
                   profile.isActive
-                    ? "border-[#d65f2b] bg-[#fff0e6]"
-                    : "border-[#eadfd4] bg-white"
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-card"
                 }`}
               >
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-[14px] text-[#181715]" style={{ fontWeight: 700 }}>{profile.name}</div>
+                      <div className="text-[14px] text-foreground" style={{ fontWeight: 700 }}>{profile.name}</div>
                       {profile.isActive ? (
-                        <span className="rounded-full bg-[#ffe3d3] px-2 py-0.5 text-[10px] text-[#d65f2b]" style={{ fontWeight: 700 }}>
+                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary" style={{ fontWeight: 700 }}>
                           默认
                         </span>
                       ) : null}
                       {aiImageProvider?.source !== "local" ? (
-                        <span className="rounded-full bg-[#f1eadf] px-2 py-0.5 text-[10px] text-[#8c8178]" style={{ fontWeight: 700 }}>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground" style={{ fontWeight: 700 }}>
                           {aiImageProvider?.source === "environment" ? "环境变量" : "默认值"}
                         </span>
                       ) : null}
                     </div>
-                    <div className="mt-2 text-[13px] leading-6 text-[#6f665d]">{profile.model}</div>
-                    <div className="text-[12px] leading-5 text-[#8c8178]">{profile.baseUrl}</div>
+                    <div className="mt-2 text-[13px] leading-6 text-muted-foreground">{profile.model}</div>
+                    <div className="text-[12px] leading-5 text-muted-foreground">{profile.baseUrl}</div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1411,7 +1423,7 @@ export function Settings() {
                         type="button"
                         onClick={() => void handleActivateAIImageProviderConfig(profile.id)}
                         disabled={aiImageProviderLoading}
-                        className="rounded-xl border border-[#d65f2b] px-3 py-2 text-[12px] text-[#d65f2b] hover:bg-[#fff0e6] disabled:opacity-60"
+                        className="rounded-xl border border-primary px-3 py-2 text-[12px] text-primary hover:bg-primary/10 disabled:opacity-60"
                         style={{ fontWeight: 600 }}
                       >
                         设为默认
@@ -1420,7 +1432,7 @@ export function Settings() {
                     <button
                       type="button"
                       onClick={() => openEditAIImageProviderDialog(profile)}
-                      className="rounded-xl border border-[#eadfd4] px-3 py-2 text-[12px] text-[#6f665d] hover:bg-[#fffaf5]"
+                      className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
                       style={{ fontWeight: 500 }}
                     >
                       {aiImageProvider?.source === "local" ? "编辑" : "复制为本地"}
@@ -1443,12 +1455,12 @@ export function Settings() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#f0e5da] bg-[#fffaf5]/70 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
           <button
             type="button"
             onClick={() => void loadAIImageProviderConfig()}
             disabled={aiImageProviderLoading}
-            className="rounded-xl border border-[#eadfd4] px-4 py-2.5 text-[13px] text-[#6f665d] hover:bg-[#fffaf5] disabled:opacity-60"
+            className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
             style={{ fontWeight: 500 }}
           >
             重新读取
@@ -1458,7 +1470,7 @@ export function Settings() {
               type="button"
               onClick={() => void handleDeleteAIImageProviderConfig()}
               disabled={aiImageProviderLoading}
-              className="rounded-xl border border-[#f0dfd0] px-4 py-2.5 text-[13px] text-[#d65f2b] hover:bg-[#fff7ef] disabled:opacity-60"
+              className="rounded-xl border border-border/70 px-4 py-2.5 text-[13px] text-primary hover:bg-accent disabled:opacity-60"
               style={{ fontWeight: 500 }}
             >
               清空图片模型配置
@@ -1473,12 +1485,12 @@ export function Settings() {
           }
           closeAIImageProviderDialog();
         }}>
-          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden rounded-[24px] border border-[#eadfd4] p-0 shadow-[0_24px_80px_rgba(85,57,34,0.16)]">
-            <DialogHeader className="border-b border-[#f0e5da] px-6 py-5">
-              <DialogTitle className="text-[20px] text-[#181715]">
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden rounded-[24px] border border-border p-0 shadow-[0_24px_80px_rgba(31,41,86,0.16)]">
+            <DialogHeader className="border-b border-border/70 px-6 py-5">
+              <DialogTitle className="text-[20px] text-foreground">
                 {aiImageProviderForm.id ? "编辑图片模型配置" : "新增图片模型配置"}
               </DialogTitle>
-              <DialogDescription className="mt-1 text-[13px] leading-6 text-[#8c8178]">
+              <DialogDescription className="mt-1 text-[13px] leading-6 text-muted-foreground">
                 保存多套图片模型入口，支持快速切换默认图片生成配置。
               </DialogDescription>
             </DialogHeader>
@@ -1492,10 +1504,10 @@ export function Settings() {
                   placeholder="例如：OpenAI 图片 / Qwen Image / 备用出图"
                 />
 
-                <div className="rounded-2xl border border-[#eadfd4] bg-white p-4">
-                  <div className="text-[12px] uppercase tracking-[0.16em] text-[#8c8178]">Connection</div>
-                  <div className="mt-1 text-[15px] text-[#181715]" style={{ fontWeight: 700 }}>连接配置</div>
-                  <div className="mt-1 text-[12px] leading-5 text-[#8c8178]">这里配置的是 AI 配图模型；真实图片搜索不受影响。</div>
+                <div className="rounded-2xl border border-border bg-card p-4">
+                  <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Connection</div>
+                  <div className="mt-1 text-[15px] text-foreground" style={{ fontWeight: 700 }}>连接配置</div>
+                  <div className="mt-1 text-[12px] leading-5 text-muted-foreground">这里配置的是 AI 配图模型；真实图片搜索不受影响。</div>
 
                   <div className="mt-4 grid gap-3">
                     <Field
@@ -1520,7 +1532,7 @@ export function Settings() {
                   </div>
                 </div>
 
-                <label className="flex items-center gap-2 text-[12px] text-[#6f665d]">
+                <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={aiImageProviderForm.setAsActive}
@@ -1531,12 +1543,12 @@ export function Settings() {
               </div>
             </div>
 
-            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-end border-t border-[#f0e5da] bg-white/95 px-6 py-4 backdrop-blur">
+            <DialogFooter className="absolute inset-x-0 bottom-0 flex flex-row items-center justify-end border-t border-border/70 bg-white/95 px-6 py-4 backdrop-blur">
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={closeAIImageProviderDialog}
-                  className="rounded-xl border border-[#eadfd4] px-4 py-2.5 text-[13px] text-[#6f665d] hover:bg-[#fffaf5]"
+                  className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background"
                   style={{ fontWeight: 500 }}
                 >
                   取消
@@ -1545,7 +1557,7 @@ export function Settings() {
                   type="button"
                   onClick={() => void handleSaveAIImageProviderConfig()}
                   disabled={aiImageProviderLoading}
-                  className="rounded-xl bg-[#d65f2b] px-4 py-2.5 text-[13px] text-white hover:bg-[#bf4513] disabled:bg-[#e8a17e]"
+                  className="rounded-xl bg-primary px-4 py-2.5 text-[13px] text-white hover:bg-primary/90 disabled:bg-primary/40"
                   style={{ fontWeight: 600 }}
                 >
                   {aiImageProviderLoading ? "保存中" : aiImageProviderForm.id ? "保存配置" : "添加配置"}
@@ -1557,16 +1569,16 @@ export function Settings() {
       </Section>
 
       <Section id="wechat-account" title="公众号接入">
-        <div className="rounded-xl border border-[#f0dfd0] bg-[#fff7ef] px-4 py-3 text-[13px] leading-6 text-[#6f665d]">
+        <div className="rounded-xl border border-border/70 bg-accent px-4 py-3 text-[13px] leading-6 text-muted-foreground">
           AppSecret 只会走服务端保存，不会进入浏览器本地草稿和普通设置同步里。
         </div>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-[13px] text-[#181715]" style={{ fontWeight: 600 }}>已配置公众号</div>
+            <div className="text-[13px] text-foreground" style={{ fontWeight: 600 }}>已配置公众号</div>
             <button
               type="button"
               onClick={openNewWechatAccountDialog}
-              className="rounded-lg border border-[#eadfd4] px-3 py-1.5 text-[12px] text-[#6f665d] hover:bg-[#fffaf5]"
+              className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-background"
               style={{ fontWeight: 500 }}
             >
               新增账号
@@ -1574,7 +1586,7 @@ export function Settings() {
           </div>
 
           {!wechatAccounts.length && wechatLoaded ? (
-            <div className="rounded-xl border border-dashed border-[#eadfd4] bg-[#fffaf5] px-4 py-6 text-[13px] text-[#8c8178]">
+            <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-[13px] text-muted-foreground">
               还没有配置公众号账号。添加后就可以在排版页选择并推送到对应草稿箱。
             </div>
           ) : null}
@@ -1584,17 +1596,17 @@ export function Settings() {
               const isSelected = selectedWechatAccountId === account.id;
 
               return (
-                <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-[#d65f2b] bg-[#fff0e6]" : "border-[#eadfd4] bg-white"}`}>
+                <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-primary bg-primary/10" : "border-border bg-card"}`}>
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[14px] text-[#181715]" style={{ fontWeight: 600 }}>{account.name}</span>
+                        <span className="text-[14px] text-foreground" style={{ fontWeight: 600 }}>{account.name}</span>
                         {isSelected ? (
-                          <span className="rounded-full bg-[#d65f2b] px-2 py-0.5 text-[11px] text-white">默认</span>
+                          <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] text-white">默认</span>
                         ) : null}
                       </div>
-                      <div className="mt-1 text-[12px] text-[#8c8178]">AppID：{account.appIdMasked}</div>
-                      <div className="mt-1 text-[12px] text-[#8c8178]">
+                      <div className="mt-1 text-[12px] text-muted-foreground">AppID：{account.appIdMasked}</div>
+                      <div className="mt-1 text-[12px] text-muted-foreground">
                         Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
                       </div>
                     </div>
@@ -1605,7 +1617,7 @@ export function Settings() {
                           onClick={() => void handleSelectWechatAccount(account.id)}
                           aria-label="设为默认"
                           title="设为默认"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#eadfd4] text-[#6f665d] hover:bg-[#fffaf5]"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-background"
                         >
                           <Star className="h-4 w-4" />
                         </button>
@@ -1615,7 +1627,7 @@ export function Settings() {
                         onClick={() => handleEditWechatAccount(account)}
                         aria-label="编辑"
                         title="编辑"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#eadfd4] text-[#6f665d] hover:bg-[#fffaf5]"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-background"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -1646,12 +1658,12 @@ export function Settings() {
             closeWechatAccountDialog();
           }}
         >
-          <DialogContent className="max-w-[560px] rounded-[24px] border border-[#eadfd4] bg-white p-0 shadow-[0_24px_80px_rgba(85,57,34,0.16)]">
-            <DialogHeader className="border-b border-[#f0e5da] px-6 py-5">
-              <DialogTitle className="text-[20px] text-[#181715]" style={{ fontWeight: 700 }}>
+          <DialogContent className="max-w-[560px] rounded-[24px] border border-border bg-card p-0 shadow-[0_24px_80px_rgba(31,41,86,0.16)]">
+            <DialogHeader className="border-b border-border/70 px-6 py-5">
+              <DialogTitle className="text-[20px] text-foreground" style={{ fontWeight: 700 }}>
                 {wechatForm.id ? "编辑公众号账号" : "新增公众号账号"}
               </DialogTitle>
-              <DialogDescription className="mt-1 text-[13px] leading-6 text-[#8c8178]">
+              <DialogDescription className="mt-1 text-[13px] leading-6 text-muted-foreground">
                 AppSecret 仅保存在服务端，保存后可在排版页直接选择并推送到对应草稿箱。
               </DialogDescription>
             </DialogHeader>
@@ -1666,7 +1678,7 @@ export function Settings() {
                 type="password"
               />
               <Field label="默认作者" value={wechatForm.defaultAuthor} onChange={(value) => handleWechatFormChange("defaultAuthor", value)} />
-              <label className="flex items-center gap-2 text-[12px] text-[#6f665d]">
+              <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={wechatForm.setAsSelected}
@@ -1676,11 +1688,11 @@ export function Settings() {
               </label>
             </div>
 
-            <DialogFooter className="border-t border-[#f0e5da] px-6 py-4 sm:justify-between">
+            <DialogFooter className="border-t border-border/70 px-6 py-4 sm:justify-between">
               <button
                 type="button"
                 onClick={closeWechatAccountDialog}
-                className="rounded-xl border border-[#eadfd4] px-4 py-2.5 text-[13px] text-[#6f665d] hover:bg-[#fffaf5]"
+                className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background"
                 style={{ fontWeight: 500 }}
               >
                 取消
@@ -1689,7 +1701,7 @@ export function Settings() {
                 type="button"
                 onClick={() => void handleSaveWechatAccount()}
                 disabled={wechatLoading}
-                className="rounded-xl bg-[#d65f2b] px-4 py-2.5 text-[13px] text-white hover:bg-[#bf4513] disabled:bg-[#e8a17e]"
+                className="rounded-xl bg-primary px-4 py-2.5 text-[13px] text-white hover:bg-primary/90 disabled:bg-primary/40"
                 style={{ fontWeight: 600 }}
               >
                 {wechatLoading ? "保存中" : wechatForm.id ? "保存账号" : "添加账号"}
@@ -1699,7 +1711,7 @@ export function Settings() {
         </Dialog>
       </Section>
 
-        <div className="flex justify-end text-[12px] text-[#8c8178]">
+        <div className="flex justify-end text-[12px] text-muted-foreground">
           {settingsSaving ? "正在保存设置..." : isDirty ? "你有未保存的修改" : "当前设置已同步"}
         </div>
         </div>
@@ -1710,8 +1722,8 @@ export function Settings() {
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-6 rounded-xl border border-[#f0e5da] bg-white p-5">
-      <h3 className="text-[14px] mb-4 pb-3 border-b border-[#f0e5da]" style={{ fontWeight: 600 }}>{title}</h3>
+    <section id={id} className="scroll-mt-8 rounded-xl border border-border/70 bg-card p-5">
+      <h3 className="text-[14px] mb-4 pb-3 border-b border-border/70" style={{ fontWeight: 600 }}>{title}</h3>
       <div className="space-y-4">{children}</div>
     </section>
   );
@@ -1734,15 +1746,15 @@ function Field({
 }) {
   return (
     <div>
-      <label className="text-[12px] text-[#8c8178] mb-1.5 block">{label}</label>
+      <label className="text-[12px] text-muted-foreground mb-1.5 block">{label}</label>
       <input
         type={type}
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-[#eadfd4] bg-[#fffaf5] px-3 py-2.5 text-[13px] outline-none transition-colors focus:border-[#d65f2b] focus:bg-white"
+        className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-[13px] outline-none transition-colors focus:border-primary focus:bg-card"
       />
-      {hint ? <div className="mt-1.5 text-[12px] leading-5 text-[#8c8178]">{hint}</div> : null}
+      {hint ? <div className="mt-1.5 text-[12px] leading-5 text-muted-foreground">{hint}</div> : null}
     </div>
   );
 }
@@ -1761,10 +1773,10 @@ function TagEditor({
   const [draftValue, setDraftValue] = useState("");
 
   const colorClasses = {
-    blue: "bg-[#fff0e6] text-[#d65f2b] hover:text-[#bf4513] hover:border-[#d65f2b]",
-    green: "bg-[#fff0e6] text-[#d65f2b] hover:text-[#bf4513] hover:border-[#d65f2b]",
+    blue: "bg-primary/10 text-primary hover:text-primary hover:border-primary",
+    green: "bg-primary/10 text-primary hover:text-primary hover:border-primary",
     red: "bg-red-50 text-red-500 hover:text-red-700 hover:border-red-300",
-    purple: "bg-[#fff0e6] text-[#d65f2b] hover:text-[#bf4513] hover:border-[#d65f2b]",
+    purple: "bg-primary/10 text-primary hover:text-primary hover:border-primary",
   };
 
   const addTag = () => {
@@ -1777,7 +1789,7 @@ function TagEditor({
 
   return (
     <div>
-      <label className="text-[12px] text-[#8c8178] mb-1.5 block">{label}</label>
+      <label className="text-[12px] text-muted-foreground mb-1.5 block">{label}</label>
       <div className="flex flex-wrap gap-1.5 mb-2">
         {values.map((value) => (
           <span key={value} className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[12px] ${colorClasses[color]}`} style={{ fontWeight: 500 }}>
@@ -1798,7 +1810,7 @@ function TagEditor({
               addTag();
             }
           }}
-          className="w-full bg-[#fffaf5] border border-[#eadfd4] rounded-lg px-3 py-2 text-[13px] outline-none focus:border-[#d65f2b] focus:bg-white transition-colors"
+          className="w-full bg-background border border-border rounded-lg px-3 py-2 text-[13px] outline-none focus:border-primary focus:bg-card transition-colors"
           placeholder="输入后回车添加"
         />
         <button
@@ -1807,8 +1819,8 @@ function TagEditor({
           disabled={!canAddTag}
           className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-[12px] transition-all ${
             canAddTag
-              ? "border border-[#d65f2b]/30 bg-[#fff0e6] text-[#d65f2b] hover:border-[#d65f2b] hover:bg-[#ffe3d3]"
-              : "border border-[#eadfd4] bg-[#fffaf5] text-[#d8cfc5]"
+              ? "border border-primary/30 bg-primary/10 text-primary hover:border-primary hover:bg-primary/15"
+              : "border border-border bg-background text-muted-foreground/40"
           }`}
           style={{ fontWeight: 600 }}
         >
@@ -1840,7 +1852,7 @@ function DomainSelector({
 
   return (
     <div>
-      <label className="text-[12px] text-[#8c8178] mb-1.5 block">{label}</label>
+      <label className="text-[12px] text-muted-foreground mb-1.5 block">{label}</label>
       <div className="grid grid-cols-3 gap-2">
         {articleDomains.map((domain) => {
           const active = values.includes(domain);
@@ -1851,20 +1863,20 @@ function DomainSelector({
               onClick={() => toggleDomain(domain)}
               className={`rounded-xl border px-3 py-3 text-left transition-colors ${
                 active
-                  ? "border-[#d65f2b] bg-[#fff0e6]"
-                  : "border-[#eadfd4] bg-[#fffaf5] hover:bg-white hover:border-[#d65f2b]/30"
+                  ? "border-primary bg-primary/10"
+                  : "border-border bg-background hover:bg-card hover:border-primary/30"
               }`}
             >
               <div className="flex items-center gap-2 text-[13px]" style={{ fontWeight: 600 }}>
                 <span>{domainConfigs[domain].icon}</span>
-                <span className={active ? "text-[#d65f2b]" : "text-[#181715]"}>{domain}</span>
+                <span className={active ? "text-primary" : "text-foreground"}>{domain}</span>
               </div>
-              <div className="mt-1 text-[11px] leading-5 text-[#8c8178]">{domainConfigs[domain].description}</div>
+              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{domainConfigs[domain].description}</div>
             </button>
           );
         })}
       </div>
-      <div className="mt-2 text-[11px] text-[#8c8178]">至少保留 1 个领域，写作页会基于这里展示可选范围。</div>
+      <div className="mt-2 text-[11px] text-muted-foreground">至少保留 1 个领域，写作页会基于这里展示可选范围。</div>
     </div>
   );
 }

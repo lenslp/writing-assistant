@@ -26,14 +26,14 @@ const heatColors: Record<string, string> = {
   极高: "bg-red-50 text-red-600",
   高: "bg-orange-50 text-orange-600",
   中高: "bg-amber-50 text-amber-600",
-  中: "bg-[#fff0e6] text-[#d65f2b]",
+  中: "bg-primary/10 text-primary",
 };
 
 const statusStyles = {
-  generating: "bg-[#fff0e6] text-[#d65f2b]",
+  generating: "bg-primary/10 text-primary",
   draft: "bg-amber-50 text-amber-600",
   published: "bg-green-50 text-green-600",
-  ready: "bg-[#f1eadf] text-[#6f665d]",
+  ready: "bg-muted text-muted-foreground",
 } as const;
 
 const heatRank: Record<string, number> = {
@@ -313,7 +313,7 @@ export function TopicCenter() {
       };
 
   return (
-    <div className="mx-auto flex max-w-[1200px] flex-col gap-5">
+    <div className="lens-page flex flex-col gap-4">
       <div className="lens-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           {articleDomains.map((domain) => {
@@ -327,15 +327,15 @@ export function TopicCenter() {
                 onClick={() => setActiveDomain(domain)}
                 className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[13px] transition-colors ${
                   activeDomain === domain
-                    ? "border-[#d65f2b] bg-[#d65f2b] text-white"
-                    : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                    ? "border-primary bg-primary text-white"
+                    : "border-border bg-card text-muted-foreground hover:bg-accent"
                 }`}
                 style={{ fontWeight: 750 }}
               >
                 <span>{config.icon}</span>
                 {domain}
                 <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                  activeDomain === domain ? "bg-white/15 text-white" : "bg-[#f1eadf] text-[#8c8178]"
+                  activeDomain === domain ? "bg-white/15 text-white" : "bg-muted text-muted-foreground"
                 }`}>
                   {count}
                 </span>
@@ -347,17 +347,17 @@ export function TopicCenter() {
             onClick={() => setAISelectionEnabled((enabled) => !enabled)}
             className={`ml-auto inline-flex h-11 items-center gap-3 rounded-full border px-4 text-[13px] shadow-sm transition-all ${
               aiSelectionEnabled
-                ? "border-[#f4b28f] bg-[#fff0e6] text-[#d65f2b] shadow-[0_10px_24px_rgba(214,95,43,0.12)] hover:bg-[#ffe4d1]"
-                : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+                ? "border-primary/30 bg-primary/10 text-primary shadow-[0_10px_24px_rgba(111,92,255,0.12)] hover:bg-primary/15"
+                : "border-border bg-card text-muted-foreground hover:bg-accent"
             }`}
             style={{ fontWeight: 850 }}
             aria-pressed={aiSelectionEnabled}
             title="开启后会用 AI 从当前领域选题中筛出更值得写的内容"
           >
             <span className={`flex h-6 w-11 items-center rounded-full p-1 transition-colors ${
-              aiSelectionEnabled ? "bg-[#d65f2b]" : "bg-[#cfc3b8]"
+              aiSelectionEnabled ? "bg-primary" : "bg-muted"
             }`}>
-              <span className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+              <span className={`h-4 w-4 rounded-full bg-card shadow-sm transition-transform ${
                 aiSelectionEnabled ? "translate-x-5" : "translate-x-0"
               }`} />
             </span>
@@ -371,12 +371,12 @@ export function TopicCenter() {
               : "AI 选题关闭"}
           </button>
           <div className="lens-input flex min-w-[260px] items-center gap-2 px-3 py-2">
-            <Search className="h-4 w-4 text-[#9a9086]" />
+            <Search className="h-4 w-4 text-muted-foreground" />
             <input
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
               placeholder="搜索标题、来源、角度"
-              className="w-full border-none bg-transparent text-[13px] text-[#181715] outline-none placeholder:text-[#9a9086]"
+              className="w-full border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
         </div>
@@ -384,7 +384,7 @@ export function TopicCenter() {
           <div className="mt-2 text-[11px] text-green-600">{notice}</div>
         ) : null}
         {aiSelectionEnabled && aiSelection.message ? (
-          <div className="mt-2 text-[11px] text-[#8c8178]">{aiSelection.message}</div>
+          <div className="mt-2 text-[11px] text-muted-foreground">{aiSelection.message}</div>
         ) : null}
       </div>
 
@@ -409,23 +409,23 @@ export function TopicCenter() {
           return (
             <article
               key={topic.id}
-              className={`rounded-[22px] border bg-white/86 p-4 transition-all ${
-                isHighlighted ? "border-[#d65f2b] shadow-[0_0_0_3px_rgba(214,95,43,0.12)]" : "border-[#eadfd4] hover:border-[#d65f2b]/35"
+              className={`rounded-[22px] border bg-card/90 p-4 transition-all ${
+                isHighlighted ? "border-primary shadow-[0_0_0_3px_rgba(111,92,255,0.12)]" : "border-border hover:border-primary/35"
               }`}
             >
               <div className="flex items-stretch gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="min-w-0 text-[15px] leading-6 text-[#181715]" style={{ fontWeight: 800 }}>{topic.title}</h2>
+                    <h2 className="min-w-0 text-[15px] leading-6 text-foreground" style={{ fontWeight: 800 }}>{topic.title}</h2>
                     {isHighlighted ? (
-                      <span className="rounded-full bg-[#d65f2b] px-2 py-0.5 text-[11px] text-white" style={{ fontWeight: 750 }}>当前推荐</span>
+                      <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] text-white" style={{ fontWeight: 750 }}>当前推荐</span>
                     ) : null}
                     <span className={`rounded-full px-2 py-0.5 text-[11px] ${statusClass}`} style={{ fontWeight: 600 }}>
                       {statusLabel}
                     </span>
                   </div>
 
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[#8c8178]">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
                       <TrendingUp className="h-3.5 w-3.5" />
                       {topic.source}
@@ -442,30 +442,30 @@ export function TopicCenter() {
                     ) : null}
                   </div>
 
-                  <div className="mt-3 rounded-xl bg-[#fffaf5] px-3 py-2.5">
-                    <div className="mb-1 text-[11px] text-[#8c8178]" style={{ fontWeight: 700 }}>
+                  <div className="mt-3 rounded-xl bg-background px-3 py-2.5">
+                    <div className="mb-1 text-[11px] text-muted-foreground" style={{ fontWeight: 700 }}>
                       {aiRecommendation ? "AI 推荐切入" : "推荐切入角度"}
                     </div>
-                    <p className="text-[13px] leading-6 text-[#5d544c]">{primaryAngle}</p>
+                    <p className="text-[13px] leading-6 text-foreground/75">{primaryAngle}</p>
                     {aiRecommendation ? (
-                      <p className="mt-1 text-[12px] leading-5 text-[#8c8178]">{recommendationReason}</p>
+                      <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{recommendationReason}</p>
                     ) : null}
                   </div>
 
                   {topic.tags.length ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {topic.tags.slice(0, 4).map((tag) => (
-                        <span key={tag} className="rounded bg-[#fff0e6] px-1.5 py-0.5 text-[10px] text-[#d65f2b]">{tag}</span>
+                        <span key={tag} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{tag}</span>
                       ))}
                     </div>
                   ) : null}
                 </div>
 
                 <div className="flex w-[150px] shrink-0 flex-col items-end justify-center gap-3">
-                  <div className="flex items-baseline gap-1 text-[#d65f2b]">
+                  <div className="flex items-baseline gap-1 text-primary">
                     <Sparkles className="h-4 w-4" />
                     <span className="text-[20px] leading-none" style={{ fontWeight: 750 }}>{recommendationScore}%</span>
-                    <span className="text-[11px] text-[#8c8178]">{aiRecommendation ? "AI 评分" : "匹配"}</span>
+                    <span className="text-[11px] text-muted-foreground">{aiRecommendation ? "AI 评分" : "匹配"}</span>
                   </div>
 
                   <button
@@ -477,7 +477,7 @@ export function TopicCenter() {
                       }
                       openWriting(topic, false);
                     }}
-                    className="group inline-flex h-10 w-[132px] items-center justify-center gap-2 rounded-full border border-[#d65f2b]/20 bg-[#d65f2b] px-4 text-[12px] text-white shadow-[0_10px_22px_rgba(214,95,43,0.16)] transition-all hover:-translate-y-0.5 hover:bg-[#c94f1f] hover:shadow-[0_14px_26px_rgba(214,95,43,0.2)]"
+                    className="group inline-flex h-10 w-[132px] items-center justify-center gap-2 rounded-full border border-primary/20 bg-primary px-4 text-[12px] text-white shadow-[0_10px_22px_rgba(111,92,255,0.16)] transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-[0_14px_26px_rgba(111,92,255,0.2)]"
                     style={{ fontWeight: 850 }}
                   >
                     {draft ? <Edit3 className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" /> : <PenLine className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" />}
@@ -487,7 +487,7 @@ export function TopicCenter() {
                     <button
                       type="button"
                       onClick={() => handleDeleteTopic(topic.id)}
-                      className="inline-flex h-8 w-[132px] items-center justify-center gap-1.5 rounded-full border border-[#eadfd4] bg-white px-3 text-[12px] text-[#8c8178] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      className="inline-flex h-8 w-[132px] items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3 text-[12px] text-muted-foreground transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                       style={{ fontWeight: 750 }}
                       title="删除这个选题"
                     >
@@ -500,16 +500,16 @@ export function TopicCenter() {
             </article>
           );
         }) : (
-          <div className="rounded-[22px] border border-dashed border-[#eadfd4] bg-white/86 px-6 py-14 text-center">
-            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[#fff0e6]">
+          <div className="rounded-[22px] border border-dashed border-border bg-card/90 px-6 py-14 text-center">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
               {emptyState.icon === "loading" ? (
-                <LoaderCircle className="h-5 w-5 animate-spin text-[#d65f2b]" />
+                <LoaderCircle className="h-5 w-5 animate-spin text-primary" />
               ) : (
-                <CheckCircle2 className="h-5 w-5 text-[#d65f2b]" />
+                <CheckCircle2 className="h-5 w-5 text-primary" />
               )}
             </div>
-            <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>{emptyState.title}</div>
-            <div className="mt-1 text-[12px] text-[#8c8178]">{emptyState.description}</div>
+            <div className="text-[14px] text-foreground" style={{ fontWeight: 750 }}>{emptyState.title}</div>
+            <div className="mt-1 text-[12px] text-muted-foreground">{emptyState.description}</div>
             <div className="mt-4 flex justify-center gap-2">
               <button
                 type="button"

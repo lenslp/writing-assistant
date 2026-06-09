@@ -1,5 +1,5 @@
-import { Dashboard } from "./components/Dashboard";
+import { PublicHome } from "./components/PublicHome";
 
 export default function Page() {
-  return <Dashboard />;
+  return <PublicHome />;
 }

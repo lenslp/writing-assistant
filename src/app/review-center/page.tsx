@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { ReviewCenter } from "../components/ReviewCenter";
 
 function ReviewCenterFallback() {
-  return <div className="p-8 text-sm text-[#8c8178]">正在加载审核中心...</div>;
+  return <div className="p-8 text-sm text-muted-foreground">正在加载审核中心...</div>;
 }
 
 export default function Page() {
