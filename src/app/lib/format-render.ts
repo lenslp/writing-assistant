@@ -31,6 +31,10 @@ export type InlineToken = {
   content: string;
 };
 
+type HtmlDraft = Pick<Draft, "title" | "summary" | "updatedAt"> & {
+  publishedAt?: Draft["publishedAt"];
+};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -310,7 +314,14 @@ export function extractContentBlocks(body: string): ContentBlock[] {
 // WeChat plain text export
 // ---------------------------------------------------------------------------
 
-export function buildWechatText(draft: Draft, body: string, settingsCta: string) {
+export function buildWechatText(
+  draft: HtmlDraft,
+  body: string,
+  settingsCta: string,
+  options?: { includeTitle?: boolean; includeCta?: boolean },
+) {
+  const includeTitle = options?.includeTitle ?? true;
+  const includeCta = options?.includeCta ?? true;
   const plainBody = extractContentBlocks(body)
     .map((block) => {
       if (block.type === "image") {
@@ -343,7 +354,15 @@ export function buildWechatText(draft: Draft, body: string, settingsCta: string)
     })
     .join("\n\n");
 
-  return [draft.title, "", draft.summary, "", plainBody, "", settingsCta].filter(Boolean).join("\n");
+  return [
+    includeTitle ? draft.title : "",
+    "",
+    draft.summary,
+    "",
+    plainBody,
+    "",
+    includeCta ? settingsCta : "",
+  ].filter(Boolean).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -359,16 +378,18 @@ export function buildMarkdown(draft: Draft, body: string) {
 // ---------------------------------------------------------------------------
 
 export function buildHtml(
-  draft: Draft,
+  draft: HtmlDraft,
   body: string,
   formatting: DraftFormatting,
   primary: string,
   accent: string,
-  publishChannel: Draft["publishedChannel"],
+  publishChannel: NonNullable<Draft["publishedChannel"]>,
   accountName: string,
   domain: ArticleDomain,
+  options?: { includeHeader?: boolean },
 ) {
   const isWechatChannel = publishChannel === "公众号";
+  const includeHeader = options?.includeHeader ?? true;
   const metaDate = formatDraftTime(draft.publishedAt ?? draft.updatedAt).split(" ")[0];
   const inlineHighlightHtmlStyle = getInlineHighlightHtmlStyle(primary, accent);
   const domainStyle = getWechatDomainPreviewStyle(domain, primary, accent);
@@ -451,19 +472,73 @@ export function buildHtml(
     .join("");
 
   if (isWechatChannel) {
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;"><div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}${htmlSections}</article></body></html>`;
+    const headerHtml = includeHeader
+      ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}`
+      : "";
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;">${headerHtml}${htmlSections}</article></body></html>`;
   }
 
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>${draft.title}</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fb;padding:24px;"><article style="max-width:720px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><h1 style="font-size:32px;line-height:1.35;margin-bottom:16px;color:#111827;">${draft.title}</h1><p style="font-size:16px;line-height:1.9;margin-bottom:24px;color:#4b5563;">${draft.summary}</p>${htmlSections}</article></body></html>`;
+}
+
+export function buildWechatArticleHtml(
+  draft: HtmlDraft,
+  body: string,
+  formatting: DraftFormatting,
+  primary: string,
+  accent: string,
+  accountName: string,
+  domain: ArticleDomain,
+  options?: { includeHeader?: boolean },
+) {
+  return buildHtml(draft, body, formatting, primary, accent, "公众号", accountName, domain, options);
 }
 
 // ---------------------------------------------------------------------------
 // Template preview style
 // ---------------------------------------------------------------------------
 
+type TemplatePreviewBase = {
+  shellGradient: string;
+  shellTint: string;
+  heroGradient: string;
+  heroBorder: string;
+  sectionBackground: string;
+  bodyOverlay: string;
+  accentSoft: string;
+};
+
+function createTemplatePreviewStyle(
+  base: TemplatePreviewBase,
+  options?: {
+    dark?: boolean;
+    panelBackground?: string;
+    panelBorder?: string;
+    badgeColor?: string;
+  },
+) {
+  const panelBackground = options?.panelBackground ?? (options?.dark ? "rgba(15,23,42,0.78)" : "rgba(255,255,255,0.82)");
+  const panelBorder = options?.panelBorder ?? base.heroBorder;
+
+  return {
+    ...base,
+    deviceBorder: options?.dark ? "rgba(71,85,105,0.58)" : "rgba(226,232,240,0.92)",
+    deviceHeaderBackground: options?.dark ? "rgba(15,23,42,0.92)" : "rgba(248,250,252,0.92)",
+    deviceHeaderBorder: options?.dark ? "rgba(71,85,105,0.46)" : "rgba(226,232,240,0.86)",
+    titlePanelBackground: panelBackground,
+    titlePanelBorder: panelBorder,
+    titlePanelShadow: options?.dark ? "0 18px 50px rgba(2,6,23,0.24)" : "0 18px 50px rgba(15,23,42,0.08)",
+    badgeBackground: base.heroGradient,
+    badgeColor: options?.badgeColor ?? (options?.dark ? "#e2e8f0" : "#0f172a"),
+    badgeBorder: `1px solid ${panelBorder}`,
+    contentCardBackground: options?.dark ? "rgba(15,23,42,0.66)" : "rgba(255,255,255,0.78)",
+    contentCardBorder: panelBorder,
+  };
+}
+
 export function getTemplatePreviewStyle(template: DraftFormatting["template"], primary: string, accent: string) {
   if (template === "暖色调") {
-    return {
+    return createTemplatePreviewStyle({
       shellGradient: "linear-gradient(180deg, rgba(255,247,237,0.98), rgba(255,255,255,1))",
       shellTint: "radial-gradient(circle at top left, rgba(251,146,60,0.16), transparent 42%)",
       heroGradient: `linear-gradient(145deg, ${primary}18, ${accent}28 55%, rgba(255,255,255,0.92))`,
@@ -471,11 +546,11 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(255,247,237,0.72)",
       bodyOverlay: "radial-gradient(circle at top right, rgba(251,146,60,0.10), transparent 30%)",
       accentSoft: "rgba(251,146,60,0.14)",
-    };
+    }, { panelBackground: "rgba(255,247,237,0.82)", panelBorder: `${primary}26` });
   }
 
   if (template === "商务灰") {
-    return {
+    return createTemplatePreviewStyle({
       shellGradient: "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(255,255,255,1))",
       shellTint: "radial-gradient(circle at top left, rgba(124,58,237,0.12), transparent 44%)",
       heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${accent}14 52%, ${primary}10)`,
@@ -483,11 +558,11 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(248,250,252,0.9)",
       bodyOverlay: "linear-gradient(180deg, rgba(15,23,42,0.02), transparent 18%)",
       accentSoft: "rgba(124,58,237,0.10)",
-    };
+    }, { panelBorder: "rgba(148,163,184,0.32)" });
   }
 
   if (template === "深色") {
-    return {
+    return createTemplatePreviewStyle({
       shellGradient: "linear-gradient(180deg, rgba(2,6,23,0.98), rgba(15,23,42,1))",
       shellTint: "radial-gradient(circle at top left, rgba(16,185,129,0.18), transparent 46%)",
       heroGradient: `linear-gradient(150deg, rgba(15,23,42,0.98), ${primary}18 58%, rgba(15,23,42,0.94))`,
@@ -495,11 +570,11 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(15,23,42,0.7)",
       bodyOverlay: "radial-gradient(circle at top right, rgba(16,185,129,0.10), transparent 32%)",
       accentSoft: "rgba(16,185,129,0.12)",
-    };
+    }, { dark: true, panelBackground: "rgba(15,23,42,0.82)", panelBorder: "rgba(71,85,105,0.5)", badgeColor: "#f8fafc" });
   }
 
   if (template === "极简白") {
-    return {
+    return createTemplatePreviewStyle({
       shellGradient: "linear-gradient(180deg, rgba(255,255,255,0.99), rgba(249,250,251,1))",
       shellTint: "radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 42%)",
       heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.95), ${primary}10 60%, rgba(255,255,255,1))`,
@@ -507,10 +582,10 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(248,250,252,0.9)",
       bodyOverlay: "linear-gradient(180deg, rgba(148,163,184,0.06), transparent 16%)",
       accentSoft: "rgba(37,99,235,0.10)",
-    };
+    }, { panelBackground: "rgba(255,255,255,0.92)", panelBorder: "rgba(226,232,240,0.9)" });
   }
 
-  return {
+  return createTemplatePreviewStyle({
     shellGradient: "linear-gradient(180deg, rgba(239,246,255,0.98), rgba(255,255,255,1))",
     shellTint: "radial-gradient(circle at top left, rgba(59,130,246,0.14), transparent 44%)",
     heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${primary}16 56%, ${accent}10)`,
@@ -518,7 +593,7 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
     sectionBackground: "rgba(239,246,255,0.78)",
     bodyOverlay: "radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 30%)",
     accentSoft: "rgba(59,130,246,0.10)",
-  };
+  }, { panelBackground: "rgba(239,246,255,0.82)", panelBorder: `${primary}22` });
 }
 
 // ---------------------------------------------------------------------------
