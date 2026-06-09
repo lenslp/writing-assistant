@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus, Flame, Search, RefreshCw,
@@ -252,6 +252,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const [groupedPages, setGroupedPages] = useState<Record<string, number>>({});
   const [isReclassifying, setIsReclassifying] = useState(false);
   const [detailTopic, setDetailTopic] = useState<HotTopicItem | null>(null);
+  const autoRefreshStartedRef = useRef(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { upsertTopic } = useAppStore();
@@ -269,6 +270,36 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       if (rightPriority === -1) return -1;
       return leftPriority - rightPriority;
     }), []);
+
+  const applyHotTopicsPayload = useCallback((payload: Record<string, unknown>) => {
+    if (!Array.isArray(payload.items)) return false;
+
+    const nextItems = payload.items as HotTopicItem[];
+    const nextSource = payload.source === "database" || payload.persisted ? "database" : "live";
+    const nextRestrictedCount = typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0;
+
+    setItems(nextItems);
+    setDataSource(nextSource);
+    setRestrictedCount(nextRestrictedCount);
+    writeHotTopicsCache({
+      items: nextItems,
+      source: nextSource,
+      restrictedCount: nextRestrictedCount,
+    });
+
+    return true;
+  }, []);
+
+  const loadLatestHotTopics = useCallback(async () => {
+    const latest = await fetch("/api/hot-topics", { cache: "no-store" });
+    if (!latest.ok) {
+      throw new Error(`Failed to load hot topics: ${latest.status}`);
+    }
+
+    const latestPayload = await latest.json();
+    applyHotTopicsPayload(latestPayload);
+    return latestPayload;
+  }, [applyHotTopicsPayload]);
 
   useEffect(() => {
     const cachedPayload = readHotTopicsCache();
@@ -304,16 +335,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
           throw new Error(`Failed to load hot topics: ${response.status}`);
         }
         const payload = await response.json();
-        if (Array.isArray(payload.items)) {
-          setItems(payload.items);
-          setDataSource(payload.source === "database" ? "database" : "live");
-          setRestrictedCount(typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0);
-          writeHotTopicsCache({
-            items: payload.items,
-            source: payload.source === "database" ? "database" : "live",
-            restrictedCount: typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0,
-          });
-        }
+        applyHotTopicsPayload(payload);
       } catch (error) {
         console.error("Failed to load hot topics:", error);
       } finally {
@@ -329,7 +351,36 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
     }
 
     void loadItems(Boolean((shouldUseCachedPayload && cachedPayload) || hasInitialData));
-  }, [initialData]);
+  }, [applyHotTopicsPayload, initialData]);
+
+  useEffect(() => {
+    if (autoRefreshStartedRef.current) return;
+    autoRefreshStartedRef.current = true;
+
+    const refreshInBackground = async () => {
+      try {
+        const response = await fetch("/api/hot-topics/refresh", { method: "POST" });
+        const payload = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(payload?.message ?? `Failed to refresh hot topics: ${response.status}`);
+        }
+
+        if (!payload || !applyHotTopicsPayload(payload)) {
+          await loadLatestHotTopics();
+        }
+
+        const nextWarning = formatFailedSourceWarning(payload?.failedSources, typeof payload?.message === "string" ? payload.message : "");
+        if (nextWarning) {
+          setRefreshWarning(nextWarning);
+        }
+      } catch (error) {
+        console.error("Failed to auto refresh hot topics:", error);
+      }
+    };
+
+    void refreshInBackground();
+  }, [applyHotTopicsPayload, loadLatestHotTopics]);
 
   const topicDomainMap = useMemo(
     () =>
@@ -433,30 +484,8 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
         throw new Error(`Failed to refresh hot topics: ${response.status}`);
       }
       const payload = await response.json();
-      if (Array.isArray(payload.items)) {
-        setItems(payload.items);
-        setDataSource(payload.persisted ? "database" : "live");
-        writeHotTopicsCache({
-          items: payload.items,
-          source: payload.persisted ? "database" : "live",
-          restrictedCount: typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0,
-        });
-      } else {
-        const latest = await fetch("/api/hot-topics", { cache: "no-store" });
-        if (!latest.ok) {
-          throw new Error(`Failed to load hot topics: ${latest.status}`);
-        }
-        const latestPayload = await latest.json();
-        if (Array.isArray(latestPayload.items)) {
-          setItems(latestPayload.items);
-          setDataSource(latestPayload.source === "database" ? "database" : "live");
-          setRestrictedCount(typeof latestPayload.restrictedCount === "number" ? latestPayload.restrictedCount : 0);
-          writeHotTopicsCache({
-            items: latestPayload.items,
-            source: latestPayload.source === "database" ? "database" : "live",
-            restrictedCount: typeof latestPayload.restrictedCount === "number" ? latestPayload.restrictedCount : 0,
-          });
-        }
+      if (!applyHotTopicsPayload(payload)) {
+        await loadLatestHotTopics();
       }
 
       setRestrictedCount(typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0);
@@ -468,7 +497,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
       setNotice(
         payload.persisted
-          ? `热点已抓取并入库，自动生成 ${payload.generatedTopicCount ?? 0} 个选题`
+          ? "热点已抓取并入库"
           : "已拉取实时热点",
       );
       window.setTimeout(() => setNotice(""), 2000);

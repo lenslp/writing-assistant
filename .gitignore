@@ -40,3 +40,5 @@ pnpm-debug.log*
 # local design exports / temp assets
 .pencil-exports/
 pencil-exports/
+.vercel
+.playwright-cli/

@@ -2284,44 +2284,6 @@ export function WritingPage() {
         </div>
 
         <div className="relative flex flex-1 flex-col overflow-hidden bg-[#f8f4ef] px-4 py-5">
-          <div className="mb-4 flex shrink-0 items-center justify-between rounded-2xl border border-[#eadfd4] bg-white/78 px-4 py-3 shadow-sm backdrop-blur">
-            <div>
-              <div className="text-[14px] text-[#181715]" style={{ fontWeight: 800 }}>
-                实时编辑 / 预览
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPreviewMode("mobile")}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                  previewMode === "mobile" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
-                }`}
-                style={{ fontWeight: 750 }}
-              >
-                <Smartphone className="h-3.5 w-3.5" /> 手机
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreviewMode("desktop")}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
-                  previewMode === "desktop" ? "border-[#d65f2b] bg-[#fff0e6] text-[#d65f2b]" : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
-                }`}
-                style={{ fontWeight: 750 }}
-              >
-                <Monitor className="h-3.5 w-3.5" /> 桌面
-              </button>
-              <button
-                type="button"
-                onClick={handleScrollPreviewTop}
-                className="lens-btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-[12px]"
-                style={{ fontWeight: 750 }}
-              >
-                <ArrowUp className="h-3.5 w-3.5" /> 回到顶部
-              </button>
-            </div>
-          </div>
-
           <div className="grid flex-1 min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4 overflow-hidden">
             <section className="flex min-w-0 flex-col overflow-hidden rounded-[24px] border border-[#eadfd4] bg-white shadow-[0_18px_60px_rgba(85,57,34,0.08)]">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f0e5da] px-4 py-2.5">

@@ -20,7 +20,7 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   if (!hasPersistenceBackend()) {
-    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
+    return NextResponse.json({ item: null, persisted: false });
   }
 
   try {

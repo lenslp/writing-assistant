@@ -9,13 +9,17 @@ import {
   Flame,
   LoaderCircle,
   PenLine,
-  Plus,
   Search,
   Sparkles,
+  WandSparkles,
+  Trash2,
   TrendingUp,
 } from "lucide-react";
 import { useAppStore } from "../providers/app-store";
+import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import { articleDomains, domainConfigs, resolveArticleDomain, type ActiveArticleDomain } from "../lib/content-domains";
+import type { TopicSuggestion } from "../lib/app-data";
+import type { HotTopicItem } from "../lib/hot-topics";
 import type { DomainTopicRecommendationGroup, TopicRecommendationItem } from "../lib/topic-recommendation";
 
 const heatColors: Record<string, string> = {
@@ -42,6 +46,7 @@ const heatRank: Record<string, number> = {
 type AISelectionState = {
   loading: boolean;
   groups: DomainTopicRecommendationGroup[];
+  topics: TopicSuggestion[];
   source: "ai" | "fallback" | null;
   message: string;
 };
@@ -49,15 +54,18 @@ type AISelectionState = {
 export function TopicCenter() {
   const [activeDomain, setActiveDomain] = useState<ActiveArticleDomain>(articleDomains[0]);
   const [keyword, setKeyword] = useState("");
+  const [aiSelectionEnabled, setAISelectionEnabled] = useState(false);
+  const [notice, setNotice] = useState("");
   const [aiSelection, setAISelection] = useState<AISelectionState>({
     loading: false,
     groups: [],
+    topics: [],
     source: null,
     message: "",
   });
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { topics, drafts, selectedTopic, writingTasks, selectTopic, createManualDraft } = useAppStore();
+  const { topics, drafts, selectedTopic, writingTasks, selectTopic, upsertTopic, deleteTopic, createManualDraft } = useAppStore();
   const highlightedTopicId = searchParams.get("topicId") ?? selectedTopic?.id ?? null;
 
   useEffect(() => {
@@ -75,14 +83,16 @@ export function TopicCenter() {
   const topicStatsByDomain = useMemo(() => {
     const stats = new Map<ActiveArticleDomain, number>(articleDomains.map((domain) => [domain, 0]));
 
-    topics.forEach((topic) => {
+    const visibleTopics = aiSelectionEnabled ? aiSelection.topics : topics;
+
+    visibleTopics.forEach((topic) => {
       const normalizedDomain = resolveArticleDomain(topic.domain);
       if (!articleDomains.includes(normalizedDomain)) return;
       stats.set(normalizedDomain, (stats.get(normalizedDomain) ?? 0) + 1);
     });
 
     return stats;
-  }, [topics]);
+  }, [aiSelection.topics, aiSelectionEnabled, topics]);
 
   const draftsByTopicId = useMemo(() => {
     const grouped = new Map<string, typeof drafts[number]>();
@@ -97,23 +107,9 @@ export function TopicCenter() {
     return grouped;
   }, [drafts]);
 
-  const aiSelectionCandidates = useMemo(
-    () =>
-      topics
-        .filter((topic) => resolveArticleDomain(topic.domain) === activeDomain)
-        .sort((left, right) => right.fit - left.fit || (heatRank[right.heat] ?? 0) - (heatRank[left.heat] ?? 0))
-        .slice(0, 8),
-    [activeDomain, topics],
-  );
-
-  const aiSelectionRequestKey = useMemo(
-    () => `${activeDomain}:${aiSelectionCandidates.map((topic) => `${topic.id}:${topic.fit}:${topic.heat}`).join("|")}`,
-    [activeDomain, aiSelectionCandidates],
-  );
-
   useEffect(() => {
-    if (!aiSelectionCandidates.length) {
-      setAISelection({ loading: false, groups: [], source: null, message: "" });
+    if (!aiSelectionEnabled) {
+      setAISelection({ loading: false, groups: [], topics: [], source: null, message: "" });
       return;
     }
 
@@ -124,8 +120,9 @@ export function TopicCenter() {
       setAISelection({
         loading: false,
         groups: [],
+        topics: [],
         source: "fallback",
-        message: "AI 筛选超时，已使用规则排序。",
+        message: "AI 选题超时，请稍后再试。",
       });
     }, 65000);
 
@@ -133,24 +130,59 @@ export function TopicCenter() {
 
     const loadAISelection = async () => {
       try {
+        const hotTopicsResponse = await fetch("/api/hot-topics?limit=240", { cache: "no-store" });
+        const hotTopicsPayload = await hotTopicsResponse.json().catch(() => null);
+        const hotTopicItems = Array.isArray(hotTopicsPayload?.items) ? (hotTopicsPayload.items as HotTopicItem[]) : [];
+
+        if (!hotTopicsResponse.ok || !hotTopicItems.length) {
+          throw new Error("暂无可用于 AI 选题的热点数据");
+        }
+
         const response = await fetch("/api/topic-recommendations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topics: aiSelectionCandidates, domain: activeDomain }),
+          body: JSON.stringify({ items: hotTopicItems }),
         });
         const payload = await response.json().catch(() => null);
         if (cancelled || timedOut) return;
 
         if (!response.ok || !Array.isArray(payload?.groups)) {
-          throw new Error(payload?.recommendation?.message || payload?.message || "AI 筛选暂不可用");
+          throw new Error(payload?.recommendation?.message || payload?.message || "AI 选题暂不可用");
         }
 
-        const groups = payload.groups as DomainTopicRecommendationGroup[];
+        const groups = (payload.groups as DomainTopicRecommendationGroup[]).filter((group) => group.source === "ai");
+        if (!groups.length) {
+          throw new Error(payload?.recommendation?.message || "AI 选题暂不可用，请检查模型配置。");
+        }
+
+        const hotTopicMap = new Map(hotTopicItems.map((item) => [item.id, item]));
+        const recommendedTopics: TopicSuggestion[] = [];
+        const normalizedGroups = groups.map((group) => ({
+          ...group,
+          items: group.items
+            .slice(0, 5)
+            .map((item) => {
+              const hotTopic = hotTopicMap.get(item.topicId);
+              if (!hotTopic) return null;
+              const topic = buildTopicSuggestionFromHotTopic({
+                ...hotTopic,
+                domain: group.domain,
+              });
+              recommendedTopics.push(topic);
+              return {
+                ...item,
+                topicId: topic.id,
+              };
+            })
+            .filter((item): item is TopicRecommendationItem => Boolean(item)),
+        }));
+
         setAISelection({
           loading: false,
-          groups,
-          source: groups.some((group) => group.source === "ai") ? "ai" : "fallback",
-          message: groups.find((group) => group.message)?.message ?? "",
+          groups: normalizedGroups,
+          topics: recommendedTopics,
+          source: normalizedGroups.some((group) => group.source === "ai") ? "ai" : "fallback",
+          message: normalizedGroups.find((group) => group.message)?.message ?? "",
         });
       } catch (error) {
         if (cancelled || timedOut) return;
@@ -158,8 +190,9 @@ export function TopicCenter() {
         setAISelection({
           loading: false,
           groups: [],
+          topics: [],
           source: "fallback",
-          message: error instanceof Error ? error.message : "AI 筛选暂不可用，已使用规则排序。",
+          message: error instanceof Error ? error.message : "AI 选题暂不可用。",
         });
       } finally {
         window.clearTimeout(timeoutId);
@@ -172,7 +205,7 @@ export function TopicCenter() {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [activeDomain, aiSelectionCandidates, aiSelectionRequestKey]);
+  }, [aiSelectionEnabled]);
 
   const aiRecommendationsByTopicId = useMemo(() => {
     const map = new Map<string, TopicRecommendationItem & { domain: ActiveArticleDomain; rank: number }>();
@@ -190,7 +223,8 @@ export function TopicCenter() {
 
   const filteredTopics = useMemo(
     () => {
-      const domainTopics = topics
+      const visibleTopics = aiSelectionEnabled ? aiSelection.topics : topics;
+      const domainTopics = visibleTopics
         .filter((topic) => resolveArticleDomain(topic.domain) === activeDomain)
         .filter((topic) => {
           const normalizedKeyword = keyword.trim();
@@ -203,13 +237,15 @@ export function TopicCenter() {
             topic.angles.some((angle) => angle.includes(normalizedKeyword))
           );
         });
-      const aiRankedTopics = domainTopics.filter((topic) => aiRecommendationsByTopicId.has(topic.id));
+      const aiRankedTopics = aiSelectionEnabled
+        ? domainTopics.filter((topic) => aiRecommendationsByTopicId.has(topic.id))
+        : [];
       const list = aiRankedTopics.length ? aiRankedTopics : domainTopics;
 
       return list.sort((left, right) => {
           const leftRecommendation = aiRecommendationsByTopicId.get(left.id);
           const rightRecommendation = aiRecommendationsByTopicId.get(right.id);
-          if (leftRecommendation || rightRecommendation) {
+          if (aiSelectionEnabled && (leftRecommendation || rightRecommendation)) {
             return (
               (rightRecommendation?.score ?? 0) - (leftRecommendation?.score ?? 0) ||
               (leftRecommendation?.rank ?? Number.MAX_SAFE_INTEGER) - (rightRecommendation?.rank ?? Number.MAX_SAFE_INTEGER)
@@ -228,18 +264,53 @@ export function TopicCenter() {
           );
         });
     },
-    [activeDomain, aiRecommendationsByTopicId, draftsByTopicId, keyword, topics],
+    [activeDomain, aiRecommendationsByTopicId, aiSelection.topics, aiSelectionEnabled, draftsByTopicId, keyword, topics],
   );
 
-  const openWriting = (topicId: string, autoGenerate = false) => {
-    selectTopic(topicId);
-    router.push(`/writing?topicId=${topicId}${autoGenerate ? "&autogen=full" : ""}`);
+  const openWriting = (topic: TopicSuggestion, autoGenerate = false) => {
+    const nextTopic = aiSelectionEnabled ? upsertTopic(topic) : topic;
+    selectTopic(nextTopic.id);
+    router.push(`/writing?topicId=${nextTopic.id}${autoGenerate ? "&autogen=full" : ""}`);
   };
 
   const openManualWriting = () => {
     const draft = createManualDraft(activeDomain);
     router.push(`/writing?draftId=${draft.id}`);
   };
+
+  const handleDeleteTopic = (topicId: string) => {
+    deleteTopic(topicId);
+    setNotice("选题已删除");
+    window.setTimeout(() => setNotice(""), 1500);
+
+    if (highlightedTopicId === topicId) {
+      router.replace("/topic-center");
+    }
+  };
+
+  const emptyState = aiSelectionEnabled
+    ? aiSelection.loading
+      ? {
+          icon: "loading" as const,
+          title: "AI 选题中",
+          description: "正在分析热点并为各领域筛选推荐选题，请稍候。",
+        }
+      : aiSelection.message
+        ? {
+            icon: "notice" as const,
+            title: "AI 选题暂不可用",
+            description: aiSelection.message,
+          }
+        : {
+            icon: "notice" as const,
+            title: "当前领域暂无 AI 推荐选题",
+            description: "去热点中心抓取热点，或稍后重新开启 AI 选题。",
+          }
+    : {
+        icon: "notice" as const,
+        title: "当前领域暂无可写选题",
+        description: "这里默认只展示你手动加入的选题。去热点中心加入热点，或直接手动开始写。",
+      };
 
   return (
     <div className="mx-auto flex max-w-[1200px] flex-col gap-5">
@@ -273,17 +344,32 @@ export function TopicCenter() {
           })}
           <button
             type="button"
-            onClick={openManualWriting}
-            className="lens-btn-primary ml-auto inline-flex items-center gap-1.5 px-3.5 py-2 text-[12px]"
+            onClick={() => setAISelectionEnabled((enabled) => !enabled)}
+            className={`ml-auto inline-flex h-11 items-center gap-3 rounded-full border px-4 text-[13px] shadow-sm transition-all ${
+              aiSelectionEnabled
+                ? "border-[#f4b28f] bg-[#fff0e6] text-[#d65f2b] shadow-[0_10px_24px_rgba(214,95,43,0.12)] hover:bg-[#ffe4d1]"
+                : "border-[#eadfd4] bg-white text-[#6f665d] hover:bg-[#fff7ef]"
+            }`}
             style={{ fontWeight: 850 }}
+            aria-pressed={aiSelectionEnabled}
+            title="开启后会用 AI 从当前领域选题中筛出更值得写的内容"
           >
-            <Plus className="h-3.5 w-3.5" />
-            手动写文章
+            <span className={`flex h-6 w-11 items-center rounded-full p-1 transition-colors ${
+              aiSelectionEnabled ? "bg-[#d65f2b]" : "bg-[#cfc3b8]"
+            }`}>
+              <span className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                aiSelectionEnabled ? "translate-x-5" : "translate-x-0"
+              }`} />
+            </span>
+            {aiSelection.loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4" />}
+            {aiSelectionEnabled
+              ? aiSelection.loading
+                ? "AI 选题中"
+                : aiSelection.source === "ai"
+                  ? "AI 选题已开"
+                  : "AI 选题已开"
+              : "AI 选题关闭"}
           </button>
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-[#fff0e6] px-3 py-1.5 text-[11px] text-[#d65f2b]" style={{ fontWeight: 750 }}>
-            {aiSelection.loading ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-            {aiSelection.loading ? "AI 筛选中" : aiSelection.source === "ai" ? "AI 已筛选" : "规则兜底"}
-          </div>
           <div className="lens-input flex min-w-[260px] items-center gap-2 px-3 py-2">
             <Search className="h-4 w-4 text-[#9a9086]" />
             <input
@@ -294,7 +380,10 @@ export function TopicCenter() {
             />
           </div>
         </div>
-        {aiSelection.message ? (
+        {notice ? (
+          <div className="mt-2 text-[11px] text-green-600">{notice}</div>
+        ) : null}
+        {aiSelectionEnabled && aiSelection.message ? (
           <div className="mt-2 text-[11px] text-[#8c8178]">{aiSelection.message}</div>
         ) : null}
       </div>
@@ -386,7 +475,7 @@ export function TopicCenter() {
                         router.push(`/writing?draftId=${draft.id}`);
                         return;
                       }
-                      openWriting(topic.id, false);
+                      openWriting(topic, false);
                     }}
                     className="group inline-flex h-10 w-[132px] items-center justify-center gap-2 rounded-full border border-[#d65f2b]/20 bg-[#d65f2b] px-4 text-[12px] text-white shadow-[0_10px_22px_rgba(214,95,43,0.16)] transition-all hover:-translate-y-0.5 hover:bg-[#c94f1f] hover:shadow-[0_14px_26px_rgba(214,95,43,0.2)]"
                     style={{ fontWeight: 850 }}
@@ -394,6 +483,18 @@ export function TopicCenter() {
                     {draft ? <Edit3 className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" /> : <PenLine className="h-3.5 w-3.5 transition-transform group-hover:rotate-[-8deg]" />}
                     {draft ? (writingTask ? "查看生成" : "继续编辑") : "开始写作"}
                   </button>
+                  {!aiSelectionEnabled ? (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTopic(topic.id)}
+                      className="inline-flex h-8 w-[132px] items-center justify-center gap-1.5 rounded-full border border-[#eadfd4] bg-white px-3 text-[12px] text-[#8c8178] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                      style={{ fontWeight: 750 }}
+                      title="删除这个选题"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除选题
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </article>
@@ -401,10 +502,14 @@ export function TopicCenter() {
         }) : (
           <div className="rounded-[22px] border border-dashed border-[#eadfd4] bg-white/86 px-6 py-14 text-center">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[#fff0e6]">
-              <CheckCircle2 className="h-5 w-5 text-[#d65f2b]" />
+              {emptyState.icon === "loading" ? (
+                <LoaderCircle className="h-5 w-5 animate-spin text-[#d65f2b]" />
+              ) : (
+                <CheckCircle2 className="h-5 w-5 text-[#d65f2b]" />
+              )}
             </div>
-            <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>当前领域暂无可写选题</div>
-            <div className="mt-1 text-[12px] text-[#8c8178]">去热点中心选择热点，或直接手动开始写。</div>
+            <div className="text-[14px] text-[#181715]" style={{ fontWeight: 750 }}>{emptyState.title}</div>
+            <div className="mt-1 text-[12px] text-[#8c8178]">{emptyState.description}</div>
             <div className="mt-4 flex justify-center gap-2">
               <button
                 type="button"

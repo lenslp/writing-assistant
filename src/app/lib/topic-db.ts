@@ -249,6 +249,25 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
   return mapTopicRecord(item);
 }
 
+export async function deleteTopicById(topicId: string) {
+  if (shouldUseSupabaseAdmin()) {
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("topics")
+      .delete()
+      .eq("id", topicId);
+
+    if (error) throw error;
+    return;
+  }
+
+  await prisma.topic.deleteMany({
+    where: {
+      id: topicId,
+    },
+  });
+}
+
 function rebuildTopicWithCurrentRules(topic: TopicSuggestion): TopicSuggestion {
   const domain = detectArticleDomain(topic.title, topic.tags, topic.source, topic.reason);
 

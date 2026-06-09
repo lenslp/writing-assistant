@@ -19,7 +19,6 @@ import {
   createSummary,
   defaultDrafts,
   defaultSettings,
-  recommendedTopics,
   type AppSettings,
   type Draft,
   type DraftStatus,
@@ -83,9 +82,10 @@ type AppStoreContextValue = {
   topics: TopicSuggestion[];
   selectedTopic: TopicSuggestion | null;
   writingTasks: Record<string, WritingTask>;
-  saveSettings: (settings: AppSettings) => void;
+  saveSettings: (settings: AppSettings) => Promise<void>;
   selectTopic: (topicId: string | null) => void;
   upsertTopic: (topic: TopicSuggestion) => TopicSuggestion;
+  deleteTopic: (topicId: string) => void;
   createManualDraft: (domain?: Draft["domain"], initialDraft?: Partial<Draft>) => Draft;
   generateDraftFromTopic: (topicId: string, scope?: GenerateScope) => Draft;
   startWritingTask: (task: Omit<WritingTask, "id" | "startedAt">) => WritingTask;
@@ -316,14 +316,32 @@ async function persistTopicSnapshot(topic: TopicSuggestion) {
   });
 }
 
+async function deleteTopicSnapshot(topicId: string) {
+  const response = await fetch(`/api/topics/${encodeURIComponent(topicId)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "删除选题失败");
+  }
+}
+
 async function persistAppConfigPatch(patch: { settings?: AppSettings; selectedTopicId?: string | null }) {
-  await fetch("/api/app-config", {
+  const response = await fetch("/api/app-config", {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ patch }),
   });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? "保存设置失败");
+  }
+
+  return response.json().catch(() => null);
 }
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
@@ -471,20 +489,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     trySetStorageItem(storage, TOPIC_KEY, JSON.stringify(selectedTopicId));
   }, [selectedTopicId]);
 
-  const allTopics = useMemo(() => dedupeTopics([...customTopics, ...recommendedTopics]), [customTopics]);
+  const allTopics = useMemo(() => dedupeTopics(customTopics), [customTopics]);
 
   const selectedTopic = useMemo(
     () => allTopics.find((topic) => topic.id === selectedTopicId) ?? null,
     [allTopics, selectedTopicId],
   );
 
-  const saveSettings = useCallback((nextSettings: AppSettings) => {
+  const saveSettings = useCallback(async (nextSettings: AppSettings) => {
     const normalizedSettings = normalizeClientSettings(nextSettings);
+    await persistAppConfigPatch({ settings: normalizedSettings });
     setSettings(normalizedSettings);
-
-    void persistAppConfigPatch({ settings: normalizedSettings }).catch((error) => {
-      console.error("Failed to save settings:", error);
-    });
   }, []);
 
   const selectTopic = useCallback((topicId: string | null) => {
@@ -527,6 +542,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
     return nextTopic;
   }, [customTopics]);
+
+  const deleteTopic = useCallback((topicId: string) => {
+    setCustomTopics((currentTopics) => currentTopics.filter((topic) => topic.id !== topicId));
+    setSelectedTopicId((currentTopicId) => (currentTopicId === topicId ? null : currentTopicId));
+
+    void Promise.all([
+      deleteTopicSnapshot(topicId),
+      selectedTopicId === topicId ? persistAppConfigPatch({ selectedTopicId: null }) : Promise.resolve(),
+    ]).catch((error) => {
+      console.error("Failed to delete topic:", error);
+    });
+  }, [selectedTopicId]);
 
   const createManualDraft = useCallback((domain: Draft["domain"] = settings.contentAreas[0], initialDraft: Partial<Draft> = {}) => {
     const normalizedDomain = resolveArticleDomain(domain);
@@ -772,6 +799,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       saveSettings,
       selectTopic,
       upsertTopic,
+      deleteTopic,
       createManualDraft,
       generateDraftFromTopic,
       startWritingTask,
@@ -800,6 +828,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       settings,
       startWritingTask,
       upsertTopic,
+      deleteTopic,
       updateDraft,
       updateDraftStatus,
       writingTasks,

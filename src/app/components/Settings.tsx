@@ -231,6 +231,7 @@ export function Settings() {
   const [aiImageProviderLoading, setAIImageProviderLoading] = useState(false);
   const [isAIImageProviderDialogOpen, setIsAIImageProviderDialogOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState(settingsSections[0]?.id ?? "");
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const sectionNavigationLockRef = useRef<number | null>(null);
   const isProgrammaticScrollRef = useRef(false);
 
@@ -327,17 +328,35 @@ export function Settings() {
     }
   }, []);
 
-  const handleSave = () => {
-    saveSettings(form);
-    setNotice("已保存到云端");
-    window.setTimeout(() => setNotice(""), 2000);
+  const handleSave = async () => {
+    setSettingsSaving(true);
+
+    try {
+      await saveSettings(form);
+      setNotice("设置已保存");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "保存设置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
-  const handleRestoreDefaults = () => {
-    setForm(defaultSettings);
-    saveSettings(defaultSettings);
-    setNotice("已恢复并保存默认设置");
-    window.setTimeout(() => setNotice(""), 2000);
+  const handleRestoreDefaults = async () => {
+    setSettingsSaving(true);
+
+    try {
+      await saveSettings(defaultSettings);
+      setForm(defaultSettings);
+      setNotice("已恢复默认设置");
+      window.setTimeout(() => setNotice(""), 2000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "恢复默认设置失败");
+      window.setTimeout(() => setNotice(""), 3000);
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   async function loadWechatAccounts() {
@@ -931,25 +950,33 @@ export function Settings() {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={handleRestoreDefaults}
-                      className="lens-btn-secondary flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px]"
+                      onClick={() => void handleRestoreDefaults()}
+                      disabled={settingsSaving}
+                      className="lens-btn-secondary flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                       style={{ fontWeight: 500 }}
                     >
                       <RotateCcw className="w-4 h-4" /> 恢复默认
                     </button>
                     <button
                       type="button"
-                      onClick={handleSave}
-                      className="lens-btn-primary flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px]"
+                      onClick={() => void handleSave()}
+                      disabled={settingsSaving}
+                      className="lens-btn-primary flex items-center justify-center gap-1.5 px-4 py-2.5 text-[13px] disabled:cursor-not-allowed disabled:opacity-70"
                       style={{ fontWeight: 600 }}
                     >
-                      <Save className="w-4 h-4" /> 保存设置
+                      <Save className="w-4 h-4" /> {settingsSaving ? "保存中" : "保存设置"}
                     </button>
                   </div>
                 </div>
               </div>
             </div>
           </div>
+
+          {notice ? (
+            <div className="rounded-2xl border border-[#f0dfd0] bg-[#fff7ef] px-4 py-3 text-[13px] text-[#d65f2b] shadow-[0_10px_28px_rgba(85,57,34,0.05)]" style={{ fontWeight: 600 }}>
+              {notice}
+            </div>
+          ) : null}
 
           <div className="xl:hidden">
             <div className="overflow-x-auto rounded-2xl border border-[#eadfd4] bg-white px-3 py-3 shadow-sm">
@@ -1673,7 +1700,7 @@ export function Settings() {
       </Section>
 
         <div className="flex justify-end text-[12px] text-[#8c8178]">
-          {isDirty ? "你有未保存的修改" : "当前设置已同步到云端"}
+          {settingsSaving ? "正在保存设置..." : isDirty ? "你有未保存的修改" : "当前设置已同步"}
         </div>
         </div>
       </div>

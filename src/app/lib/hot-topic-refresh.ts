@@ -1,14 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { buildTopicSuggestionFromHotTopic } from "./article-analysis";
-import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
 import { hasPersistenceBackend, shouldUseSupabaseAdmin } from "./persistence";
 import { readHotTopicRefreshMeta, readHotTopics } from "./hot-topic-db";
 import { scrapeHotTopics } from "./hot-topic-sources";
 import type { HotTopicItem } from "./hot-topics";
 import { prisma } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
-import { upsertTopicRecord } from "./topic-db";
 
 export const HOT_TOPIC_CACHE_TTL_MS = 30 * 60 * 1000;
 export const HOT_TOPICS_CACHE_TAG = "hot-topics";
@@ -17,13 +14,6 @@ const CORE_PLATFORM_SOURCES = ["微博", "抖音", "知乎", "今日头条", "�
 const HOT_TOPICS_RETENTION_DAYS = 7;
 const HOT_TOPIC_FETCH_JOB_KEEP_COUNT = 100;
 const HOT_TOPIC_WRITE_BATCH_SIZE = 60;
-const TOPIC_WRITE_CONCURRENCY = 2;
-
-async function runInBatches<T>(items: T[], batchSize: number, handler: (item: T) => Promise<unknown>) {
-  for (let index = 0; index < items.length; index += batchSize) {
-    await Promise.all(items.slice(index, index + batchSize).map(handler));
-  }
-}
 
 function stripHtmlTags(input: string) {
   return input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -239,21 +229,6 @@ export async function refreshHotTopicsAndPersist() {
   const batchFetchedAt = new Date(startedAt);
   const { items, failedSources, restrictedCount } = await scrapeHotTopics();
   const persistedItems = dedupeHotTopicsForPersistence(items);
-  const generatedTopics = await Promise.all(
-    items.slice(0, 24).map(async (item) => {
-      const resolved = await resolveDomainWithAIAssist({
-        title: item.title,
-        tags: item.tags,
-        source: item.source,
-        summary: item.summary ?? "",
-      });
-
-      return buildTopicSuggestionFromHotTopic({
-        ...item,
-        domain: resolved.domain,
-      });
-    }),
-  );
 
   if (!hasPersistenceBackend()) {
     return {
@@ -262,7 +237,7 @@ export async function refreshHotTopicsAndPersist() {
       items,
       failedSources,
       restrictedCount,
-      generatedTopicCount: generatedTopics.length,
+      generatedTopicCount: 0,
       insertedCount: 0,
       message: "缺少 DATABASE_URL，已抓到实时数据但暂未入库。",
     };
@@ -322,16 +297,14 @@ export async function refreshHotTopicsAndPersist() {
 
       if (hotTopicError) throw hotTopicError;
 
-      await Promise.all(generatedTopics.map((topic) => upsertTopicRecord(topic)));
-
       const { error: finishJobError } = await supabase
         .from("fetch_jobs")
         .update({
           status: "success",
           source: "all",
           inserted_count: persistedItems.length,
-          message: "热点抓取、入库并生成选题完成",
-          payload: { failedSources, generatedTopicCount: generatedTopics.length, restrictedCount },
+          message: "热点抓取并入库完成",
+          payload: { failedSources, generatedTopicCount: 0, restrictedCount },
           finished_at: new Date().toISOString(),
         })
         .eq("id", jobId);
@@ -348,7 +321,7 @@ export async function refreshHotTopicsAndPersist() {
         items,
         failedSources,
         restrictedCount,
-        generatedTopicCount: generatedTopics.length,
+        generatedTopicCount: 0,
         insertedCount: persistedItems.length,
         message: "",
       };
@@ -399,16 +372,14 @@ export async function refreshHotTopicsAndPersist() {
       });
     }
 
-    await runInBatches(generatedTopics, TOPIC_WRITE_CONCURRENCY, upsertTopicRecord);
-
     await prisma.fetchJob.update({
       where: { id: jobId },
       data: {
         status: "success",
         source: "all",
         insertedCount: persistedItems.length,
-        message: "热点抓取、入库并生成选题完成",
-        payload: { failedSources, generatedTopicCount: generatedTopics.length, restrictedCount },
+        message: "热点抓取并入库完成",
+        payload: { failedSources, generatedTopicCount: 0, restrictedCount },
         finishedAt: new Date(),
       },
     });
@@ -423,7 +394,7 @@ export async function refreshHotTopicsAndPersist() {
       items,
       failedSources,
       restrictedCount,
-      generatedTopicCount: generatedTopics.length,
+      generatedTopicCount: 0,
       insertedCount: persistedItems.length,
       message: "",
     };
@@ -485,7 +456,7 @@ export async function refreshHotTopicsAndPersist() {
       items,
       failedSources,
       restrictedCount,
-      generatedTopicCount: generatedTopics.length,
+      generatedTopicCount: 0,
       insertedCount: 0,
       message: `入库失败：${message}`,
     };
