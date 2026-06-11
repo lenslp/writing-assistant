@@ -1582,9 +1582,9 @@ export function WritingPage() {
     if (isWechatChannel) {
       return (
         <div className="mx-auto max-w-[640px]">
-          <header className="mb-5">
+          <header className="mb-7">
             <h1
-              className="text-[26px] leading-[1.32] tracking-[-0.02em]"
+              className="text-[25px] leading-[1.42] tracking-[-0.01em]"
               style={{ color: textPrimary, fontWeight: 800 }}
             >
               {wechatPreviewTitle || "未命名文章"}
@@ -2245,7 +2245,7 @@ export function WritingPage() {
                   }}
                 >
                   <div
-                    className={isWechatChannel ? "bg-card px-4 py-5" : "px-6 py-6"}
+                    className={isWechatChannel ? (previewMode === "mobile" ? "bg-white px-5 py-7" : "bg-white px-10 py-9") : "px-6 py-6"}
                     style={
                       isWechatChannel
                         ? { background: surfaceBackground }
