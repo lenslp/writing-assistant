@@ -96,8 +96,8 @@ export function collectAutoImageKeyPoints(body: string) {
     .filter((line) => !line.startsWith("[图片占位"))
     .filter((line) => !line.startsWith(">"))
     .map((line) => line.replace(/^##\s+/, "").replace(/^【金句】/, "").replace(/^【重点】/, "").trim())
-    .filter((line) => line.length >= 8)
-    .slice(0, 4);
+    .filter((line) => line.length >= 6)
+    .slice(0, 6);
 }
 
 function extractVisualKeywords(texts: string[]) {
@@ -120,7 +120,7 @@ function extractVisualKeywords(texts: string[]) {
       keywords.push(normalized);
     });
 
-  return keywords.slice(0, 5);
+  return keywords.slice(0, 8);
 }
 
 function shouldAvoidAiPortrait(input: {
@@ -265,29 +265,47 @@ export function buildAutoImageSearchQuery(input: {
   body: string;
   domain: ArticleDomain;
 }) {
-  const latinTokens = Array.from(
+  const titleLatinTokens = Array.from(
     new Set(
-      `${input.title} ${input.summary} ${input.body}`
+      `${input.title} ${input.summary}`
         .match(/[A-Za-z0-9][A-Za-z0-9+.-]{1,}/g)
         ?.map((item) => item.trim())
         .filter((item) => item.length >= 2 && item.length <= 20)
-        .slice(0, 2) ?? [],
+        .slice(0, 5) ?? [],
     ),
   );
 
-  const hanTokens = Array.from(
+  const bodyLatinTokens = Array.from(
     new Set(
-      extractVisualKeywords([
-        input.title,
-        input.summary,
-        ...collectAutoImageKeyPoints(input.body),
-      ])
-        .filter((item) => item.length >= 2 && item.length <= 4)
+      input.body
+        .match(/[A-Za-z0-9][A-Za-z0-9+.-]{1,}/g)
+        ?.map((item) => item.trim())
+        .filter((item) => item.length >= 2 && item.length <= 20)
+        .slice(0, 3) ?? [],
+    ),
+  );
+
+  const latinTokens = [...titleLatinTokens, ...bodyLatinTokens].slice(0, 5);
+
+  const titleHanTokens = Array.from(
+    new Set(
+      extractVisualKeywords([input.title, input.summary])
+        .filter((item) => item.length >= 2 && item.length <= 6)
+        .slice(0, 5),
+    ),
+  );
+
+  const bodyHanTokens = Array.from(
+    new Set(
+      extractVisualKeywords([...collectAutoImageKeyPoints(input.body)])
+        .filter((item) => item.length >= 2 && item.length <= 6)
         .slice(0, 3),
     ),
   );
 
-  return [...hanTokens, ...latinTokens, buildSearchSceneHint(input), "editorial real photo no watermark"]
+  const hanTokens = [...titleHanTokens, ...bodyHanTokens].slice(0, 6);
+
+  return [...hanTokens, ...latinTokens, "real photo no watermark"]
     .filter(Boolean)
     .join(" ")
     .trim();
@@ -298,7 +316,8 @@ export function shouldPreferRealImage(domain: ArticleDomain) {
 }
 
 export function getAutoImageInsertLimit(domain: ArticleDomain) {
-  return domain === "旅游" ? 3 : 2;
+  // 增加配图数量：旅游领域最多 5 张，其他领域最多 4 张
+  return domain === "旅游" ? 5 : 4;
 }
 
 export function countArticleImages(body: string) {

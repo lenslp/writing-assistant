@@ -41,6 +41,10 @@ const SEARCH_HEADERS = {
   "Cache-Control": "no-cache",
 } as const;
 
+// 增加搜索结果数量限制
+const MAX_SEARCH_RESULTS = 12;
+const MAX_CANDIDATES_TO_CHECK = 24;
+
 const BLOCKED_HOST_PATTERNS = [
   /shetu66\.com/i,
   /58pic\.com/i,
@@ -776,7 +780,7 @@ async function searchGithubTrendingRepoImages(input: RealImageSearchInput): Prom
 export async function searchRealArticleImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
   const githubImages = await searchGithubTrendingRepoImages(input);
   if (githubImages.length) {
-    return githubImages.slice(0, Math.max(1, Math.min(input.count ?? 6, 12)));
+    return githubImages.slice(0, Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS)));
   }
 
   const query = buildSearchQuery(input);
@@ -799,10 +803,13 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
   const candidates = (strictCandidates.length ? strictCandidates : baseCandidates
     .filter((entry) => scoreEntry(entry, input) >= getRelaxedScoreThreshold(input))
     .sort((left, right) => scoreEntry(right, input) - scoreEntry(left, input)))
-    .slice(0, 18);
+    .slice(0, MAX_CANDIDATES_TO_CHECK);
 
   const results: RealImageSearchResult[] = [];
+  const targetCount = Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS));
+  
   for (const candidate of candidates) {
+    if (results.length >= targetCount) break;
     if (!(await isReachableImage(candidate.url))) continue;
     results.push({
       url: candidate.url,
@@ -812,9 +819,6 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
       pageUrl: candidate.pageUrl,
       thumbnailUrl: candidate.thumbnailUrl,
     });
-    if (results.length >= Math.max(1, Math.min(input.count ?? 6, 12))) {
-      break;
-    }
   }
 
   return results;

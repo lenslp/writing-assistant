@@ -60,14 +60,29 @@ const BODY_WORD_COUNT_TOLERANCE_MAX = 80;
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((?:data:[^)]+|[^)]+)\)/g;
 const IMAGE_PLACEHOLDER_PATTERN = /\[图片占位[^\]]*]/g;
 const AI_TONE_PREFIX_PATTERNS = [
+  // 综合总结类
   /^(总的来说|总而言之|综上所述|不难发现|值得一提的是|由此可见|某种程度上|从某种意义上说|客观来看|事实上|换句话说|简单来说|需要明确的是|不可否认)\s*[，,：:]?/,
+  // 过渡词
   /^(首先|其次|再次|最后|另外|此外|同时)\s*[，,、：:]?/,
+  // 强调类
   /^(更重要的是|更值得注意的是|真正值得关注的是|真正需要警惕的是|需要提醒的是|本质上看|如果把话说得更直接一点|如果说得更直接一点|换个角度看)\s*[，,：:]?/,
+  // humanizer-zh: 夸大象征意义
+  /^(作为|充当|标志着|见证了|体现了|象征着|证明了|凸显了|彰显了|反映了更广泛的)\s*[，,：:]?/,
+  // humanizer-zh: 过度强调重要性
+  /^(极其重要的|至关重要的|核心的|关键性的作用|不可磨灭的印记|深深植根于)\s*[，,：:]?/,
+  // humanizer-zh: 提纲式开头
+  /^(尽管其|尽管存在这些挑战|面临若干挑战|未来展望|挑战与机遇)\s*[，,：:]?/,
+  // humanizer-zh: 模糊归因
+  /^(行业报告显示|观察者指出|专家认为|一些批评者认为|多个来源|据媒体报道)\s*[，,：:]?/,
 ] as const;
 const AI_TONE_INLINE_REPLACEMENTS = [
+  // 时代类悬浮词
   { pattern: /在信息爆炸的时代/g, replacement: "现在" },
   { pattern: /在这个信息过载的时代/g, replacement: "现在" },
   { pattern: /随着时代的发展/g, replacement: "这几年" },
+  { pattern: /在当今这个.*时代/g, replacement: "现在" },
+  { pattern: /在这个.*的世界里/g, replacement: "" },
+  // humanizer-zh: 删除填充短语
   { pattern: /值得注意的是/g, replacement: "" },
   { pattern: /需要注意的是/g, replacement: "" },
   { pattern: /需要明确的是/g, replacement: "" },
@@ -82,6 +97,41 @@ const AI_TONE_INLINE_REPLACEMENTS = [
   { pattern: /更值得注意的是/g, replacement: "更关键的是" },
   { pattern: /归根结底/g, replacement: "说到底" },
   { pattern: /本质上看/g, replacement: "说到底" },
+  // humanizer-zh: AI 高频词汇
+  { pattern: /此外/g, replacement: "" },
+  { pattern: /然而/g, replacement: "" },
+  { pattern: /与此同时/g, replacement: "" },
+  { pattern: /不可否认/g, replacement: "" },
+  { pattern: /毫无疑问/g, replacement: "" },
+  { pattern: /显而易见/g, replacement: "" },
+  { pattern: /至关重要/g, replacement: "重要" },
+  { pattern: /不可或缺/g, replacement: "需要" },
+  { pattern: /充满活力/g, replacement: "活跃" },
+  { pattern: /丰富多彩/g, replacement: "多样" },
+  { pattern: /深刻影响/g, replacement: "影响" },
+  { pattern: /广泛应用/g, replacement: "使用" },
+  { pattern: /持续发展/g, replacement: "发展" },
+  { pattern: /不断创新/g, replacement: "改进" },
+  { pattern: /核心竞争力/g, replacement: "优势" },
+  { pattern: /战略布局/g, replacement: "计划" },
+  { pattern: /生态体系/g, replacement: "系统" },
+  { pattern: /赋能/g, replacement: "帮助" },
+  { pattern: /底层逻辑/g, replacement: "" },
+  { pattern: /方法论/g, replacement: "" },
+  // humanizer-zh: 系动词回避（用复杂结构替代简单的"是"）
+  { pattern: /作为.*的象征/g, replacement: "是" },
+  { pattern: /代表着/g, replacement: "是" },
+  { pattern: /标志着/g, replacement: "是" },
+  { pattern: /充当着/g, replacement: "是" },
+  // humanizer-zh: 过度限定
+  { pattern: /可以潜在地可能/g, replacement: "可能" },
+  { pattern: /可能会对.*产生一些影响/g, replacement: "会影响" },
+  { pattern: /在某种程度上/g, replacement: "" },
+  // 刻意模仿人类：去掉刻意铺垫
+  { pattern: /一个普通的(周日|周末|下午|早晨|夜晚|工作日)/g, replacement: "那天" },
+  // 刻意模仿人类：去掉四字感官堆砌
+  { pattern: /旋律流畅，制作精致/g, replacement: "挺好听" },
+  { pattern: /制作精致，旋律流畅/g, replacement: "挺好听" },
 ] as const;
 const AI_TITLE_PREFIX_PATTERNS = [
   /^(一文看懂|带你看懂|快速看懂|深度拆解|深度解读|完整解读|全面解析|全景观察|讲透|说透)\s*[：:｜|]\s*/i,
@@ -125,6 +175,20 @@ const AIISH_SENTENCE_PATTERNS = [
   /^(真香|绝绝子|yyds)/,
   // skill 结构性 AI 味：每段开头都是过渡句
   /^(因此|所以|由此可见|毫无疑问|可以说|不难发现|事实上|实际上)/,
+  // humanizer-zh: 协作交流痕迹
+  /^(希望这对您有帮助|当然|一定|您说得完全正确)/,
+  // humanizer-zh: 知识截止日期免责声明
+  /^(截至.*[日期]|根据我最后的训练更新|虽然具体细节有限|基于可用信息)/,
+  // humanizer-zh: 谄媚语气
+  /^(好问题|这是一个很好的观点)/,
+  // humanizer-zh: 通用积极结论
+  /^(公司的未来看起来光明|激动人心的时代即将到来|这代表了.*重要一步)/,
+  // 刻意模仿人类：用「普通」营造日常感
+  /^(一个普通的(周|星期|下午|早晨|周末|夜晚|工作日))/,
+  // 刻意模仿人类：戏剧性「直到」转折
+  /^(直到.*提醒|直到.*告诉|直到.*说)/,
+  // 刻意模仿人类：过度利落的结论
+  /^(现在.*告诉我|现在.*可以.*验证)/,
 ] as const;
 
 /**
@@ -162,6 +226,58 @@ const STRUCTURAL_AI_PATTERNS = [
   /不仅(是|仅)…更是…/,
   // 完美正反对比：一方面…另一方面…
   /一方面…另一方面…/,
+  // humanizer-zh: 否定式排比
+  /这不仅仅(是|关乎)/,
+  /不仅仅是.*而是/,
+  // humanizer-zh: 三段式法则过度使用
+  /创新.*灵感.*洞察/,
+  /增长.*发展.*繁荣/,
+  /机遇.*挑战.*未来/,
+  // humanizer-zh: 夸大的象征意义
+  /作为.*的证明/,
+  /标志着.*的.*时刻/,
+  /见证了.*的.*历程/,
+  /反映了.*的.*趋势/,
+  /象征着.*的.*精神/,
+  // humanizer-zh: 宣传性语言
+  /令人叹为观止/,
+  /必游之地/,
+  /迷人的.*美景/,
+  /充满活力的.*文化/,
+  /开创性的.*创新/,
+  // 刻意模仿人类：四字感官填充词
+  /旋律流畅.*制作精致|制作精致.*旋律流畅/,
+  /画面精美.*剧情动人|剧情动人.*画面精美/,
+  // 刻意模仿人类：过于工整的起承转合叙事
+  /(一个普通的).{2,6}(，).{4,15}(。).{2,8}(，).{4,15}(。)/,
+] as const;
+
+/**
+ * humanizer-zh: 宣传性语言检测
+ * 检测夸张的营销式表达
+ */
+const PROMOTIONAL_PATTERNS = [
+  /拥有丰富的.*文化/,
+  /拥有深厚的.*底蕴/,
+  /展现.*独特魅力/,
+  /体验.*非凡/,
+  /领略.*风采/,
+  /感受.*震撼/,
+] as const;
+
+/**
+ * humanizer-zh: 模糊归因检测
+ * 检测没有具体来源的引用
+ */
+const VAGUE_ATTRIBUTION_PATTERNS = [
+  /专家认为/,
+  /研究表明/,
+  /数据显示/,
+  /观察者指出/,
+  /业内人士表示/,
+  /有分析认为/,
+  /据悉/,
+  /据了解/,
 ] as const;
 
 class QualityRetryError extends Error {
@@ -188,10 +304,12 @@ function buildQualityRewriteNotes(issue?: string) {
     issue ? `上一次质检没有通过：${issue}` : "本次写作从第一稿就要避开常见 AI 味，不要等校验后再改。",
     issue ? "这次直接重写，不要解释。目标是自然、具体、像人写过，不要像 AI 成稿。" : "直接生成自然成稿，像编辑亲手改过，不要像模型一次性铺出来。",
     "重点避开：三词并列、整齐对仗、首先/其次/最后、总分总报告腔、空泛拔高、模糊归因、金句式结尾。",
-    "不要写“不仅……更是……”“一方面……另一方面……”“既……又……还……”这类硬凑结构。",
+    '不要写"不仅……更是……""一方面……另一方面……""既……又……还……"这类硬凑结构。',
     "少用：此外、值得注意、核心、关键、赋能、底层逻辑、方法论、格局、启示、趋势、深度。",
     "少用抽象大词，多写具体对象、真实处境、明确代价和读者能感到的后果。",
     "段落长度要有变化。两项可以，不要硬凑三项。句子不要每段都用同一种转折。",
+    "禁止刻意模仿人类：不要用「一个普通的X下午」开头，不要写四字感官堆砌（旋律流畅、制作精致），不要用「直到X提醒」制造戏剧转折，不要用新闻导语式利落收尾。",
+    "叙事结构不要太完美。允许跳跃、不完整、随意感。真实的人写东西不会起承转合这么干净。",
   ].filter(Boolean);
 }
 
@@ -269,26 +387,50 @@ const SPECIFICITY_PATTERNS = [
 type RuleScope = "universal" | "planning" | "drafting";
 
 const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
-  // ── universal: 6 条通用铁律 ──────────────────────────────
+  // ── universal: 通用铁律（humanizer-zh 增强版） ──────────────────────────────
   { scope: "universal", text: "把自己当成一个长期写公众号的人，不是内容生产机器人。写法要像编辑来回改过的成稿：有主次、有轻重、有判断。" },
   { scope: "universal", text: "少写抽象空词（赋能、价值、趋势、认知升级、底层逻辑、方法论、启示），能写具体处境就写具体处境。" },
-  { scope: "universal", text: "禁止使用 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见、由此可见。直接说事，不要铺垫。" },
+  { scope: "universal", text: "禁止使用 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见、此外、然而。直接说事，不要铺垫。" },
   { scope: "universal", text: "不要编造具体数据、人物发言、采访、机构结论和百分比；事实不足时用因果判断和经验推理补足。" },
   { scope: "universal", text: "深度不是堆术语。复杂概念先翻译成人话，再解释它为什么重要。默认读者不是行业从业者。" },
   { scope: "universal", text: "语气像见过很多类似事情的朋友在帮读者把复杂问题讲明白，不要像评论员发言或咨询报告。" },
   { scope: "universal", text: "有观点有态度，不要两头讨好。结尾可以俏皮或犀利，不要烂尾。" },
   { scope: "universal", text: "标点必须用中文全角（，。！？：；），英文半角逗号会挤在一起，非常难看。" },
-  { scope: "universal", text: "不要在文章中展示数据来源/信息出处（不说“数据来源：XXX”“信息来自XXX”），数据要有来源感但不要暴露出处。" },
+  { scope: "universal", text: "不要在文章中展示数据来源/信息出处（不说「数据来源：XXX」「信息来自XXX」），数据要有来源感但不要暴露出处。" },
+  // humanizer-zh: 新增规则
+  { scope: "universal", text: "删除填充短语：「为了实现这一目标」「由于下雨的事实」「在这个时间点」「值得注意的是」→ 直接说事。" },
+  { scope: "universal", text: "打破公式结构：避免二元对比、戏剧性分段、修辞性设置。不要用「不仅…更是…」「一方面…另一方面…」。" },
+  { scope: "universal", text: "变化节奏：混合句子长度。两项优于三项。段落结尾要多样化，不要每段都用同一种收尾。" },
+  { scope: "universal", text: "信任读者：直接陈述事实，跳过软化、辩解和手把手引导。不要写「简单来说」「换句话说」。" },
+  { scope: "universal", text: "删除金句：如果听起来像可引用的语句，重写它。不要写「这不仅仅是一次更新，而是…」这种升华。" },
+  { scope: "universal", text: "禁止夸大象征意义：不要用「标志着…的时刻」「见证了…的历程」「体现了…的精神」「作为…的证明」。" },
+  { scope: "universal", text: "禁止宣传性语言：不要用「令人叹为观止」「必游之地」「迷人的美景」「充满活力的文化」「开创性的创新」。" },
+  { scope: "universal", text: "禁止模糊归因：不要用「专家认为」「研究表明」「观察者指出」「业内人士表示」「据悉」「据了解」。" },
 
-  // ── planning: 3 条标题/结构规则 ──────────────────
+  // ── universal: 反「刻意模仿人类」规则 ──
+  { scope: "universal", text: "禁止刻意模仿人类写作。不要用「一个普通的周末下午」这类刻意铺垫日常感的开头，直接说事。" },
+  { scope: "universal", text: "叙事不要有完美的起承转合。真实的人写东西不会这么干净利落，允许有跳跃、有不完整、有随意感。" },
+  { scope: "universal", text: "禁止四字感官填充词堆砌：不要用「旋律流畅，制作精致」「画面精美，剧情动人」这种泛泛的形容。要写就写具体感受。" },
+  { scope: "universal", text: "禁止戏剧性「直到」转折：不要写「直到朋友提醒：这听起来像…」这种刻意制造悬念的句式。" },
+  { scope: "universal", text: "结尾不要利落收束。不要写「现在，X告诉我，这种怀疑可以直接验证了」这种新闻导语式的结论。" },
+
+  // ── planning: 标题/结构规则 ──────────────────
   { scope: "planning", text: "标题要像编辑最后拍板的成品，优先使用具体对象、真实场景、冲突或后果。避免过于工整的对仗句和大词堆叠。" },
-  { scope: "planning", text: "摘要不要以“这篇文章”“本文”“今天聊聊”开头，直接进入判断、场景或问题，像转发前的一段导语。" },
-  { scope: "planning", text: "大纲不能只是“背景-影响-建议”的流水账，至少 2 个小标题要像判断句而非栏目名。" },
+  { scope: "planning", text: "摘要不要以「这篇文章」「本文」「今天聊聊」开头，直接进入判断、场景或问题，像转发前的一段导语。" },
+  { scope: "planning", text: "大纲不能只是「背景-影响-建议」的流水账，至少 2 个小标题要像判断句而非栏目名。" },
 
-  // ── drafting: 3 条正文规则 ────────────────────────────────
-  { scope: "drafting", text: "开头不要解释文章要讲什么，直接进入读者当下的处境、事件冲突或核心判断。不要写“在这个信息爆炸的时代”这类悬浮开场。" },
+  // ── drafting: 正文规则（humanizer-zh 增强版） ────────────────────────────────
+  { scope: "drafting", text: "开头不要解释文章要讲什么，直接进入读者当下的处境、事件冲突或核心判断。不要写「在这个信息爆炸的时代」这类悬浮开场。" },
   { scope: "drafting", text: "多用短段落（每段 1-3 句），句子节奏有长有短。重要部分多写，次要部分收着写，不要机械平均展开。" },
   { scope: "drafting", text: "结尾不要像社论收口，更像朋友把话说透后给一个清楚提醒，附 2-3 条可执行建议。" },
+  // humanizer-zh: 新增正文规则
+  { scope: "drafting", text: "适当使用「我」。第一人称不是不专业——而是诚实。「我一直在思考…」「让我困扰的是…」表明有真实的人在思考。" },
+  { scope: "drafting", text: "承认复杂性。真实的人有复杂的感受。「这令人印象深刻但也有点不安」胜过「这令人印象深刻」。" },
+  { scope: "drafting", text: "对感受要具体。不是「这令人担忧」，而是「凌晨三点没人看着的时候，智能体还在不停地运转，这让人不安」。" },
+  { scope: "drafting", text: "不要用破折号（—）制造悬念。直接说事。「这个术语主要由荷兰机构推广，而不是由人民自己」比用破折号更自然。" },
+  { scope: "drafting", text: "不要用粗体强调关键词。让内容自己说话。" },
+  { scope: "drafting", text: "不要用表情符号装饰标题或项目符号。" },
+  { scope: "drafting", text: "避免同义词循环：不要为了「避免重复」而刻意换词。主人公面临挑战，最终获得胜利——用同一个词也可以。" },
 ] as const;
 
 /**
@@ -754,13 +896,24 @@ function normalizeParagraphTone(paragraph: string) {
 
   let next = trimmed;
 
+  // AI 味前缀清洗
   for (const pattern of AI_TONE_PREFIX_PATTERNS) {
     next = next.replace(pattern, "");
   }
 
+  // AI 味内联替换
   for (const { pattern, replacement } of AI_TONE_INLINE_REPLACEMENTS) {
     next = next.replace(pattern, replacement);
   }
+
+  // humanizer-zh: 宣传性语言清洗
+  for (const pattern of PROMOTIONAL_PATTERNS) {
+    next = next.replace(pattern, "");
+  }
+
+  // humanizer-zh: 模糊归因标记（保留但提醒）
+  // 注意：这里只标记，不删除，因为有时模糊归因是可以接受的
+  // 实际删除在 shouldDropAiishSentence 中处理
 
   return next
     .replace(/([。！？])(?=[，、；])/g, "$1")
@@ -1245,6 +1398,40 @@ function hasGeneratedBodyQuality(body: string, fallbackBody = "") {
     return {
       ok: false,
       reason: "正文有明显 AI 结构痕迹（三词并列/对仗工整），本次没有保存为成稿。",
+    };
+  }
+
+  // humanizer-zh: 检测宣传性语言
+  const promotionalHits = PROMOTIONAL_PATTERNS.filter((pattern) => pattern.test(articleText)).length;
+  if (promotionalHits >= 2) {
+    return {
+      ok: false,
+      reason: "正文有过多宣传性语言（夸张表达），本次没有保存为成稿。",
+    };
+  }
+
+  // humanizer-zh: 检测模糊归因
+  const vagueAttributionHits = VAGUE_ATTRIBUTION_PATTERNS.filter((pattern) => pattern.test(articleText)).length;
+  if (vagueAttributionHits >= 3) {
+    return {
+      ok: false,
+      reason: "正文有过多模糊归因（专家认为、研究表明等），本次没有保存为成稿。",
+    };
+  }
+
+  // humanizer-zh: 检测夸大象征意义
+  const symbolicPatterns = [
+    /作为.*的证明/,
+    /标志着.*的.*时刻/,
+    /见证了.*的.*历程/,
+    /反映了.*的.*趋势/,
+    /象征着.*的.*精神/,
+  ];
+  const symbolicHits = symbolicPatterns.filter((pattern) => pattern.test(articleText)).length;
+  if (symbolicHits >= 2) {
+    return {
+      ok: false,
+      reason: "正文有过多夸大象征意义的表达，本次没有保存为成稿。",
     };
   }
 

@@ -24,8 +24,10 @@ import {
   type ActiveArticleDomain,
 } from "../lib/content-domains";
 import { type HotTopicItem } from "../lib/hot-topics";
+import { getUserDisplayName } from "../lib/user-display";
 import { normalizeWorkbenchTopicCandidates } from "../lib/workbench-topics";
 import { useAppStore } from "../providers/app-store";
+import { useAuth } from "../providers/auth-provider";
 
 const statusColors: Record<string, string> = {
   待修改: "bg-amber-50 text-amber-600",
@@ -46,6 +48,24 @@ function clampScore(value: number, min: number, max: number) {
 function parseTrendScore(trend: string) {
   const parsed = Number.parseInt(trend.replace(/[^\d-]/g, ""), 10);
   return Number.isFinite(parsed) ? clampScore(parsed, 0, 100) : 0;
+}
+
+function getCurrentGreeting(date = new Date()) {
+  const hourPart = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Shanghai",
+  })
+    .formatToParts(date)
+    .find((part) => part.type === "hour")?.value;
+  const hour = Number.parseInt(hourPart ?? "", 10);
+
+  if (!Number.isFinite(hour)) return "你好";
+  if (hour < 5) return "凌晨好";
+  if (hour < 11) return "早上好";
+  if (hour < 14) return "中午好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
 }
 
 function getFreshnessScore(topic: Pick<HotTopicItem, "fetchedAt" | "sourcePublishedAt">) {
@@ -96,14 +116,27 @@ function scoreHotTopicsBySourceRank<T extends Pick<HotTopicItem, "source" | "hea
 
 export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTopicItem[] }) {
   const router = useRouter();
+  const { user } = useAuth();
   const { drafts, topics, selectTopic, upsertTopic } = useAppStore();
   const [dashboardHotTopics, setDashboardHotTopics] = useState<HotTopicItem[]>(initialHotTopics);
   const [activeHotDomain, setActiveHotDomain] = useState<ActiveArticleDomain | null>(null);
   const [aiProviderStatus, setAIProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
   const [aiImageProviderStatus, setAIImageProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
+  const [currentGreeting, setCurrentGreeting] = useState("你好");
+  const [isLoading, setIsLoading] = useState(true);
+  const displayName = getUserDisplayName(user, "用户");
+
+  useEffect(() => {
+    const syncGreeting = () => setCurrentGreeting(getCurrentGreeting());
+
+    syncGreeting();
+    const timer = window.setInterval(syncGreeting, 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const loadDashboardData = async () => {
+      setIsLoading(true);
       try {
         const hotTopicsPromise = initialHotTopics.length
           ? Promise.resolve(null)
@@ -139,6 +172,8 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         });
       } catch (error) {
         console.error("Failed to load dashboard data:", error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -260,136 +295,22 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     selectTopic(nextTopic.id);
     router.push(autogen ? `/writing?topicId=${nextTopic.id}&autogen=full` : `/topic-center?topicId=${nextTopic.id}`);
   };
-  const heroOpportunity = activeHotDomainSection?.items[0]?.topic;
-
   return (
     <div className="lens-page space-y-4">
-      <section className="lens-hero grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="lens-hero p-5">
         <div className="relative z-10 min-w-0">
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[12px] text-primary font-extrabold">
             <Sparkles className="h-3.5 w-3.5" />
             AI 精选工作流
           </div>
           <h1 className="mt-3 text-[30px] leading-tight tracking-tight text-foreground md:text-[38px] font-black">
-            早上好，数字Lens
+            {currentGreeting}，{displayName}
             <span className="ml-2 inline-block origin-bottom-right animate-pulse">👋</span>
           </h1>
           <p className="mt-3 max-w-[660px] text-[14px] leading-7 text-muted-foreground">
             AI 正在为你发现高价值内容机会，统一从热点、选题、草稿到排版发布的创作节奏。
           </p>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {["深度分析", "工具测评", "副业机会", "行业趋势"].map((item) => (
-              <span key={item} className="lens-chip px-3 py-1.5 text-[12px] font-bold">
-                {item}
-              </span>
-            ))}
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/hot-topics")}
-              className="lens-btn-primary inline-flex h-11 items-center gap-2 px-4 text-[13px] font-black"
-            >
-              开始创作 <ArrowRight className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push("/drafts")}
-              className="lens-btn-secondary inline-flex h-11 items-center gap-2 px-4 text-[13px] font-extrabold"
-            >
-              继续草稿 <FileText className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="relative z-10 grid gap-3">
-          <div className="relative min-h-[176px] overflow-hidden rounded-[24px] border border-border bg-card/60 p-5 transition-all duration-300 hover:scale-[1.01] hover:bg-card/75 hover:border-primary/20 hover:shadow-sm">
-            <div className="lens-orb absolute right-7 top-6 h-28 w-28" />
-            <div className="relative z-10">
-              <div className="text-[13px] text-muted-foreground font-extrabold">今日最佳创作机会</div>
-              <div className="mt-3 max-w-[230px] text-[20px] leading-7 text-foreground font-black">
-                {heroOpportunity?.title ?? "AI Agent 生态全面爆发"}
-              </div>
-              <div className="mt-4 flex items-center gap-3">
-                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary font-extrabold">
-                  热度 {heroOpportunity?.heat.toLocaleString() ?? "89"}
-                </span>
-                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] text-emerald-500 font-extrabold">
-                  {heroOpportunity?.trend ?? "+22%"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              {
-                label: "创作潜力",
-                value: Math.max(72, taskProgress),
-                suffix: "/100",
-                sparkline: (
-                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="sparkline-grad-1" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path d="M 0 24 Q 25 18, 50 12 T 100 4" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" />
-                    <path d="M 0 24 Q 25 18, 50 12 T 100 4 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-1)" />
-                    <circle cx="100" cy="4" r="3" fill="var(--primary)" />
-                  </svg>
-                )
-              },
-              {
-                label: "热点机会",
-                value: activeHotDomainSection?.total ?? 12,
-                suffix: "",
-                sparkline: (
-                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="sparkline-grad-2" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-2)" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="var(--chart-2)" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path d="M 0 18 Q 15 4, 30 20 T 60 8 T 80 22 T 100 6" fill="none" stroke="var(--chart-2)" strokeWidth="2" strokeLinecap="round" />
-                    <path d="M 0 18 Q 15 4, 30 20 T 60 8 T 80 22 T 100 6 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-2)" />
-                    <circle cx="100" cy="6" r="3" fill="var(--chart-2)" />
-                  </svg>
-                )
-              },
-              {
-                label: "预计阅读",
-                value: "15w+",
-                suffix: "",
-                sparkline: (
-                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="sparkline-grad-3" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-3)" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="var(--chart-3)" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <path d="M 0 22 C 20 22, 40 18, 60 12 C 80 6, 90 2, 100 2" fill="none" stroke="var(--chart-3)" strokeWidth="2" strokeLinecap="round" />
-                    <path d="M 0 22 C 20 22, 40 18, 60 12 C 80 6, 90 2, 100 2 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-3)" />
-                    <circle cx="100" cy="2" r="3" fill="var(--chart-3)" />
-                  </svg>
-                )
-              },
-            ].map((item) => (
-              <div key={item.label} className="rounded-2xl border border-border bg-card/70 px-3 py-3 transition-all duration-300 hover:scale-[1.02] hover:bg-card/90 hover:border-primary/20 hover:shadow-sm">
-                <div className="text-[11px] text-muted-foreground">{item.label}</div>
-                <div className="mt-1 flex items-end gap-1 text-foreground">
-                  <span className="text-[22px] leading-none font-black">{item.value}</span>
-                  <span className="text-[11px] text-muted-foreground">{item.suffix}</span>
-                </div>
-                {item.sparkline}
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -478,7 +399,20 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           </div>
 
           <div className="p-4">
-            {activeHotDomainSection ? (
+            {isLoading ? (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-8 w-16 animate-pulse rounded-full bg-muted" />
+                  ))}
+                </div>
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-24 animate-pulse rounded-2xl bg-muted" />
+                  ))}
+                </div>
+              </div>
+            ) : activeHotDomainSection ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-2">
                   {hotTopicsByDomain.map(({ domain }) => (
@@ -512,8 +446,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 	                              </div>
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                 <span className="rounded bg-slate-950 dark:bg-white/10 px-1.5 py-0.5 text-[11px] text-white font-bold">推荐 {recommendation.score}</span>
-                                <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-muted-foreground font-bold">{topic.source}</span>
-                                {topic.tags.map((tag) => (
+                                {topic.tags.slice(0, 2).map((tag) => (
                                   <span key={tag} className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary font-bold">{tag}</span>
                                 ))}
                               </div>
@@ -572,7 +505,25 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           </div>
 
           <div className="divide-y divide-border/70">
-            {draftWorkflowGroups.length ? draftWorkflowGroups.map((group) => (
+            {isLoading ? (
+              <div className="px-5 py-12">
+                <div className="space-y-4">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+                        <div className="h-4 w-8 animate-pulse rounded-full bg-muted" />
+                      </div>
+                      <div className="space-y-2">
+                        {[1, 2].map((j) => (
+                          <div key={j} className="h-16 animate-pulse rounded-2xl bg-muted" />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : draftWorkflowGroups.length ? draftWorkflowGroups.map((group) => (
               <div key={group.key} className="px-5 py-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>

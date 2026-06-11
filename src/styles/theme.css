@@ -178,6 +178,7 @@
     display: flex;
     min-height: 430px;
     width: 100%;
+    overflow-x: hidden;
   }
 
   .article-rich-editor .tiptap {
@@ -188,6 +189,7 @@
     background: transparent;
     outline: none;
     white-space: pre-wrap;
+    overflow-x: hidden;
   }
 
   .article-rich-editor .tiptap > *:first-child {

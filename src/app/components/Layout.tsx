@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Flame, Lightbulb, FileText, Settings,
-  Search, Plus, PenTool, LogOut, Bell, ChevronDown, BarChart3, CheckCheck,
+  Search, Plus, PenTool, LogOut, Bell, ChevronDown,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
+import { getUserDisplayName } from "../lib/user-display";
 
 const navItems = [
   { to: "/dashboard", icon: LayoutDashboard, label: "工作台" },
@@ -17,8 +18,6 @@ const navItems = [
   { to: "/topic-center", icon: Lightbulb, label: "选题中心" },
   { to: "/writing", icon: PenTool, label: "创作中心" },
   { to: "/drafts", icon: FileText, label: "我的草稿" },
-  { to: "/review-center", icon: CheckCheck, label: "审核管理" },
-  { to: "/article-analysis", icon: BarChart3, label: "数据分析" },
   { to: "/settings", icon: Settings, label: "设置中心" },
 ];
 
@@ -35,6 +34,7 @@ export function Layout({ children }: LayoutProps) {
   const [keyword, setKeyword] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const displayName = getUserDisplayName(user, "用户");
   const quickPages = useMemo(
     () => navItems.map((item) => ({ keyword: item.label, href: item.to })),
     [],
@@ -126,10 +126,10 @@ export function Layout({ children }: LayoutProps) {
         <div className="border-t border-sidebar-border p-4">
           <div className="flex items-center gap-3 rounded-3xl border border-border bg-card/70 px-3 py-3 shadow-sm backdrop-blur">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-[13px] text-white shadow-[0_12px_28px_rgba(111,92,255,0.25)] font-black">
-              {(user?.email ?? "L").slice(0, 1).toUpperCase()}
+              {displayName.slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-foreground font-extrabold">数字Lens</div>
+              <div className="truncate text-[13px] text-foreground font-extrabold">{displayName}</div>
               <div className="truncate text-[11px] text-muted-foreground">{user?.email ?? "未登录"}</div>
             </div>
             <button
@@ -179,13 +179,6 @@ export function Layout({ children }: LayoutProps) {
             </button>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-2xl border border-border bg-card/70 px-3 py-2 text-[12px] text-foreground shadow-sm backdrop-blur lg:flex">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-55" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              </span>
-              All Systems Operational
-            </div>
             <ThemeToggle compact />
             <button
               type="button"

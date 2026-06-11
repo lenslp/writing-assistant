@@ -98,9 +98,31 @@ type TiptapNode = {
 };
 
 function renderEditorInlineHtml(text: string) {
-  return escapeHtml(text)
+  return escapeHtml(collapseChineseQuoteLayers(text))
     .replace(/__([^_]+)__/g, "<strong>$1</strong>")
     .replace(/「([^」]+)」/g, "<em>「$1」</em>");
+}
+
+function collapseChineseQuoteLayers(text: string) {
+  let normalized = text;
+  let previous = "";
+
+  while (normalized !== previous) {
+    previous = normalized;
+    normalized = normalized.replace(/「{2,}([^「」]+)」{2,}/g, "「$1」");
+  }
+
+  return normalized;
+}
+
+function wrapItalicEditorText(text: string) {
+  const normalized = collapseChineseQuoteLayers(text);
+
+  if (/^「[^「」]+」$/.test(normalized)) {
+    return normalized;
+  }
+
+  return `「${normalized}」`;
 }
 
 function renderPlainSectionAsEditorHtml(section: string) {
@@ -188,10 +210,10 @@ function extractInlineTextFromEditorNode(node?: TiptapNode): string {
     const markTypes = node.marks?.map((mark) => mark.type).filter(Boolean) ?? [];
     let text = node.text;
 
-    if (markTypes.includes("italic")) text = `「${text}」`;
+    if (markTypes.includes("italic")) text = wrapItalicEditorText(text);
     if (markTypes.includes("bold") || markTypes.includes("underline")) text = `__${text}__`;
 
-    return text;
+    return collapseChineseQuoteLayers(text);
   }
 
   return node.content?.map(extractInlineTextFromEditorNode).join("") ?? "";
@@ -1952,7 +1974,7 @@ export function WritingPage() {
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="relative min-h-11 overflow-hidden py-1">
+              <div className="relative min-h-11 overflow-hidden py-1 px-4">
                 <div
                   className="absolute top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-border"
                   style={{ left: generationStageTrackInset, right: generationStageTrackInset }}
@@ -2144,7 +2166,7 @@ export function WritingPage() {
               <div
                 ref={editorScrollRef}
                 onScroll={() => syncScroll("editor")}
-                className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto bg-card px-5 py-5" : "min-h-0 flex-1 overflow-y-auto px-6 py-6"}
+                className={isWechatChannel ? "min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-card px-5 py-5" : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-6"}
                 style={
                   isWechatChannel
                     ? { background: surfaceBackground }

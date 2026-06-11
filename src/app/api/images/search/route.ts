@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       body: payload.body,
       domain: payload.domain,
       source: payload.source,
-      count: 6,
+      count: 10,
     });
 
     if (!results.length) {

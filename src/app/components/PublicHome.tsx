@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useRef, useEffect } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -8,19 +9,15 @@ import {
   Flame,
   LayoutDashboard,
   Lightbulb,
-  PenLine,
+  LogOut,
   PenTool,
   Send,
   Sparkles,
+  User,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
-
-const capabilityItems = [
-  { icon: Flame, title: "热点发现", desc: "聚合趋势来源，优先看到值得写的内容机会。" },
-  { icon: Lightbulb, title: "选题拆解", desc: "从热点里拆出角度、人群、切入点和可复用素材。" },
-  { icon: PenLine, title: "智能成稿", desc: "从标题、大纲到正文，保留你的账号定位和表达偏好。" },
-  { icon: Send, title: "平台适配", desc: "面向公众号、小红书等平台沉淀不同内容结构。" },
-];
+import { useAuth } from "../providers/auth-provider";
+import { getUserDisplayName } from "../lib/user-display";
 
 const deskRows = [
   { title: "ChatGPT 更新后的创作者机会", source: "AI HOT", heat: "18,926", tag: "可写" },
@@ -29,6 +26,27 @@ const deskRows = [
 ];
 
 export function PublicHome() {
+  const { user, signOut } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    if (dropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [dropdownOpen]);
+
+  const handleSignOut = async () => {
+    await signOut();
+    setDropdownOpen(false);
+  };
+
   return (
     <main className="lens-app-surface min-h-screen overflow-hidden text-foreground">
       <header className="sticky top-0 z-20 border-b border-border bg-background/88 backdrop-blur">
@@ -43,20 +61,44 @@ export function PublicHome() {
             </div>
           </Link>
 
-          <nav className="hidden items-center gap-8 text-[13px] text-muted-foreground md:flex" aria-label="首页导航">
-            <a href="#features" className="hover:text-primary">能力</a>
-            <a href="#workflow" className="hover:text-primary">流程</a>
-            <a href="#platforms" className="hover:text-primary">平台</a>
-          </nav>
-
           <div className="flex items-center gap-2">
             <ThemeToggle compact />
-            <Link href="/login" className="rounded-xl px-3 py-2 text-[13px] text-muted-foreground hover:bg-card hover:text-foreground" style={{ fontWeight: 750 }}>
-              登录
-            </Link>
-            <Link href="/login?mode=register" className="rounded-xl bg-primary px-4 py-2 text-[13px] text-white shadow-[0_12px_26px_rgba(111,92,255,0.18)] hover:bg-primary/90" style={{ fontWeight: 800 }}>
-              注册
-            </Link>
+            {user ? (
+              <div ref={dropdownRef} className="relative">
+                <button
+                  onClick={() => setDropdownOpen(!dropdownOpen)}
+                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] text-muted-foreground hover:bg-card hover:text-foreground"
+                  style={{ fontWeight: 750 }}
+                >
+                  <div className="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary">
+                    <User className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="hidden sm:inline">{getUserDisplayName(user, "用户")}</span>
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-48 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground border-b border-border">{user.email}</div>
+                    <button
+                      onClick={handleSignOut}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-foreground hover:bg-accent"
+                      style={{ fontWeight: 750 }}
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      退出登录
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <Link href="/login" className="rounded-xl px-3 py-2 text-[13px] text-muted-foreground hover:bg-card hover:text-foreground" style={{ fontWeight: 750 }}>
+                  登录
+                </Link>
+                <Link href="/login?mode=register" className="rounded-xl bg-primary px-4 py-2 text-[13px] text-white shadow-[0_12px_26px_rgba(111,92,255,0.18)] hover:bg-primary/90" style={{ fontWeight: 800 }}>
+                  注册
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -76,12 +118,18 @@ export function PublicHome() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link href="/login?mode=register" className="inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-[14px] text-white shadow-[0_18px_38px_rgba(111,92,255,0.23)] hover:bg-primary/90" style={{ fontWeight: 850 }}>
-              开始写作 <ArrowRight className="h-4 w-4" />
+            <Link href={user ? "/dashboard" : "/login?mode=register"} className="inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-[14px] text-white shadow-[0_18px_38px_rgba(111,92,255,0.23)] hover:bg-primary/90" style={{ fontWeight: 850 }}>
+              {user ? "前往工作台" : "开始写作"} <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link href="/login" className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-[14px] text-foreground/75 shadow-sm hover:text-primary" style={{ fontWeight: 800 }}>
-              登录工作台
-            </Link>
+            {user ? (
+              <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-[14px] text-foreground/75 shadow-sm hover:text-primary" style={{ fontWeight: 800 }}>
+                前往工作台
+              </Link>
+            ) : (
+              <Link href="/login" className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-[14px] text-foreground/75 shadow-sm hover:text-primary" style={{ fontWeight: 800 }}>
+                登录工作台
+              </Link>
+            )}
           </div>
 
           <div className="mt-8 grid max-w-[660px] grid-cols-2 gap-3 text-[12px] text-muted-foreground sm:grid-cols-4">
@@ -156,19 +204,7 @@ export function PublicHome() {
         </div>
       </section>
 
-      <section id="features" className="border-y border-border bg-card/75">
-        <div className="mx-auto grid max-w-[1180px] gap-4 px-5 py-10 md:grid-cols-4">
-          {capabilityItems.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="rounded-[22px] border border-border bg-background p-5">
-              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
-                <Icon className="h-5 w-5" />
-              </div>
-              <div className="mt-4 text-[15px] text-foreground" style={{ fontWeight: 850 }}>{title}</div>
-              <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+
 
       <section id="workflow" className="mx-auto max-w-[1180px] px-5 py-12">
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1fr]">
