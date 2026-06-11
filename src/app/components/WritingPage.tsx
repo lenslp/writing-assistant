@@ -1582,53 +1582,20 @@ export function WritingPage() {
     if (isWechatChannel) {
       return (
         <div className="mx-auto max-w-[640px]">
-          <div
-            className="rounded-[22px] border px-4 py-4"
-            style={{
-              background: previewThemeStyle.titlePanelBackground,
-              borderColor: previewThemeStyle.titlePanelBorder,
-              boxShadow: previewThemeStyle.titlePanelShadow,
-            }}
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div
-                  className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px]"
-                  style={{
-                    background: previewThemeStyle.badgeBackground,
-                    color: previewThemeStyle.badgeColor,
-                    border: previewThemeStyle.badgeBorder,
-                    fontWeight: 700,
-                  }}
-                >
-                  <span>{domainConfigs[selectedDomain].icon}</span>
-                  <span>{domainConfigs[selectedDomain].label}</span>
-                </div>
-                <div className="mt-3 text-[12px]" style={{ color: textMuted, fontWeight: 700 }}>
-                  公众号标题单独填写
-                </div>
-                <div className="mt-1 text-[18px] leading-[1.55]" style={{ color: textPrimary, fontWeight: 700 }}>
-                  {wechatPreviewTitle}
-                </div>
-              </div>
-              <div className="text-right text-[11px]" style={{ color: textMuted }}>
-                <div>{articleDate}</div>
-              </div>
+          <header className="mb-5">
+            <h1
+              className="text-[26px] leading-[1.32] tracking-[-0.02em]"
+              style={{ color: textPrimary, fontWeight: 800 }}
+            >
+              {wechatPreviewTitle || "未命名文章"}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[14px] leading-5" style={{ color: textMuted }}>
+              <span style={{ color: "#576b95", fontWeight: 500 }}>{previewAccountName}</span>
+              <span>·</span>
+              <span>{articleDate}</span>
             </div>
-            <div className="mt-3 text-[12px] leading-[1.7]" style={{ color: textMuted }}>
-              下方为复制到公众号编辑器、以及推送到草稿箱时实际使用的正文 HTML 预览。
-            </div>
-          </div>
-
-          <div
-            className="mt-5 rounded-[22px] border px-5 py-5"
-            style={{
-              background: previewThemeStyle.contentCardBackground,
-              borderColor: previewThemeStyle.contentCardBorder,
-              boxShadow: previewThemeStyle.titlePanelShadow,
-            }}
-            dangerouslySetInnerHTML={{ __html: wechatPreviewHtml }}
-          />
+          </header>
+          <div dangerouslySetInnerHTML={{ __html: wechatPreviewHtml }} />
         </div>
       );
     } else {
