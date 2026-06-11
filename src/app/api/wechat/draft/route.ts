@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { DraftFormatting } from "../../../lib/app-data";
 import { resolveArticleDomain } from "../../../lib/content-domains";
 import { getWechatConfig, pushArticleToWechatDraft } from "../../../lib/wechat-draft";
 
@@ -11,6 +12,7 @@ type RequestPayload = {
   author?: string;
   domain?: string;
   accountId?: string | null;
+  formatting?: DraftFormatting;
 };
 
 function isValidPayload(payload: unknown): payload is RequestPayload {
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
       title,
       summary,
       body,
+      formatting: payload.formatting,
       author: payload.author?.trim() || config.accountName || config.defaultAuthor,
       domain: resolveArticleDomain(payload.domain),
       accountId: payload.accountId ?? null,

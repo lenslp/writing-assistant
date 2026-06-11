@@ -1,3 +1,9 @@
 {
-  "installCommand": "corepack enable && pnpm install --frozen-lockfile"
+  "installCommand": "corepack enable && pnpm install --frozen-lockfile",
+  "crons": [
+    {
+      "path": "/api/hot-topics/refresh",
+      "schedule": "*/30 * * * *"
+    }
+  ]
 }

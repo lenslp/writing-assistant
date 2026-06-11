@@ -9,7 +9,14 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+function isAuthorizedCronRequest(request: Request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true;
+
+  return request.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+async function refreshHotTopics() {
   try {
     const result = await refreshHotTopicsAndPersist();
 
@@ -50,4 +57,19 @@ export async function POST() {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request: Request) {
+  if (!isAuthorizedCronRequest(request)) {
+    return NextResponse.json(
+      { ok: false, message: "Unauthorized cron request" },
+      { status: 401 },
+    );
+  }
+
+  return refreshHotTopics();
+}
+
+export async function POST() {
+  return refreshHotTopics();
 }

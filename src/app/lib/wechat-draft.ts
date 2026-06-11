@@ -1,5 +1,7 @@
+import { colorSchemes, createDefaultFormatting, type DraftFormatting } from "./app-data";
 import { readWechatAccountSecret } from "./app-config-db";
 import { domainConfigs, type ArticleDomain } from "./content-domains";
+import { buildWechatArticleHtml, extractContentBlocks } from "./format-render";
 
 type WechatConfig = {
   configured: boolean;
@@ -41,6 +43,7 @@ type WechatDraftInput = {
   author: string;
   domain: ArticleDomain;
   accountId?: string | null;
+  formatting?: DraftFormatting;
 };
 
 export type WechatDraftPrecheckItem = {
@@ -796,9 +799,10 @@ export async function pushArticleToWechatDraft(input: WechatDraftInput) {
 
   validateWechatDraftTitle(input.title);
   const digestInfo = normalizeWechatDigest(input.summary);
-
-  const blocks = extractBlocks(input.body);
-  const imageBlocks = blocks.filter((block): block is Extract<DraftBlock, { type: "image" }> => block.type === "image");
+  const formatting = input.formatting ?? createDefaultFormatting("极简白");
+  const activeScheme = colorSchemes.find((item) => item.name === formatting.colorScheme) ?? colorSchemes[0];
+  const blocks = extractContentBlocks(input.body);
+  const imageBlocks = blocks.filter((block): block is Extract<ReturnType<typeof extractContentBlocks>[number], { type: "image"; src?: string }> => block.type === "image" && Boolean(block.src));
 
   if (!imageBlocks.length) {
     throw new Error("推送到公众号草稿箱前，请先在正文中插入至少一张图片。");
@@ -808,24 +812,30 @@ export async function pushArticleToWechatDraft(input: WechatDraftInput) {
   const uploadedImageMap = new Map<string, string>();
 
   for (const block of imageBlocks) {
-    if (uploadedImageMap.has(block.image.src)) continue;
-    const wechatUrl = await uploadImageAsWechatArticleImage(accessToken, block.image.src);
-    uploadedImageMap.set(block.image.src, wechatUrl);
+    if (!block.src || uploadedImageMap.has(block.src)) continue;
+    const wechatUrl = await uploadImageAsWechatArticleImage(accessToken, block.src);
+    uploadedImageMap.set(block.src, wechatUrl);
   }
 
-  const normalizedBlocks = blocks.map((block) => {
-    if (block.type !== "image") return block;
-    return {
-      ...block,
-      image: {
-        ...block.image,
-        src: uploadedImageMap.get(block.image.src) ?? block.image.src,
-      },
-    };
-  });
-
-  const thumbMediaId = await uploadImageAsWechatCover(accessToken, imageBlocks[0].image.src);
-  const content = renderWechatArticleHtml(input.title, input.summary, normalizedBlocks, input.domain);
+  const thumbMediaId = await uploadImageAsWechatCover(accessToken, imageBlocks[0].src!);
+  const content = buildWechatArticleHtml(
+    {
+      title: input.title,
+      summary: input.summary,
+      updatedAt: new Date().toISOString(),
+      publishedAt: new Date().toISOString(),
+    },
+    input.body,
+    formatting,
+    activeScheme.primary,
+    activeScheme.accent,
+    input.author || config.defaultAuthor || "公众号作者",
+    input.domain,
+    {
+      includeHeader: false,
+      imageSrcMap: Object.fromEntries(uploadedImageMap),
+    },
+  );
   const payload = await fetchWechatJson<{ media_id: string }>(
     `${WECHAT_API_BASE}/cgi-bin/draft/add?access_token=${accessToken}`,
     {
@@ -896,8 +906,8 @@ export async function precheckWechatDraft(input: WechatDraftInput) {
     message: body ? "正文已填写。" : "正文不能为空。",
   });
 
-  const blocks = extractBlocks(body);
-  const imageBlocks = blocks.filter((block): block is Extract<DraftBlock, { type: "image" }> => block.type === "image");
+  const blocks = extractContentBlocks(body);
+  const imageBlocks = blocks.filter((block): block is Extract<ReturnType<typeof extractContentBlocks>[number], { type: "image"; src?: string }> => block.type === "image" && Boolean(block.src));
   items.push({
     key: "image",
     label: "正文图片",

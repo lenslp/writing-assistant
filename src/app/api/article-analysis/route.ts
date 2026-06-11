@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildArticleAnalysisFromHotTopic } from "../../lib/article-analysis";
-import { ensureHotTopicsCache } from "../../lib/hot-topic-refresh";
+import { getHotTopicsSnapshot } from "../../lib/hot-topic-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const limit = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
 
   try {
-    const payload = await ensureHotTopicsCache(limit);
+    const payload = await getHotTopicsSnapshot(limit);
 
     return NextResponse.json({
       items: payload.items.map(buildArticleAnalysisFromHotTopic),

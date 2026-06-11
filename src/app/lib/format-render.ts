@@ -49,19 +49,60 @@ export const IMAGE_CAPTION_PATTERN = /^(?:图注|说明|caption)[:：]\s*(.+)$/i
 export const CODE_BLOCK_PATTERN = /^```(\w+)?\s*\n([\s\S]*?)\n```$/;
 
 // ---------------------------------------------------------------------------
+// Color helpers
+// ---------------------------------------------------------------------------
+
+function hexToRgb(color: string) {
+  const normalized = color.trim();
+  const shortHexMatch = normalized.match(/^#([\da-f]{3})$/i);
+  if (shortHexMatch) {
+    const expanded = shortHexMatch[1].split("").map((item) => item + item).join("");
+    return {
+      r: Number.parseInt(expanded.slice(0, 2), 16),
+      g: Number.parseInt(expanded.slice(2, 4), 16),
+      b: Number.parseInt(expanded.slice(4, 6), 16),
+    };
+  }
+
+  const hexMatch = normalized.match(/^#([\da-f]{6})$/i);
+  if (hexMatch) {
+    return {
+      r: Number.parseInt(hexMatch[1].slice(0, 2), 16),
+      g: Number.parseInt(hexMatch[1].slice(2, 4), 16),
+      b: Number.parseInt(hexMatch[1].slice(4, 6), 16),
+    };
+  }
+
+  return null;
+}
+
+function withAlpha(color: string, alpha: number) {
+  const rgb = hexToRgb(color);
+  if (!rgb) return color;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+function mixWithWhite(color: string, ratio: number) {
+  const rgb = hexToRgb(color);
+  if (!rgb) return color;
+  const mix = (channel: number) => Math.round(channel * ratio + 255 * (1 - ratio));
+  return `rgb(${mix(rgb.r)}, ${mix(rgb.g)}, ${mix(rgb.b)})`;
+}
+
+// ---------------------------------------------------------------------------
 // Inline highlight style helpers
 // ---------------------------------------------------------------------------
 
 export function getInlineHighlightStyle(primary: string, accent: string): CSSProperties {
   return {
-    backgroundImage: `linear-gradient(180deg, transparent 58%, color-mix(in srgb, ${accent} 28%, white) 58%)`,
+    backgroundImage: `linear-gradient(180deg, transparent 58%, ${withAlpha(accent, 0.28)} 58%)`,
     padding: "0 1px",
     color: primary,
   };
 }
 
 export function getInlineHighlightHtmlStyle(primary: string, accent: string) {
-  return `background-image:linear-gradient(180deg, transparent 58%, color-mix(in srgb, ${accent} 28%, white) 58%);padding:0 1px;color:${primary};`;
+  return `background-image:linear-gradient(180deg, transparent 58%, ${withAlpha(accent, 0.28)} 58%);padding:0 1px;color:${primary};`;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,10 +359,12 @@ export function buildWechatText(
   draft: HtmlDraft,
   body: string,
   settingsCta: string,
-  options?: { includeTitle?: boolean; includeCta?: boolean },
+  options?: {
+    includeTitle?: boolean;
+    includeSummary?: boolean;
+    includeCta?: boolean;
+  },
 ) {
-  const includeTitle = options?.includeTitle ?? true;
-  const includeCta = options?.includeCta ?? true;
   const plainBody = extractContentBlocks(body)
     .map((block) => {
       if (block.type === "image") {
@@ -354,15 +397,14 @@ export function buildWechatText(
     })
     .join("\n\n");
 
-  return [
-    includeTitle ? draft.title : "",
-    "",
-    draft.summary,
-    "",
+  const sections = [
+    options?.includeTitle === false ? "" : draft.title,
+    options?.includeSummary === false ? "" : draft.summary,
     plainBody,
-    "",
-    includeCta ? settingsCta : "",
-  ].filter(Boolean).join("\n");
+    options?.includeCta === false ? "" : settingsCta,
+  ].filter(Boolean);
+
+  return sections.join("\n\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +419,444 @@ export function buildMarkdown(draft: Draft, body: string) {
 // Full HTML export
 // ---------------------------------------------------------------------------
 
+type TemplateHeaderVariant = "plain" | "hero" | "minimal" | "warm" | "dark";
+
+type ExportTemplateTheme = {
+  headerVariant: TemplateHeaderVariant;
+  pageBackground: string;
+  articleBackground: string;
+  articleBorder: string;
+  articleRadius: string;
+  articlePadding: string;
+  articleShadow: string;
+  bodyTextColor: string;
+  mutedTextColor: string;
+  titleColor?: string;
+  badgeBackground: string;
+  badgeColor: string;
+  badgeBorder: string;
+  summaryBackground?: string;
+  summaryBorder?: string;
+  summaryColor?: string;
+  summaryRadius?: string;
+  summaryPadding?: string;
+  quoteBackground?: string;
+  quoteTextColor?: string;
+  quoteBorderColor?: string;
+  highlightBackground: string;
+  highlightBorderColor: string;
+  highlightTextColor: string;
+  goldenBackground: string;
+  goldenBorderColor: string;
+  goldenTextColor: string;
+  dividerColor?: string;
+  imageBorderColor?: string;
+  imageBackground?: string;
+  imageShadow?: string;
+  imageRadius?: string;
+  imageCaptionColor?: string;
+  headingCardBackground: string;
+  headingCardBorderColor: string;
+  headerBackground?: string;
+  headerBorder?: string;
+  headerShadow?: string;
+  headerTitleColor?: string;
+  headerMetaColor?: string;
+};
+
+function getTemplateExportTheme(template: DraftFormatting["template"], primary: string, accent: string): ExportTemplateTheme {
+  if (template === "科技蓝") {
+    return {
+      headerVariant: "hero",
+      pageBackground: `linear-gradient(180deg, ${mixWithWhite(primary, 0.08)} 0%, ${mixWithWhite(accent, 0.08)} 45%, #ffffff 100%)`,
+      articleBackground: "#ffffff",
+      articleBorder: `1px solid ${withAlpha(primary, 0.16)}`,
+      articleRadius: "26px",
+      articlePadding: "30px 24px",
+      articleShadow: `0 20px 48px ${withAlpha(primary, 0.12)}`,
+      bodyTextColor: "#334155",
+      mutedTextColor: "#64748b",
+      badgeBackground: withAlpha("#ffffff", 0.16),
+      badgeColor: "#ffffff",
+      badgeBorder: `1px solid ${withAlpha("#ffffff", 0.22)}`,
+      summaryBackground: mixWithWhite(accent, 0.10),
+      summaryBorder: `1px solid ${withAlpha(primary, 0.14)}`,
+      summaryColor: "#33536b",
+      summaryRadius: "18px",
+      summaryPadding: "18px 18px",
+      quoteBackground: mixWithWhite(primary, 0.08),
+      quoteTextColor: "#486274",
+      quoteBorderColor: primary,
+      highlightBackground: mixWithWhite(accent, 0.08),
+      highlightBorderColor: withAlpha(primary, 0.22),
+      highlightTextColor: "#1e3a5f",
+      goldenBackground: `linear-gradient(135deg, ${mixWithWhite(primary, 0.10)}, ${mixWithWhite(accent, 0.16)})`,
+      goldenBorderColor: accent,
+      goldenTextColor: "#0f4c5f",
+      dividerColor: withAlpha(primary, 0.12),
+      imageBorderColor: withAlpha(primary, 0.14),
+      imageBackground: mixWithWhite(primary, 0.08),
+      imageShadow: `0 14px 30px ${withAlpha(primary, 0.10)}`,
+      imageRadius: "18px",
+      imageCaptionColor: "#6b8ba4",
+      headingCardBackground: `linear-gradient(135deg, ${mixWithWhite(accent, 0.16)}, ${mixWithWhite(primary, 0.12)})`,
+      headingCardBorderColor: withAlpha(primary, 0.18),
+      headerBackground: `linear-gradient(135deg, ${primary}, ${accent})`,
+      headerBorder: `1px solid ${withAlpha(primary, 0.12)}`,
+      headerShadow: `0 18px 36px ${withAlpha(primary, 0.22)}`,
+      headerTitleColor: "#ffffff",
+      headerMetaColor: "rgba(255,255,255,0.82)",
+    };
+  }
+
+  if (template === "商务灰") {
+    return {
+      headerVariant: "minimal",
+      pageBackground: "linear-gradient(180deg, #f3f4f6 0%, #ffffff 100%)",
+      articleBackground: "#ffffff",
+      articleBorder: "1px solid #d6dbe4",
+      articleRadius: "18px",
+      articlePadding: "30px 24px",
+      articleShadow: "0 18px 36px rgba(15,23,42,0.06)",
+      bodyTextColor: "#334155",
+      mutedTextColor: "#6b7280",
+      titleColor: "#111827",
+      badgeBackground: "#111827",
+      badgeColor: "#f8fafc",
+      badgeBorder: "1px solid #111827",
+      summaryBackground: "#f8fafc",
+      summaryBorder: "1px solid #d6dbe4",
+      summaryColor: "#4b5563",
+      summaryRadius: "14px",
+      summaryPadding: "16px 18px",
+      quoteBackground: "#f8fafc",
+      quoteTextColor: "#475569",
+      quoteBorderColor: "#64748b",
+      highlightBackground: "#f8fafc",
+      highlightBorderColor: "#cbd5e1",
+      highlightTextColor: "#1f2937",
+      goldenBackground: "linear-gradient(135deg, #ffffff, #f3f4f6)",
+      goldenBorderColor: "#64748b",
+      goldenTextColor: "#111827",
+      dividerColor: "#e5e7eb",
+      imageBorderColor: "#d6dbe4",
+      imageBackground: "#ffffff",
+      imageShadow: "0 10px 24px rgba(15,23,42,0.05)",
+      imageRadius: "14px",
+      imageCaptionColor: "#6b7280",
+      headingCardBackground: "#f8fafc",
+      headingCardBorderColor: "#d6dbe4",
+    };
+  }
+
+  if (template === "暖色调") {
+    return {
+      headerVariant: "warm",
+      pageBackground: "linear-gradient(180deg, #fff7ed 0%, #fffaf5 50%, #ffffff 100%)",
+      articleBackground: "#fffdf9",
+      articleBorder: "1px solid #fed7aa",
+      articleRadius: "24px",
+      articlePadding: "30px 24px",
+      articleShadow: "0 18px 40px rgba(251,146,60,0.10)",
+      bodyTextColor: "#4b5563",
+      mutedTextColor: "#8b6b52",
+      badgeBackground: `linear-gradient(135deg, ${primary}, ${accent})`,
+      badgeColor: "#ffffff",
+      badgeBorder: "none",
+      summaryBackground: "#fff7ed",
+      summaryBorder: "1px solid #fed7aa",
+      summaryColor: "#7c4a03",
+      summaryRadius: "18px",
+      summaryPadding: "16px 18px",
+      quoteBackground: "#fffaf1",
+      quoteTextColor: "#7c5c44",
+      quoteBorderColor: "#fb923c",
+      highlightBackground: "#fff7ed",
+      highlightBorderColor: "#fdba74",
+      highlightTextColor: "#7c4a03",
+      goldenBackground: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+      goldenBorderColor: "#fb923c",
+      goldenTextColor: "#7c4a03",
+      dividerColor: "#f3dfc8",
+      imageBorderColor: "#f6d7b8",
+      imageBackground: "#fffaf5",
+      imageShadow: "0 10px 26px rgba(251,146,60,0.08)",
+      imageRadius: "18px",
+      imageCaptionColor: "#9f7a56",
+      headingCardBackground: "linear-gradient(135deg, #fff7ed, #ffedd5)",
+      headingCardBorderColor: "#fdba74",
+      headerBackground: `linear-gradient(135deg, ${mixWithWhite(primary, 0.18)}, ${mixWithWhite(accent, 0.12)})`,
+      headerBorder: "1px solid #fed7aa",
+      headerShadow: "0 12px 30px rgba(251,146,60,0.10)",
+    };
+  }
+
+  if (template === "深色") {
+    return {
+      headerVariant: "dark",
+      pageBackground: "linear-gradient(180deg, #020617 0%, #0f172a 100%)",
+      articleBackground: "#0f172a",
+      articleBorder: "1px solid #334155",
+      articleRadius: "24px",
+      articlePadding: "30px 24px",
+      articleShadow: "0 24px 56px rgba(2,6,23,0.42)",
+      bodyTextColor: "#e2e8f0",
+      mutedTextColor: "#94a3b8",
+      titleColor: "#f8fafc",
+      badgeBackground: `linear-gradient(135deg, ${primary}, ${accent})`,
+      badgeColor: "#f8fafc",
+      badgeBorder: `1px solid ${withAlpha(accent, 0.22)}`,
+      summaryBackground: withAlpha(accent, 0.14),
+      summaryBorder: `1px solid ${withAlpha(accent, 0.22)}`,
+      summaryColor: "#dbeafe",
+      summaryRadius: "18px",
+      summaryPadding: "18px 18px",
+      quoteBackground: "#111827",
+      quoteTextColor: "#cbd5e1",
+      quoteBorderColor: accent,
+      highlightBackground: withAlpha(primary, 0.14),
+      highlightBorderColor: withAlpha(accent, 0.28),
+      highlightTextColor: "#f8fafc",
+      goldenBackground: `linear-gradient(135deg, ${withAlpha(primary, 0.18)}, ${withAlpha(accent, 0.24)})`,
+      goldenBorderColor: accent,
+      goldenTextColor: "#f8fafc",
+      dividerColor: "#334155",
+      imageBorderColor: "#475569",
+      imageBackground: "#111827",
+      imageShadow: "0 14px 30px rgba(2,6,23,0.35)",
+      imageRadius: "18px",
+      imageCaptionColor: "#94a3b8",
+      headingCardBackground: "#111827",
+      headingCardBorderColor: withAlpha(accent, 0.24),
+      headerBackground: `linear-gradient(135deg, ${withAlpha(primary, 0.22)}, ${withAlpha(accent, 0.16)})`,
+      headerBorder: `1px solid ${withAlpha(accent, 0.22)}`,
+      headerShadow: "0 14px 32px rgba(2,6,23,0.36)",
+      headerTitleColor: "#f8fafc",
+      headerMetaColor: "#cbd5e1",
+    };
+  }
+
+  return {
+    headerVariant: "plain",
+    pageBackground: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
+    articleBackground: "#ffffff",
+    articleBorder: "1px solid #e5e7eb",
+    articleRadius: "18px",
+    articlePadding: "30px 24px",
+    articleShadow: "0 16px 36px rgba(15,23,42,0.05)",
+    bodyTextColor: "#1f2937",
+    mutedTextColor: "#8c8c8c",
+    titleColor: "#111827",
+    badgeBackground: `linear-gradient(135deg, ${primary}, ${accent})`,
+    badgeColor: "#ffffff",
+    badgeBorder: "none",
+    summaryBackground: "#f8fafc",
+    summaryBorder: `1px solid ${withAlpha(primary, 0.16)}`,
+    summaryColor: "#4a4a4a",
+    summaryRadius: "14px",
+    summaryPadding: "16px 18px",
+    quoteBackground: "#f8fafc",
+    quoteTextColor: "#475569",
+    quoteBorderColor: primary,
+    highlightBackground: mixWithWhite(primary, 0.08),
+    highlightBorderColor: withAlpha(primary, 0.14),
+    highlightTextColor: "#1f2937",
+    goldenBackground: `linear-gradient(135deg, ${mixWithWhite(primary, 0.10)}, ${mixWithWhite(accent, 0.12)})`,
+    goldenBorderColor: primary,
+    goldenTextColor: "#111827",
+    dividerColor: "#e5e7eb",
+    imageBorderColor: "#dbe2ea",
+    imageBackground: "#ffffff",
+    imageShadow: "0 10px 24px rgba(15,23,42,0.04)",
+    imageRadius: "16px",
+    imageCaptionColor: "#6b7280",
+    headingCardBackground: `linear-gradient(135deg, ${mixWithWhite(accent, 0.16)}, ${mixWithWhite(primary, 0.12)})`,
+    headingCardBorderColor: withAlpha(primary, 0.16),
+  };
+}
+
+function renderExportHeader(args: {
+  badgeText: string;
+  title: string;
+  accountName: string;
+  metaDate: string;
+  domainStyle: ReturnType<typeof getWechatDomainPreviewStyle>;
+  templateTheme: ExportTemplateTheme;
+}) {
+  const { badgeText, title, accountName, metaDate, domainStyle, templateTheme } = args;
+  const badgeHtml = `<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${templateTheme.badgeBackground};color:${templateTheme.badgeColor};border:${templateTheme.badgeBorder};font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(badgeText)}</div>`;
+  const titleColor = templateTheme.headerTitleColor ?? templateTheme.titleColor ?? String(domainStyle.titleStyle.color);
+  const metaColor = templateTheme.headerMetaColor ?? templateTheme.mutedTextColor;
+  const titleHtml = `<h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${titleColor};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${escapeHtml(title)}</h1>`;
+  const metaHtml = `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:${metaColor};justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>`;
+
+  if (templateTheme.headerVariant === "hero" || templateTheme.headerVariant === "warm" || templateTheme.headerVariant === "dark") {
+    return `<header style="margin:0 0 22px;padding:22px 20px;border-radius:20px;background:${templateTheme.headerBackground};border:${templateTheme.headerBorder};box-shadow:${templateTheme.headerShadow};">${badgeHtml}${titleHtml}${metaHtml}</header>`;
+  }
+
+  if (templateTheme.headerVariant === "minimal") {
+    return `<header style="margin:0 0 22px;">${badgeHtml}${titleHtml}${metaHtml}<div style="margin-top:16px;height:1px;background:${templateTheme.dividerColor};"></div></header>`;
+  }
+
+  return `<header style="margin:0 0 20px;">${badgeHtml}${titleHtml}${metaHtml}</header>`;
+}
+
+type WechatRichHtmlOptions = {
+  includeDocumentShell?: boolean;
+  includeHeader?: boolean;
+  imageSrcMap?: Record<string, string>;
+};
+
+type RichHtmlBuildArgs = {
+  draft: HtmlDraft;
+  body: string;
+  formatting: DraftFormatting;
+  primary: string;
+  accent: string;
+  publishChannel: NonNullable<Draft["publishedChannel"]>;
+  accountName: string;
+  domain: ArticleDomain;
+  includeDocumentShell: boolean;
+  includeHeader: boolean;
+  imageSrcMap?: Record<string, string>;
+};
+
+function buildRichHtml(args: RichHtmlBuildArgs) {
+  const {
+    draft,
+    body,
+    formatting,
+    primary,
+    accent,
+    publishChannel,
+    accountName,
+    domain,
+    includeDocumentShell,
+    includeHeader,
+    imageSrcMap,
+  } = args;
+  const isWechatChannel = publishChannel === "公众号";
+  const metaDate = formatDraftTime(draft.publishedAt ?? draft.updatedAt ?? new Date().toISOString()).split(" ")[0];
+  const inlineHighlightHtmlStyle = getInlineHighlightHtmlStyle(primary, accent);
+  const domainStyle = getWechatDomainPreviewStyle(domain, primary, accent);
+  const templateTheme = getTemplateExportTheme(formatting.template, primary, accent);
+  const paragraphColor = templateTheme.bodyTextColor;
+  const headingTextColor = templateTheme.titleColor ?? templateTheme.bodyTextColor ?? domainStyle.headingTextColor;
+  const quoteBackground = templateTheme.quoteBackground ?? domainStyle.quoteBackground;
+  const quoteTextColor = templateTheme.quoteTextColor ?? domainStyle.quoteTextColor;
+  const quoteBorderColor = templateTheme.quoteBorderColor ?? primary;
+  const dividerColor = templateTheme.dividerColor ?? domainStyle.dividerColor;
+  const imageBorderColor = templateTheme.imageBorderColor ?? String(domainStyle.imageFrameStyle.borderColor);
+  const imageBackground = templateTheme.imageBackground ?? String(domainStyle.imageFrameStyle.background);
+  const imageShadow = templateTheme.imageShadow ?? String(domainStyle.imageFrameStyle.boxShadow);
+  const imageRadius = templateTheme.imageRadius ?? String(domainStyle.imageFrameStyle.borderRadius);
+  const imageCaptionColor = templateTheme.imageCaptionColor ?? domainStyle.imageCaptionColor;
+  const summaryBackground = templateTheme.summaryBackground ?? String(domainStyle.summaryStyle.background);
+  const summaryBorder = templateTheme.summaryBorder ?? String(domainStyle.summaryStyle.border);
+  const summaryColor = templateTheme.summaryColor ?? String(domainStyle.summaryStyle.color);
+  const summaryRadius = templateTheme.summaryRadius ?? String(domainStyle.summaryStyle.borderRadius);
+  const summaryPadding = templateTheme.summaryPadding ?? String(domainStyle.summaryStyle.padding);
+  const headerHtml = includeHeader
+    ? renderExportHeader({
+        badgeText: domainStyle.badgeText,
+        title: draft.title,
+        accountName,
+        metaDate,
+        domainStyle,
+        templateTheme,
+      })
+    : "";
+  const htmlSections = extractContentBlocks(body)
+    .map((block) => {
+      const resolvedImageSrc = block.type === "image" && block.src ? imageSrcMap?.[block.src] ?? block.src : undefined;
+
+      if (block.type === "heading") {
+        if (!isWechatChannel) {
+          return `<h2 style="font-size:20px;font-weight:700;margin:24px 0 12px;color:${primary};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
+        }
+
+        if (domainStyle.headingMode === "underline") {
+          return `<h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:30px 0 15px;color:${headingTextColor};display:inline-block;padding-bottom:6px;border-bottom:2px solid ${primary};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
+        }
+
+        if (domainStyle.headingMode === "center") {
+          return `<div style="text-align:center;margin:34px 0 18px;"><h2 style="display:inline-block;font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.8;margin:0;color:${headingTextColor};padding-bottom:6px;border-bottom:2px solid ${accent};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+        }
+
+        if (domainStyle.headingMode === "card") {
+          return `<div style="margin:30px 0 15px;padding:12px 16px;border-radius:16px;background:${templateTheme.headingCardBackground};border:1px solid ${templateTheme.headingCardBorderColor};"><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.7;margin:0;color:${headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+        }
+
+        return `<div style="display:flex;align-items:flex-start;gap:12px;margin:30px 0 15px;"><span style="display:inline-block;width:6px;height:32px;border-radius:999px;background:linear-gradient(180deg, ${primary}, ${accent});opacity:0.9;flex-shrink:0;margin-top:2px;"></span><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:0;color:${headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
+      }
+
+      if (block.type === "quote") {
+        return isWechatChannel
+          ? `<blockquote style="margin:24px 0;padding:16px 18px;background:${quoteBackground};border-left:4px solid ${quoteBorderColor};border-radius:12px;font-size:15px;line-height:1.8;color:${quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
+          : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${quoteBorderColor};background:${quoteBackground};border-radius:${formatting.roundedQuote ? "0 12px 12px 0" : "0"};line-height:1.9;color:${quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`;
+      }
+
+      if (block.type === "divider") {
+        return `<hr style="margin:28px 0;border:none;border-top:1px solid ${dividerColor};" />`;
+      }
+
+      if (block.type === "image") {
+        if (resolvedImageSrc) {
+          const caption = block.caption || block.alt || "配图";
+          return isWechatChannel
+            ? `<figure style="margin:24px 0;"><img src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${imageRadius};border:1px solid ${imageBorderColor};background:${imageBackground};box-shadow:${imageShadow};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
+            : `<figure style="margin:24px 0;"><img src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${imageRadius};border:1px solid ${imageBorderColor};background:${imageBackground};box-shadow:${imageShadow};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
+        }
+
+        return isWechatChannel
+          ? `<div style="margin:24px 0;border-radius:${imageRadius};overflow:hidden;border:1px solid ${imageBorderColor};background:${imageBackground};box-shadow:${imageShadow};"><div style="height:180px;background:${imageBackground};display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid ${String(domainStyle.imagePlaceholderChipStyle.borderColor)};background:${String(domainStyle.imagePlaceholderChipStyle.background)};color:${String(domainStyle.imagePlaceholderChipStyle.color)};font-size:12px;">配图占位</span></div><div style="padding:10px 12px;text-align:center;color:${imageCaptionColor};font-size:12px;">${escapeHtml(block.content)}</div></div>`
+          : `<div style="margin:24px 0;padding:28px 16px;border:1px dashed ${imageBorderColor};border-radius:${imageRadius};text-align:center;color:${imageCaptionColor};background:${imageBackground};">${escapeHtml(block.content)}</div>`;
+      }
+
+      if (block.type === "code") {
+        const language = block.language ? escapeHtml(block.language) : "code";
+        return isWechatChannel
+          ? `<figure style="margin:24px 0;border:1px solid ${templateTheme.highlightBorderColor};border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.12);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`
+          : `<figure style="margin:24px 0;border:1px solid ${templateTheme.highlightBorderColor};border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.12);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`;
+      }
+
+      if (block.type === "golden") {
+        return isWechatChannel
+          ? `<div style="margin:24px 0;padding:16px 18px;border-radius:10px;background:${templateTheme.goldenBackground};border-left:3px solid ${templateTheme.goldenBorderColor};color:${templateTheme.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
+          : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:${templateTheme.goldenBackground};border-left:3px solid ${templateTheme.goldenBorderColor};color:${templateTheme.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
+      }
+
+      if (block.type === "highlight") {
+        return isWechatChannel
+          ? `<div style="margin:22px 0;padding:14px 16px;border-radius:14px;border:1px solid ${templateTheme.highlightBorderColor};background:${templateTheme.highlightBackground};color:${templateTheme.highlightTextColor};line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
+          : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${templateTheme.highlightBorderColor};background:${templateTheme.highlightBackground};color:${templateTheme.highlightTextColor};line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
+      }
+
+      if (block.type === "unordered-list") {
+        return `<ul style="margin:20px 0 24px;padding-left:20px;color:${paragraphColor};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ul>`;
+      }
+
+      if (block.type === "ordered-list") {
+        return `<ol style="margin:20px 0 24px;padding-left:20px;color:${paragraphColor};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ol>`;
+      }
+
+      return isWechatChannel
+        ? `<p style="font-size:${domainStyle.paragraphFontSize};line-height:${domainStyle.paragraphLineHeight};margin:0 0 18px;color:${paragraphColor};letter-spacing:${domainStyle.paragraphLetterSpacing};font-family:${domainStyle.paragraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
+        : `<p style="font-size:${formatting.fontSize};line-height:${formatting.lineHeight};margin:0 0 ${formatting.paragraphSpacing};color:${paragraphColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`;
+    })
+    .join("");
+
+  const summaryHtml = draft.summary
+    ? `<div style="margin:0 0 18px;background:${summaryBackground};border:${summaryBorder};border-radius:${summaryRadius};padding:${summaryPadding};color:${summaryColor};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>`
+    : "";
+
+  if (!includeDocumentShell) {
+    return `<section style="font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;color:${templateTheme.bodyTextColor};">${headerHtml}${summaryHtml}${htmlSections}</section>`;
+  }
+
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />${isWechatChannel ? '<meta name="viewport" content="width=device-width, initial-scale=1" />' : ""}<title>${escapeHtml(draft.title)}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:${templateTheme.pageBackground};padding:${isWechatChannel ? "24px 14px" : "32px 18px"};color:${templateTheme.bodyTextColor};"><article style="max-width:720px;margin:0 auto;background:${templateTheme.articleBackground};padding:${templateTheme.articlePadding};border-radius:${templateTheme.articleRadius};border:${templateTheme.articleBorder};box-shadow:${templateTheme.articleShadow};">${headerHtml}${summaryHtml}${htmlSections}</article></body></html>`;
+}
+
 export function buildHtml(
   draft: HtmlDraft,
   body: string,
@@ -388,97 +868,18 @@ export function buildHtml(
   domain: ArticleDomain,
   options?: { includeHeader?: boolean },
 ) {
-  const isWechatChannel = publishChannel === "公众号";
-  const includeHeader = options?.includeHeader ?? true;
-  const metaDate = formatDraftTime(draft.publishedAt ?? draft.updatedAt).split(" ")[0];
-  const inlineHighlightHtmlStyle = getInlineHighlightHtmlStyle(primary, accent);
-  const domainStyle = getWechatDomainPreviewStyle(domain, primary, accent);
-  const htmlSections = extractContentBlocks(body)
-    .map((block) => {
-      if (block.type === "heading") {
-        if (!isWechatChannel) {
-          return `<h2 style="font-size:20px;font-weight:700;margin:24px 0 12px;color:${primary};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
-        }
-
-        if (domainStyle.headingMode === "underline") {
-          return `<h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:30px 0 15px;color:${domainStyle.headingTextColor};display:inline-block;padding-bottom:6px;border-bottom:2px solid ${primary};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
-        }
-
-        if (domainStyle.headingMode === "center") {
-          return `<div style="text-align:center;margin:34px 0 18px;"><h2 style="display:inline-block;font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.8;margin:0;color:${domainStyle.headingTextColor};padding-bottom:6px;border-bottom:2px solid ${accent};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-        }
-
-        if (domainStyle.headingMode === "card") {
-          return `<div style="margin:30px 0 15px;padding:12px 16px;border-radius:16px;background:linear-gradient(135deg, color-mix(in srgb, ${accent} 22%, white), color-mix(in srgb, ${primary} 18%, white));border:1px solid color-mix(in srgb, ${primary} 18%, white);"><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.7;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-        }
-
-        return `<div style="display:flex;align-items:flex-start;gap:12px;margin:30px 0 15px;"><span style="display:inline-block;width:6px;height:32px;border-radius:999px;background:linear-gradient(180deg, ${primary}, ${accent});opacity:0.9;flex-shrink:0;margin-top:2px;"></span><h2 style="font-size:18px;font-weight:${domainStyle.headingFontWeight};line-height:1.75;margin:0;color:${domainStyle.headingTextColor};font-family:${domainStyle.headingFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></div>`;
-      }
-
-      if (block.type === "quote") {
-        return isWechatChannel
-          ? `<blockquote style="margin:24px 0;padding:16px 18px;background:${domainStyle.quoteBackground};border-radius:12px;font-size:15px;line-height:1.8;color:${domainStyle.quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
-          : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${primary};background:#f8fbff;border-radius:${formatting.roundedQuote ? "0 12px 12px 0" : "0"};line-height:1.9;color:#475569;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`;
-      }
-
-      if (block.type === "divider") {
-        return `<hr style="margin:28px 0;border:none;border-top:1px solid ${domainStyle.dividerColor};" />`;
-      }
-
-      if (block.type === "image") {
-        if (block.src) {
-          const caption = block.caption || block.alt || "配图";
-          return isWechatChannel
-            ? `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
-            : `<figure style="margin:24px 0;"><img src="${escapeHtml(block.src)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:20px;border:1px solid #cbd5e1;background:#fff;object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:#6b7280;font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
-        }
-
-        return isWechatChannel
-          ? `<div style="margin:24px 0;border-radius:${String(domainStyle.imageFrameStyle.borderRadius)};overflow:hidden;border:1px solid ${String(domainStyle.imageFrameStyle.borderColor)};background:${String(domainStyle.imageFrameStyle.background)};box-shadow:${String(domainStyle.imageFrameStyle.boxShadow)};"><div style="height:180px;background:${String(domainStyle.imageFrameStyle.background)};display:flex;align-items:center;justify-content:center;"><span style="display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border-radius:999px;border:1px solid ${String(domainStyle.imagePlaceholderChipStyle.borderColor)};background:${String(domainStyle.imagePlaceholderChipStyle.background)};color:${String(domainStyle.imagePlaceholderChipStyle.color)};font-size:12px;">配图占位</span></div><div style="padding:10px 12px;text-align:center;color:${domainStyle.imageCaptionColor};font-size:12px;">${escapeHtml(block.content)}</div></div>`
-          : `<div style="margin:24px 0;padding:28px 16px;border:1px dashed #cbd5e1;border-radius:16px;text-align:center;color:#94a3b8;">${escapeHtml(block.content)}</div>`;
-      }
-
-      if (block.type === "code") {
-        const language = block.language ? escapeHtml(block.language) : "code";
-        return isWechatChannel
-          ? `<figure style="margin:24px 0;border:1px solid ${domainStyle.highlightBorderColor};border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`
-          : `<figure style="margin:24px 0;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden;background:#0f172a;box-shadow:0 10px 26px rgba(15,23,42,0.08);"><div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.08);color:#cbd5e1;font-size:12px;letter-spacing:0.04em;text-transform:uppercase;"><span>示例代码</span><span>${language}</span></div><pre style="margin:0;padding:16px 14px 18px;overflow:auto;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;"><code>${escapeHtml(block.content)}</code></pre></figure>`;
-      }
-
-      if (block.type === "golden") {
-        return isWechatChannel
-          ? `<div style="margin:24px 0;padding:16px 18px;border-radius:10px;background:${domainStyle.goldenBackground};border-left:3px solid ${domainStyle.goldenBorderColor};color:${domainStyle.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
-          : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:linear-gradient(135deg, ${primary}15, ${accent}22);color:#111827;font-weight:600;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
-      }
-
-      if (block.type === "highlight") {
-        return isWechatChannel
-          ? `<div style="margin:22px 0;padding:14px 16px;border-radius:14px;border:1px solid ${domainStyle.highlightBorderColor};background:${domainStyle.highlightBackground};color:#1f2937;line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`
-          : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${primary}20;background:${primary}08;color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
-      }
-
-      if (block.type === "unordered-list") {
-        return `<ul style="margin:20px 0 24px;padding-left:20px;color:${isWechatChannel ? "#4a4a4a" : "#1f2937"};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ul>`;
-      }
-
-      if (block.type === "ordered-list") {
-        return `<ol style="margin:20px 0 24px;padding-left:20px;color:${isWechatChannel ? "#4a4a4a" : "#1f2937"};line-height:${isWechatChannel ? "1.85" : "1.9"};">${block.items.map((item) => `<li style="margin-bottom:8px;">${renderInlineHtml(item, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</li>`).join("")}</ol>`;
-      }
-
-      return isWechatChannel
-        ? `<p style="font-size:${domainStyle.paragraphFontSize};line-height:${domainStyle.paragraphLineHeight};margin:0 0 18px;color:${domainStyle.paragraphColor};letter-spacing:${domainStyle.paragraphLetterSpacing};font-family:${domainStyle.paragraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
-        : `<p style="font-size:${formatting.fontSize};line-height:${formatting.lineHeight};margin:0 0 ${formatting.paragraphSpacing};color:#1f2937;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`;
-    })
-    .join("");
-
-  if (isWechatChannel) {
-    const headerHtml = includeHeader
-      ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:${primary};background-image:linear-gradient(135deg, ${primary}, ${accent});color:#fff;font-size:12px;font-weight:700;margin-bottom:16px;">${escapeHtml(domainStyle.badgeText)}</div><h1 style="font-size:${domainStyle.titleStyle.fontSize};line-height:${domainStyle.titleStyle.lineHeight};margin:0 0 14px;color:${String(domainStyle.titleStyle.color)};font-weight:${String(domainStyle.titleStyle.fontWeight)};letter-spacing:${String(domainStyle.titleStyle.letterSpacing)};text-align:${String(domainStyle.titleStyle.textAlign)};font-family:${String(domainStyle.titleStyle.fontFamily)};">${draft.title}</h1><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:20px;color:#8c8c8c;justify-content:${domainStyle.metaAlign};"><span style="font-size:15px;line-height:20px;color:rgba(0,0,0,0.72);font-weight:400;">${escapeHtml(accountName)}</span><span style="font-size:12px;">·</span><span style="font-size:13px;line-height:20px;">${metaDate}</span></div>${draft.summary ? `<div style="margin:0 0 18px;background:${String(domainStyle.summaryStyle.background)};border:${String(domainStyle.summaryStyle.border)};border-radius:${String(domainStyle.summaryStyle.borderRadius)};padding:${String(domainStyle.summaryStyle.padding)};color:${String(domainStyle.summaryStyle.color)};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>` : ""}`
-      : "";
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${draft.title}</title></head><body style="margin:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif;background:#f5f5f5;padding:24px 14px;color:#4a4a4a;"><article style="max-width:720px;margin:0 auto;background:#fff;padding:28px 22px;border-radius:8px;border:1px solid #ededed;">${headerHtml}${htmlSections}</article></body></html>`;
-  }
-
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>${draft.title}</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f7fb;padding:24px;"><article style="max-width:720px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><h1 style="font-size:32px;line-height:1.35;margin-bottom:16px;color:#111827;">${draft.title}</h1><p style="font-size:16px;line-height:1.9;margin-bottom:24px;color:#4b5563;">${draft.summary}</p>${htmlSections}</article></body></html>`;
+  return buildRichHtml({
+    draft,
+    body,
+    formatting,
+    primary,
+    accent,
+    publishChannel,
+    accountName,
+    domain,
+    includeDocumentShell: true,
+    includeHeader: options?.includeHeader ?? true,
+  });
 }
 
 export function buildWechatArticleHtml(
@@ -489,56 +890,30 @@ export function buildWechatArticleHtml(
   accent: string,
   accountName: string,
   domain: ArticleDomain,
-  options?: { includeHeader?: boolean },
+  options: WechatRichHtmlOptions = {},
 ) {
-  return buildHtml(draft, body, formatting, primary, accent, "公众号", accountName, domain, options);
+  return buildRichHtml({
+    draft,
+    body,
+    formatting,
+    primary,
+    accent,
+    publishChannel: "公众号",
+    accountName,
+    domain,
+    includeDocumentShell: options.includeDocumentShell ?? false,
+    includeHeader: options.includeHeader ?? false,
+    imageSrcMap: options.imageSrcMap,
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Template preview style
 // ---------------------------------------------------------------------------
 
-type TemplatePreviewBase = {
-  shellGradient: string;
-  shellTint: string;
-  heroGradient: string;
-  heroBorder: string;
-  sectionBackground: string;
-  bodyOverlay: string;
-  accentSoft: string;
-};
-
-function createTemplatePreviewStyle(
-  base: TemplatePreviewBase,
-  options?: {
-    dark?: boolean;
-    panelBackground?: string;
-    panelBorder?: string;
-    badgeColor?: string;
-  },
-) {
-  const panelBackground = options?.panelBackground ?? (options?.dark ? "rgba(15,23,42,0.78)" : "rgba(255,255,255,0.82)");
-  const panelBorder = options?.panelBorder ?? base.heroBorder;
-
-  return {
-    ...base,
-    deviceBorder: options?.dark ? "rgba(71,85,105,0.58)" : "rgba(226,232,240,0.92)",
-    deviceHeaderBackground: options?.dark ? "rgba(15,23,42,0.92)" : "rgba(248,250,252,0.92)",
-    deviceHeaderBorder: options?.dark ? "rgba(71,85,105,0.46)" : "rgba(226,232,240,0.86)",
-    titlePanelBackground: panelBackground,
-    titlePanelBorder: panelBorder,
-    titlePanelShadow: options?.dark ? "0 18px 50px rgba(2,6,23,0.24)" : "0 18px 50px rgba(15,23,42,0.08)",
-    badgeBackground: base.heroGradient,
-    badgeColor: options?.badgeColor ?? (options?.dark ? "#e2e8f0" : "#0f172a"),
-    badgeBorder: `1px solid ${panelBorder}`,
-    contentCardBackground: options?.dark ? "rgba(15,23,42,0.66)" : "rgba(255,255,255,0.78)",
-    contentCardBorder: panelBorder,
-  };
-}
-
 export function getTemplatePreviewStyle(template: DraftFormatting["template"], primary: string, accent: string) {
   if (template === "暖色调") {
-    return createTemplatePreviewStyle({
+    return {
       shellGradient: "linear-gradient(180deg, rgba(255,247,237,0.98), rgba(255,255,255,1))",
       shellTint: "radial-gradient(circle at top left, rgba(251,146,60,0.16), transparent 42%)",
       heroGradient: `linear-gradient(145deg, ${primary}18, ${accent}28 55%, rgba(255,255,255,0.92))`,
@@ -546,11 +921,22 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(255,247,237,0.72)",
       bodyOverlay: "radial-gradient(circle at top right, rgba(251,146,60,0.10), transparent 30%)",
       accentSoft: "rgba(251,146,60,0.14)",
-    }, { panelBackground: "rgba(255,247,237,0.82)", panelBorder: `${primary}26` });
+      deviceBorder: "#f3caa5",
+      deviceHeaderBackground: "#fff4e8",
+      deviceHeaderBorder: "#f7d2b1",
+      titlePanelBackground: "linear-gradient(135deg, rgba(255,250,245,0.98), rgba(255,237,213,0.92))",
+      titlePanelBorder: "#f6d2ae",
+      titlePanelShadow: "0 18px 36px rgba(251,146,60,0.10)",
+      badgeBackground: "linear-gradient(135deg, #fb923c, #f59e0b)",
+      badgeColor: "#fffaf5",
+      badgeBorder: "none",
+      contentCardBackground: "rgba(255,250,245,0.82)",
+      contentCardBorder: "#f4d8c0",
+    };
   }
 
   if (template === "商务灰") {
-    return createTemplatePreviewStyle({
+    return {
       shellGradient: "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(255,255,255,1))",
       shellTint: "radial-gradient(circle at top left, rgba(124,58,237,0.12), transparent 44%)",
       heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${accent}14 52%, ${primary}10)`,
@@ -558,11 +944,22 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(248,250,252,0.9)",
       bodyOverlay: "linear-gradient(180deg, rgba(15,23,42,0.02), transparent 18%)",
       accentSoft: "rgba(124,58,237,0.10)",
-    }, { panelBorder: "rgba(148,163,184,0.32)" });
+      deviceBorder: "#cfd6df",
+      deviceHeaderBackground: "#f5f7fa",
+      deviceHeaderBorder: "#d7dde6",
+      titlePanelBackground: "linear-gradient(180deg, rgba(255,255,255,0.98), rgba(243,244,246,0.96))",
+      titlePanelBorder: "#d7dde6",
+      titlePanelShadow: "0 14px 28px rgba(15,23,42,0.05)",
+      badgeBackground: "#111827",
+      badgeColor: "#f8fafc",
+      badgeBorder: "1px solid #111827",
+      contentCardBackground: "rgba(248,250,252,0.92)",
+      contentCardBorder: "#dbe1e8",
+    };
   }
 
   if (template === "深色") {
-    return createTemplatePreviewStyle({
+    return {
       shellGradient: "linear-gradient(180deg, rgba(2,6,23,0.98), rgba(15,23,42,1))",
       shellTint: "radial-gradient(circle at top left, rgba(16,185,129,0.18), transparent 46%)",
       heroGradient: `linear-gradient(150deg, rgba(15,23,42,0.98), ${primary}18 58%, rgba(15,23,42,0.94))`,
@@ -570,11 +967,22 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(15,23,42,0.7)",
       bodyOverlay: "radial-gradient(circle at top right, rgba(16,185,129,0.10), transparent 32%)",
       accentSoft: "rgba(16,185,129,0.12)",
-    }, { dark: true, panelBackground: "rgba(15,23,42,0.82)", panelBorder: "rgba(71,85,105,0.5)", badgeColor: "#f8fafc" });
+      deviceBorder: "#334155",
+      deviceHeaderBackground: "#111827",
+      deviceHeaderBorder: "#374151",
+      titlePanelBackground: "linear-gradient(145deg, rgba(15,23,42,0.98), rgba(30,41,59,0.96))",
+      titlePanelBorder: "rgba(71,85,105,0.62)",
+      titlePanelShadow: "0 20px 44px rgba(2,6,23,0.40)",
+      badgeBackground: "linear-gradient(135deg, rgba(16,185,129,0.24), rgba(15,23,42,0.36))",
+      badgeColor: "#d1fae5",
+      badgeBorder: "1px solid rgba(16,185,129,0.32)",
+      contentCardBackground: "rgba(15,23,42,0.46)",
+      contentCardBorder: "rgba(71,85,105,0.56)",
+    };
   }
 
   if (template === "极简白") {
-    return createTemplatePreviewStyle({
+    return {
       shellGradient: "linear-gradient(180deg, rgba(255,255,255,0.99), rgba(249,250,251,1))",
       shellTint: "radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 42%)",
       heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.95), ${primary}10 60%, rgba(255,255,255,1))`,
@@ -582,10 +990,21 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
       sectionBackground: "rgba(248,250,252,0.9)",
       bodyOverlay: "linear-gradient(180deg, rgba(148,163,184,0.06), transparent 16%)",
       accentSoft: "rgba(37,99,235,0.10)",
-    }, { panelBackground: "rgba(255,255,255,0.92)", panelBorder: "rgba(226,232,240,0.9)" });
+      deviceBorder: "#e2e8f0",
+      deviceHeaderBackground: "#ffffff",
+      deviceHeaderBorder: "#edf2f7",
+      titlePanelBackground: "linear-gradient(180deg, rgba(255,255,255,1), rgba(248,250,252,0.96))",
+      titlePanelBorder: "#edf2f7",
+      titlePanelShadow: "0 14px 28px rgba(15,23,42,0.04)",
+      badgeBackground: "rgba(37,99,235,0.08)",
+      badgeColor: "#1d4ed8",
+      badgeBorder: "1px solid rgba(37,99,235,0.12)",
+      contentCardBackground: "rgba(255,255,255,0.90)",
+      contentCardBorder: "#edf2f7",
+    };
   }
 
-  return createTemplatePreviewStyle({
+  return {
     shellGradient: "linear-gradient(180deg, rgba(239,246,255,0.98), rgba(255,255,255,1))",
     shellTint: "radial-gradient(circle at top left, rgba(59,130,246,0.14), transparent 44%)",
     heroGradient: `linear-gradient(145deg, rgba(255,255,255,0.96), ${primary}16 56%, ${accent}10)`,
@@ -593,7 +1012,18 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
     sectionBackground: "rgba(239,246,255,0.78)",
     bodyOverlay: "radial-gradient(circle at top right, rgba(59,130,246,0.10), transparent 30%)",
     accentSoft: "rgba(59,130,246,0.10)",
-  }, { panelBackground: "rgba(239,246,255,0.82)", panelBorder: `${primary}22` });
+    deviceBorder: "#bfdbfe",
+    deviceHeaderBackground: "#eff6ff",
+    deviceHeaderBorder: "#dbeafe",
+    titlePanelBackground: "linear-gradient(145deg, rgba(239,246,255,0.98), rgba(255,255,255,0.96))",
+    titlePanelBorder: "#dbeafe",
+    titlePanelShadow: "0 18px 36px rgba(37,99,235,0.10)",
+    badgeBackground: "linear-gradient(135deg, #2563eb, #38bdf8)",
+    badgeColor: "#eff6ff",
+    badgeBorder: "none",
+    contentCardBackground: "rgba(248,251,255,0.92)",
+    contentCardBorder: "#dbeafe",
+  };
 }
 
 // ---------------------------------------------------------------------------
