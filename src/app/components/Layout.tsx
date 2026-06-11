@@ -103,7 +103,7 @@ export function Layout({ children }: LayoutProps) {
             <PenTool className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-[16px] tracking-tight text-sidebar-foreground" style={{ fontWeight: 900 }}>写作助手</div>
+            <div className="text-[16px] tracking-tight text-sidebar-foreground font-black">写作助手</div>
             <div className="text-[11px] text-muted-foreground">AI Creator Studio</div>
           </div>
         </div>
@@ -114,10 +114,9 @@ export function Layout({ children }: LayoutProps) {
               href={to}
               className={`group flex items-center gap-3 rounded-2xl px-3.5 py-3 text-[13.5px] transition-all ${
                 pathname === to
-                  ? "border border-primary/25 bg-primary/10 text-primary shadow-[0_12px_28px_rgba(111,92,255,0.14)]"
-                  : "border border-transparent text-muted-foreground hover:border-border hover:bg-card/70 hover:text-foreground"
+                  ? "border border-primary/25 bg-primary/10 text-primary shadow-[0_12px_28px_rgba(111,92,255,0.14)] font-black"
+                  : "border border-transparent text-muted-foreground hover:border-border hover:bg-card/70 hover:text-foreground font-bold"
               }`}
-              style={{ fontWeight: pathname === to ? 900 : 750 }}
             >
               <Icon className="h-[18px] w-[18px]" />
               {label}
@@ -126,11 +125,11 @@ export function Layout({ children }: LayoutProps) {
         </nav>
         <div className="border-t border-sidebar-border p-4">
           <div className="flex items-center gap-3 rounded-3xl border border-border bg-card/70 px-3 py-3 shadow-sm backdrop-blur">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-[13px] text-white shadow-[0_12px_28px_rgba(111,92,255,0.25)]" style={{ fontWeight: 900 }}>
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-[13px] text-white shadow-[0_12px_28px_rgba(111,92,255,0.25)] font-black">
               {(user?.email ?? "L").slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-foreground" style={{ fontWeight: 850 }}>数字Lens</div>
+              <div className="truncate text-[13px] text-foreground font-extrabold">数字Lens</div>
               <div className="truncate text-[11px] text-muted-foreground">{user?.email ?? "未登录"}</div>
             </div>
             <button
@@ -149,51 +148,52 @@ export function Layout({ children }: LayoutProps) {
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-20 min-h-[80px] items-center gap-3 border-b border-border bg-card/70 px-4 backdrop-blur-2xl xl:px-5">
-          <div className="flex-1 max-w-md">
-            <div className="lens-input flex h-11 items-center gap-2 rounded-2xl px-3.5">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    handleGlobalSearch();
-                  }
-                }}
-                placeholder="搜索选题、文章、灵感..."
-                className="w-full border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
-              />
-              <kbd className="hidden rounded-lg bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">⌘K</kbd>
+          <div className="flex flex-1 items-center gap-3 max-w-2xl">
+            <div className="flex-1 max-w-md">
+              <div className="lens-input flex h-11 items-center gap-2 rounded-2xl px-3.5">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleGlobalSearch();
+                    }
+                  }}
+                  placeholder="搜索选题、文章、灵感..."
+                  className="w-full border-none bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
+                />
+                <kbd className="hidden rounded-lg bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">⌘K</kbd>
+              </div>
             </div>
-          </div>
-          <div className="hidden items-center gap-2 rounded-2xl border border-border bg-card/70 px-3 py-2 text-[12px] text-foreground shadow-sm backdrop-blur lg:flex">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-55" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-            </span>
-            All Systems Operational
-          </div>
-          <ThemeToggle compact />
-          <button
-            type="button"
-            className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-card/70 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/35 hover:text-primary"
-            aria-label="通知"
-            title="通知"
-          >
-            <Bell className="h-4 w-4" />
-          </button>
-          <div className="flex items-center gap-2">
             <button
               onClick={() => router.push("/topic-center")}
-              className="lens-btn-primary flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px]"
-              style={{ fontWeight: 900 }}
+              className="lens-btn-primary flex h-11 items-center gap-2 rounded-2xl px-4 text-[13px] font-black shrink-0"
             >
               <Plus className="h-4 w-4" />
               新建文章
               <ChevronDown className="h-3.5 w-3.5 opacity-80" />
+            </button>
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="hidden items-center gap-2 rounded-2xl border border-border bg-card/70 px-3 py-2 text-[12px] text-foreground shadow-sm backdrop-blur lg:flex">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-55" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              </span>
+              All Systems Operational
+            </div>
+            <ThemeToggle compact />
+            <button
+              type="button"
+              className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-card/70 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/35 hover:text-primary"
+              aria-label="通知"
+              title="通知"
+            >
+              <Bell className="h-4 w-4" />
             </button>
           </div>
         </header>

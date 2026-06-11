@@ -266,11 +266,11 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
     <div className="lens-page space-y-4">
       <section className="lens-hero grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="relative z-10 min-w-0">
-          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[12px] text-primary" style={{ fontWeight: 850 }}>
+          <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[12px] text-primary font-extrabold">
             <Sparkles className="h-3.5 w-3.5" />
             AI 精选工作流
           </div>
-          <h1 className="mt-3 text-[30px] leading-tight tracking-tight text-foreground md:text-[38px]" style={{ fontWeight: 950 }}>
+          <h1 className="mt-3 text-[30px] leading-tight tracking-tight text-foreground md:text-[38px] font-black">
             早上好，数字Lens
             <span className="ml-2 inline-block origin-bottom-right animate-pulse">👋</span>
           </h1>
@@ -280,7 +280,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
           <div className="mt-4 flex flex-wrap gap-2">
             {["深度分析", "工具测评", "副业机会", "行业趋势"].map((item) => (
-              <span key={item} className="lens-chip px-3 py-1.5 text-[12px]" style={{ fontWeight: 750 }}>
+              <span key={item} className="lens-chip px-3 py-1.5 text-[12px] font-bold">
                 {item}
               </span>
             ))}
@@ -290,16 +290,14 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
             <button
               type="button"
               onClick={() => router.push("/hot-topics")}
-              className="lens-btn-primary inline-flex h-11 items-center gap-2 px-4 text-[13px]"
-              style={{ fontWeight: 900 }}
+              className="lens-btn-primary inline-flex h-11 items-center gap-2 px-4 text-[13px] font-black"
             >
               开始创作 <ArrowRight className="h-4 w-4" />
             </button>
             <button
               type="button"
               onClick={() => router.push("/drafts")}
-              className="lens-btn-secondary inline-flex h-11 items-center gap-2 px-4 text-[13px]"
-              style={{ fontWeight: 850 }}
+              className="lens-btn-secondary inline-flex h-11 items-center gap-2 px-4 text-[13px] font-extrabold"
             >
               继续草稿 <FileText className="h-4 w-4" />
             </button>
@@ -307,18 +305,18 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         </div>
 
         <div className="relative z-10 grid gap-3">
-          <div className="relative min-h-[176px] overflow-hidden rounded-[24px] border border-border bg-card/60 p-5">
+          <div className="relative min-h-[176px] overflow-hidden rounded-[24px] border border-border bg-card/60 p-5 transition-all duration-300 hover:scale-[1.01] hover:bg-card/75 hover:border-primary/20 hover:shadow-sm">
             <div className="lens-orb absolute right-7 top-6 h-28 w-28" />
             <div className="relative z-10">
-              <div className="text-[13px] text-muted-foreground" style={{ fontWeight: 800 }}>今日最佳创作机会</div>
-              <div className="mt-3 max-w-[230px] text-[20px] leading-7 text-foreground" style={{ fontWeight: 950 }}>
+              <div className="text-[13px] text-muted-foreground font-extrabold">今日最佳创作机会</div>
+              <div className="mt-3 max-w-[230px] text-[20px] leading-7 text-foreground font-black">
                 {heroOpportunity?.title ?? "AI Agent 生态全面爆发"}
               </div>
               <div className="mt-4 flex items-center gap-3">
-                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary" style={{ fontWeight: 850 }}>
+                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[12px] text-primary font-extrabold">
                   热度 {heroOpportunity?.heat.toLocaleString() ?? "89"}
                 </span>
-                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] text-emerald-500" style={{ fontWeight: 850 }}>
+                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[12px] text-emerald-500 font-extrabold">
                   {heroOpportunity?.trend ?? "+22%"}
                 </span>
               </div>
@@ -327,17 +325,68 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: "创作潜力", value: Math.max(72, taskProgress), suffix: "/100" },
-              { label: "热点机会", value: activeHotDomainSection?.total ?? 12, suffix: "" },
-              { label: "预计阅读", value: "15w+", suffix: "" },
+              {
+                label: "创作潜力",
+                value: Math.max(72, taskProgress),
+                suffix: "/100",
+                sparkline: (
+                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="sparkline-grad-1" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--primary)" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M 0 24 Q 25 18, 50 12 T 100 4" fill="none" stroke="var(--primary)" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M 0 24 Q 25 18, 50 12 T 100 4 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-1)" />
+                    <circle cx="100" cy="4" r="3" fill="var(--primary)" />
+                  </svg>
+                )
+              },
+              {
+                label: "热点机会",
+                value: activeHotDomainSection?.total ?? 12,
+                suffix: "",
+                sparkline: (
+                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="sparkline-grad-2" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--chart-2)" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="var(--chart-2)" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M 0 18 Q 15 4, 30 20 T 60 8 T 80 22 T 100 6" fill="none" stroke="var(--chart-2)" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M 0 18 Q 15 4, 30 20 T 60 8 T 80 22 T 100 6 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-2)" />
+                    <circle cx="100" cy="6" r="3" fill="var(--chart-2)" />
+                  </svg>
+                )
+              },
+              {
+                label: "预计阅读",
+                value: "15w+",
+                suffix: "",
+                sparkline: (
+                  <svg className="mt-2 h-7 w-full overflow-visible opacity-90" viewBox="0 0 100 28" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient id="sparkline-grad-3" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--chart-3)" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="var(--chart-3)" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M 0 22 C 20 22, 40 18, 60 12 C 80 6, 90 2, 100 2" fill="none" stroke="var(--chart-3)" strokeWidth="2" strokeLinecap="round" />
+                    <path d="M 0 22 C 20 22, 40 18, 60 12 C 80 6, 90 2, 100 2 L 100 28 L 0 28 Z" fill="url(#sparkline-grad-3)" />
+                    <circle cx="100" cy="2" r="3" fill="var(--chart-3)" />
+                  </svg>
+                )
+              },
             ].map((item) => (
-              <div key={item.label} className="rounded-2xl border border-border bg-card/70 px-3 py-3">
+              <div key={item.label} className="rounded-2xl border border-border bg-card/70 px-3 py-3 transition-all duration-300 hover:scale-[1.02] hover:bg-card/90 hover:border-primary/20 hover:shadow-sm">
                 <div className="text-[11px] text-muted-foreground">{item.label}</div>
                 <div className="mt-1 flex items-end gap-1 text-foreground">
-                  <span className="text-[22px] leading-none" style={{ fontWeight: 950 }}>{item.value}</span>
+                  <span className="text-[22px] leading-none font-black">{item.value}</span>
                   <span className="text-[11px] text-muted-foreground">{item.suffix}</span>
                 </div>
-                <div className="lens-sparkline mt-2 opacity-80" />
+                {item.sparkline}
               </div>
             ))}
           </div>
@@ -350,7 +399,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
             <div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-primary" />
-                <h2 className="text-[15px] text-foreground" style={{ fontWeight: 850 }}>今日任务</h2>
+                <h2 className="text-[15px] text-foreground font-extrabold">今日任务</h2>
               </div>
               <p className="mt-1 text-[12px] text-muted-foreground">完成 {taskDone} / {taskTotal}，优先推进可发布内容。</p>
             </div>
@@ -379,9 +428,9 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                   <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${item.bg}`}>
                     <item.icon className={`h-4.5 w-4.5 ${item.color}`} />
                   </div>
-                  <div className="text-[22px] text-foreground" style={{ fontWeight: 850 }}>{item.value}</div>
+                  <div className="text-[22px] text-foreground font-extrabold">{item.value}</div>
                 </div>
-                <div className="mt-2 text-[12px] text-foreground" style={{ fontWeight: 750 }}>{item.label}</div>
+                <div className="mt-2 text-[12px] text-foreground font-bold">{item.label}</div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{item.hint}</div>
               </button>
             ))}
@@ -391,12 +440,12 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         <section className="rounded-[22px] border border-border bg-card/75 p-5">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-4 w-4 text-primary" />
-            <h2 className="text-[15px] text-foreground" style={{ fontWeight: 850 }}>运行状态</h2>
+            <h2 className="text-[15px] text-foreground font-extrabold">运行状态</h2>
           </div>
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between rounded-2xl bg-background px-3 py-2.5">
               <div>
-                <div className="text-[12px] text-foreground" style={{ fontWeight: 750 }}>写作模型</div>
+                <div className="text-[12px] text-foreground font-bold">写作模型</div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{aiProviderStatus.label}</div>
               </div>
               <span className={`rounded-full px-2 py-0.5 text-[11px] ${aiProviderStatus.configured ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>
@@ -405,7 +454,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
             </div>
             <div className="flex items-center justify-between rounded-2xl bg-background px-3 py-2.5">
               <div>
-                <div className="text-[12px] text-foreground" style={{ fontWeight: 750 }}>图片模型</div>
+                <div className="text-[12px] text-foreground font-bold">图片模型</div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{aiImageProviderStatus.label}</div>
               </div>
               <span className={`rounded-full px-2 py-0.5 text-[11px] ${aiImageProviderStatus.configured ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>
@@ -421,7 +470,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
 	            <div className="flex items-center gap-2">
 	              <Bot className="h-4 w-4 text-primary" />
-	              <h2 className="text-[14px] text-foreground" style={{ fontWeight: 850 }}>推荐选题</h2>
+	              <h2 className="text-[14px] text-foreground font-extrabold">推荐选题</h2>
 	            </div>
             <Link href="/hot-topics" className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-primary">
               查看全部 <ArrowRight className="h-3.5 w-3.5" />
@@ -436,12 +485,11 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                     <button
                       key={domain}
                       onClick={() => setActiveHotDomain(domain)}
-                      className={`rounded-full px-3 py-1.5 text-[12px] transition-colors ${
+                      className={`rounded-full px-3 py-1.5 text-[12px] transition-colors font-bold ${
                         activeHotDomainSection.domain === domain
                           ? "bg-primary text-white"
                           : "bg-accent text-muted-foreground hover:bg-primary/10"
                       }`}
-                      style={{ fontWeight: 700 }}
                     >
                       {domainConfigs[domain].icon} {domain}
                     </button>
@@ -454,19 +502,19 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                       {listedTopicRecommendations.map(({ topic, recommendation }, index) => (
                         <div key={topic.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 transition-colors hover:bg-background">
                           <button onClick={() => openHotTopicAsTopic(topic)} className="group flex min-w-0 items-start gap-3 text-left">
-                            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded bg-muted text-[12px] text-muted-foreground" style={{ fontWeight: 800 }}>
+                            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded bg-muted text-[12px] text-muted-foreground font-extrabold">
                               {index + 1}
 	                            </span>
 	                            <div className="min-w-0 flex-1">
-	                              <div className="line-clamp-2 text-[13.5px] leading-5 text-foreground group-hover:text-primary" style={{ fontWeight: 750 }}>{topic.title}</div>
-	                              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
-	                                <span className="text-foreground" style={{ fontWeight: 750 }}>切入：</span>{recommendation.angle}
+	                              <div className="line-clamp-2 text-[13.5px] leading-5 text-foreground group-hover:text-primary font-bold">{topic.title}</div>
+	                              <div className="mt-1 text-[11px] leading-5 text-muted-foreground font-bold">
+	                                <span>切入：</span>{recommendation.angle}
 	                              </div>
                               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                <span className="rounded bg-slate-950 dark:bg-white/10 px-1.5 py-0.5 text-[11px] text-white">推荐 {recommendation.score}</span>
-                                <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-muted-foreground">{topic.source}</span>
+                                <span className="rounded bg-slate-950 dark:bg-white/10 px-1.5 py-0.5 text-[11px] text-white font-bold">推荐 {recommendation.score}</span>
+                                <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-muted-foreground font-bold">{topic.source}</span>
                                 {topic.tags.map((tag) => (
-                                  <span key={tag} className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">{tag}</span>
+                                  <span key={tag} className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary font-bold">{tag}</span>
                                 ))}
                               </div>
                             </div>
@@ -474,15 +522,15 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
                           <div className="flex items-center gap-2">
                             <div className="hidden text-right sm:block">
-                              <div className="text-[12px] text-foreground/75" style={{ fontWeight: 750 }}>{topic.heat.toLocaleString()}</div>
-                              <div className="flex items-center justify-end gap-0.5 text-[11px] text-green-600">
+                              <div className="text-[12px] text-foreground/75 font-bold">{topic.heat.toLocaleString()}</div>
+                              <div className="flex items-center justify-end gap-0.5 text-[11px] text-green-600 font-bold">
                                 <TrendingUp className="h-3 w-3" /> {topic.trend}
                               </div>
                             </div>
-                            <button onClick={() => openHotTopicAsTopic(topic)} className="rounded-xl border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-card" style={{ fontWeight: 750 }}>
+                            <button onClick={() => openHotTopicAsTopic(topic)} className="rounded-xl border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-card font-bold">
                               选题
                             </button>
-                            <button onClick={() => openHotTopicAsTopic(topic, true)} className="rounded-xl bg-primary px-3 py-1.5 text-[12px] text-white hover:bg-primary/90" style={{ fontWeight: 850 }}>
+                            <button onClick={() => openHotTopicAsTopic(topic, true)} className="rounded-xl bg-primary px-3 py-1.5 text-[12px] text-white hover:bg-primary/90 font-extrabold">
                               一键成文
                             </button>
                           </div>
@@ -491,9 +539,9 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                     </div>
                   ) : (
                     <div className="px-5 py-10 text-center">
-                      <div className="text-[14px] text-foreground" style={{ fontWeight: 750 }}>暂无推荐选题</div>
+                      <div className="text-[14px] text-foreground font-bold">暂无推荐选题</div>
                       <div className="mt-1 text-[12px] text-muted-foreground">去热点中心抓取或切换领域后，会按来源归一分展示每个领域前 5 条。</div>
-                      <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-primary px-4 py-2 text-[12px] text-white hover:bg-primary/90" style={{ fontWeight: 850 }}>
+                      <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-primary px-4 py-2 text-[12px] text-white hover:bg-primary/90 font-extrabold">
                         去抓热点
                       </button>
                     </div>
@@ -502,9 +550,9 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
               </div>
             ) : (
               <div className="px-5 py-12 text-center">
-                <div className="text-[14px] text-foreground" style={{ fontWeight: 750 }}>还没有热点</div>
+                <div className="text-[14px] text-foreground font-bold">还没有热点</div>
                 <div className="mt-1 text-[12px] text-muted-foreground">先去热点中心抓取一次实时热点。</div>
-                <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-primary px-4 py-2 text-[12px] text-white hover:bg-primary/90" style={{ fontWeight: 850 }}>
+                <button onClick={() => router.push("/hot-topics")} className="mt-4 rounded-xl bg-primary px-4 py-2 text-[12px] text-white hover:bg-primary/90 font-extrabold">
                   去抓热点
                 </button>
               </div>
@@ -516,7 +564,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           <div className="flex items-center justify-between border-b border-border/70 px-5 py-3.5">
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary" />
-              <h2 className="text-[14px] text-foreground" style={{ fontWeight: 850 }}>草稿工作流</h2>
+              <h2 className="text-[14px] text-foreground font-extrabold">草稿工作流</h2>
             </div>
             <Link href="/drafts" className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-primary">
               全部 <ArrowRight className="h-3.5 w-3.5" />
@@ -528,7 +576,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
               <div key={group.key} className="px-5 py-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <div className="text-[13px] text-foreground" style={{ fontWeight: 850 }}>{group.title}</div>
+                    <div className="text-[13px] text-foreground font-extrabold">{group.title}</div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground">{group.description}</div>
                   </div>
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">{group.items.length}</span>
@@ -542,13 +590,13 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
                     return (
                       <div key={`${group.key}-${draft.id}`} className="rounded-2xl bg-background p-3">
                         <button onClick={() => router.push(targetHref)} className="block w-full text-left">
-                          <div className="truncate text-[13px] text-foreground" style={{ fontWeight: 750 }}>{draft.title}</div>
+                          <div className="truncate text-[13px] text-foreground font-bold">{draft.title}</div>
                           <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                             <span className={`rounded-full px-2 py-0.5 ${statusColors[draft.status]}`}>{draft.status}</span>
                             <span className="flex items-center gap-0.5"><Clock className="h-3 w-3" />{formatDraftTime(draft.updatedAt).split(" ")[1]}</span>
                           </div>
                         </button>
-                        <button onClick={() => router.push(targetHref)} className="mt-3 w-full rounded-xl border border-border bg-card px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-accent" style={{ fontWeight: 750 }}>
+                        <button onClick={() => router.push(targetHref)} className="mt-3 w-full rounded-xl border border-border bg-card px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-accent font-bold">
                           {group.actionLabel}
                         </button>
                       </div>
@@ -559,7 +607,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
             )) : (
               <div className="px-5 py-12 text-center">
                 <Sparkles className="mx-auto h-8 w-8 text-muted-foreground/40" />
-                <div className="mt-3 text-[14px] text-foreground" style={{ fontWeight: 750 }}>还没有草稿</div>
+                <div className="mt-3 text-[14px] text-foreground font-bold">还没有草稿</div>
                 <div className="mt-1 text-[12px] text-muted-foreground">从热点里选一条，或手动开始写。</div>
               </div>
             )}
