@@ -1449,7 +1449,7 @@ export function WritingPage() {
       { ...draft, title: inferredTitle, summary },
       htmlBody,
       "",
-      { includeTitle: false, includeCta: false },
+      { includeTitle: false, includeSummary: false, includeCta: false },
     );
     writeRichClipboard(html, plainText).then(() => {
       setSaveNotice("已复制公众号格式");

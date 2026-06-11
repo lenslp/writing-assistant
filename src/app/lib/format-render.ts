@@ -704,6 +704,7 @@ function renderExportHeader(args: {
 type WechatRichHtmlOptions = {
   includeDocumentShell?: boolean;
   includeHeader?: boolean;
+  includeSummary?: boolean;
   imageSrcMap?: Record<string, string>;
 };
 
@@ -718,6 +719,7 @@ type RichHtmlBuildArgs = {
   domain: ArticleDomain;
   includeDocumentShell: boolean;
   includeHeader: boolean;
+  includeSummary: boolean;
   imageSrcMap?: Record<string, string>;
 };
 
@@ -733,6 +735,7 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
     domain,
     includeDocumentShell,
     includeHeader,
+    includeSummary,
     imageSrcMap,
   } = args;
   const isWechatChannel = publishChannel === "公众号";
@@ -846,7 +849,7 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
     })
     .join("");
 
-  const summaryHtml = draft.summary
+  const summaryHtml = includeSummary && draft.summary
     ? `<div style="margin:0 0 18px;background:${summaryBackground};border:${summaryBorder};border-radius:${summaryRadius};padding:${summaryPadding};color:${summaryColor};text-align:${domainStyle.summaryTextAlign};font-style:${domainStyle.summaryFontStyle};">${renderInlineHtml(draft.summary, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</div>`
     : "";
 
@@ -866,7 +869,7 @@ export function buildHtml(
   publishChannel: NonNullable<Draft["publishedChannel"]>,
   accountName: string,
   domain: ArticleDomain,
-  options?: { includeHeader?: boolean },
+  options?: { includeHeader?: boolean; includeSummary?: boolean },
 ) {
   return buildRichHtml({
     draft,
@@ -879,6 +882,7 @@ export function buildHtml(
     domain,
     includeDocumentShell: true,
     includeHeader: options?.includeHeader ?? true,
+    includeSummary: options?.includeSummary ?? publishChannel !== "公众号",
   });
 }
 
@@ -903,6 +907,7 @@ export function buildWechatArticleHtml(
     domain,
     includeDocumentShell: options.includeDocumentShell ?? false,
     includeHeader: options.includeHeader ?? false,
+    includeSummary: options.includeSummary ?? false,
     imageSrcMap: options.imageSrcMap,
   });
 }

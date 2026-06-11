@@ -742,7 +742,7 @@ export function FormatEditor() {
       { ...currentDraft, title, summary },
       body,
       settings.ctaEngage,
-      { includeTitle: false, includeCta: false },
+      { includeTitle: false, includeSummary: false, includeCta: false },
     );
     await writeRichClipboard(wechatHtml, wechatText);
     updateDraft(currentDraft.id, {
