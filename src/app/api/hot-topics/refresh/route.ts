@@ -4,6 +4,8 @@ import { buildHotTopicTimeLabel } from "../../../lib/hot-topics";
 import {
   ARTICLE_ANALYSIS_CACHE_TAG,
   HOT_TOPICS_CACHE_TAG,
+  cacheHotTopicsSnapshot,
+  clearHotTopicsSnapshotCache,
   refreshHotTopicsAndPersist,
 } from "../../../lib/hot-topic-refresh";
 
@@ -20,10 +22,23 @@ async function refreshHotTopics() {
   try {
     const result = await refreshHotTopicsAndPersist();
 
+    clearHotTopicsSnapshotCache();
     revalidateTag(HOT_TOPICS_CACHE_TAG);
     revalidateTag(ARTICLE_ANALYSIS_CACHE_TAG);
 
     if (!result.persisted) {
+      const items = result.items.slice(0, 360).map((item) => ({
+        ...item,
+        time: buildHotTopicTimeLabel(item),
+      }));
+      cacheHotTopicsSnapshot(items, {
+        source: "live",
+        persisted: false,
+        restrictedCount: result.restrictedCount,
+        failedSources: result.failedSources,
+        refreshed: true,
+      });
+
       return NextResponse.json(
         {
           ok: false,
@@ -31,10 +46,7 @@ async function refreshHotTopics() {
           message: result.message,
           generatedTopicCount: result.generatedTopicCount,
           restrictedCount: result.restrictedCount,
-          items: result.items.slice(0, 360).map((item) => ({
-            ...item,
-            time: buildHotTopicTimeLabel(item),
-          })),
+          items,
           failedSources: result.failedSources,
         },
         { status: 200 },

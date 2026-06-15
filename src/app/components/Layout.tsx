@@ -35,6 +35,7 @@ export function Layout({ children }: LayoutProps) {
   const [signingOut, setSigningOut] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const displayName = settings.accountName.trim() || getUserDisplayName(user, "用户");
+  const avatarInitial = (displayName.trim() || user?.email?.trim() || "U").slice(0, 1).toUpperCase();
   const quickPages = useMemo(
     () => navItems.map((item) => ({ keyword: item.label, href: item.to })),
     [],
@@ -125,8 +126,8 @@ export function Layout({ children }: LayoutProps) {
         </nav>
         <div className="border-t border-sidebar-border p-4">
           <div className="flex items-center gap-3 rounded-3xl border border-border bg-card/70 px-3 py-3 shadow-sm backdrop-blur">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-[13px] text-white shadow-[0_12px_28px_rgba(111,92,255,0.25)] font-black">
-              {displayName.slice(0, 1).toUpperCase()}
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-primary text-[15px] text-primary-foreground shadow-[0_12px_28px_rgba(111,92,255,0.25)] font-black">
+              {avatarInitial}
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] text-foreground font-extrabold">{displayName}</div>

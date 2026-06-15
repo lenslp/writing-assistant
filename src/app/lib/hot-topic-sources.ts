@@ -90,18 +90,48 @@ type RequestOptions = {
   body?: string;
 };
 
+function formatFetchFailure(url: string, error: unknown) {
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  })();
+
+  const cause = error instanceof Error && "cause" in error ? error.cause : null;
+  const causeRecord = cause && typeof cause === "object" ? cause as Record<string, unknown> : {};
+  const code = typeof causeRecord.code === "string" ? causeRecord.code : "";
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (code === "ECONNRESET") {
+    return `${host} TLS 连接被重置（ECONNRESET），可能是本机代理或网络拦截导致 Node 无法直连。`;
+  }
+
+  if (code) {
+    return `${host} 请求失败（${code}）：${message}`;
+  }
+
+  return `${host} 请求失败：${message}`;
+}
+
 async function fetchResponse(url: string, options: RequestOptions = {}) {
-  const response = await fetch(url, {
-    method: options.method || "GET",
-    body: options.body,
-    headers: {
-      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      accept: "*/*",
-      ...options.headers,
-    },
-    next: { revalidate: 0 },
-    signal: AbortSignal.timeout(12000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method || "GET",
+      body: options.body,
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        accept: "*/*",
+        ...options.headers,
+      },
+      next: { revalidate: 0 },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (error) {
+    throw new Error(formatFetchFailure(url, error));
+  }
 
   if (!response.ok) {
     throw new Error(`${url} responded with ${response.status}`);
@@ -215,6 +245,61 @@ function parseGithubCompactNumber(rawValue: string) {
   if (normalized.endsWith("k")) return Math.round(numeric * 1000);
   if (normalized.endsWith("m")) return Math.round(numeric * 1000000);
   return Math.round(numeric);
+}
+
+function hasChineseText(value: string) {
+  return /[\u4e00-\u9fff]/.test(value);
+}
+
+function getGithubRepoName(title: string) {
+  return title.split("/").pop()?.trim() || title.trim();
+}
+
+function inferGithubRepoPurpose(repo: Pick<GitHubTrendingRepo, "title" | "description" | "language">) {
+  const description = repo.description.trim();
+  const text = `${repo.title} ${description}`.toLowerCase();
+  const repoName = getGithubRepoName(repo.title);
+
+  if (hasChineseText(description)) {
+    return description.replace(/[。.]?$/, "。");
+  }
+
+  const rules: Array<[RegExp, string]> = [
+    [/iptv|television channels?|tv channels?/, "收集和整理全球公开可用的 IPTV 频道资源。"],
+    [/security scanner|vulnerabilit|malicious|security risk/, "扫描安全漏洞、恶意模式和潜在风险。"],
+    [/ai agent|agent skills?|llm|large language model|prompt|rag/, "构建、管理或增强 AI Agent 和大模型应用。"],
+    [/live-?chat|email support|omni-?channel|help ?desk|intercom|zendesk|salesforce service cloud/, "搭建开源客服、在线聊天和多渠道支持系统。"],
+    [/freecodecamp|curriculum|learn (math|programming|computer science)|coding education/, "提供免费的编程、数学和计算机科学学习课程。"],
+    [/clones? of popular sites?|source code|demo links?|tech stack/, "收集热门网站的开源仿站项目、源码、演示链接和技术栈示例。"],
+    [/self-?hosted|deploy|deployment/, "提供可自托管部署的服务或应用。"],
+    [/dashboard|analytics|observability|monitoring/, "构建数据看板、监控或分析工具。"],
+    [/cli|command line|terminal/, "提供命令行工具，方便在终端里完成自动化操作。"],
+    [/framework|starter|boilerplate|template/, "提供开发框架、脚手架或项目模板。"],
+    [/library|sdk|package/, "提供可复用的开发库、SDK 或软件包。"],
+    [/api|server|backend/, "提供 API、后端服务或系统集成能力。"],
+    [/database|sql|postgres|mysql|sqlite|redis/, "提供数据库相关工具或数据管理能力。"],
+    [/image|photo|vision|camera|video|audio/, "处理图像、视频、音频或多媒体内容。"],
+    [/game|gaming/, "提供游戏开发或游戏相关功能。"],
+    [/collection|curated|awesome|list/, "整理和收集相关资源，方便集中查找和使用。"],
+    [/alternative to|replacement for/, "作为同类商业产品的开源替代方案。"],
+    [/open-?source/, "提供开源实现、工具或资源。"],
+  ];
+
+  const matched = rules.find(([pattern]) => pattern.test(text));
+  if (matched) {
+    return matched[1];
+  }
+
+  const languagePrefix = repo.language ? `${repo.language} ` : "";
+  return `围绕 ${repoName} 提供 ${languagePrefix}开源工具或项目资源。`;
+}
+
+function buildGithubRepoSummary(repo: GitHubTrendingRepo) {
+  const intro = `这是一个 GitHub 热门仓库，用于${inferGithubRepoPurpose(repo)}`;
+  const language = repo.language ? `主要语言：${repo.language}。` : "";
+  const stars = repo.starsToday ? `今日新增 ${repo.starsToday.toLocaleString()} stars。` : "";
+
+  return [intro, language, stars].filter(Boolean).join(" ");
 }
 
 function buildTitleDedupKey(item: ScrapedHotTopic) {
@@ -1003,7 +1088,7 @@ async function scrapeGithubTrending(): Promise<ScrapedHotTopic[]> {
       trend: normalizeTrend(Math.min(96, Math.max(18, Math.round(starsToday / 40)))),
       tags,
       url: repo.url,
-      summary: `${repo.description || "近期热度上升很快的开源项目"}${repo.starsToday ? ` · 今日新增 ${repo.starsToday.toLocaleString()} stars` : ""}`,
+      summary: buildGithubRepoSummary(repo),
       sourcePublishedAt: new Date().toISOString(),
       fetchedAt: new Date().toISOString(),
       raw: repo,

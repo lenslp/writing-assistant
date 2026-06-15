@@ -41,6 +41,34 @@ type AIProviderStatus = {
   label: string;
 };
 
+type DashboardDataCache = {
+  hotTopics: HotTopicItem[];
+  aiProviderStatus: AIProviderStatus;
+  aiImageProviderStatus: AIProviderStatus;
+  cachedAt: number;
+};
+
+const DASHBOARD_DATA_CACHE_TTL_MS = 5 * 60 * 1000;
+const uncheckedProviderStatus: AIProviderStatus = { configured: false, label: "未检查" };
+let dashboardDataCache: DashboardDataCache | null = null;
+
+function readDashboardDataCache() {
+  if (!dashboardDataCache) return null;
+  if (Date.now() - dashboardDataCache.cachedAt > DASHBOARD_DATA_CACHE_TTL_MS) {
+    dashboardDataCache = null;
+    return null;
+  }
+
+  return dashboardDataCache;
+}
+
+function writeDashboardDataCache(payload: Omit<DashboardDataCache, "cachedAt">) {
+  dashboardDataCache = {
+    ...payload,
+    cachedAt: Date.now(),
+  };
+}
+
 function clampScore(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
@@ -118,12 +146,14 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
   const router = useRouter();
   const { user } = useAuth();
   const { drafts, topics, selectTopic, upsertTopic } = useAppStore();
-  const [dashboardHotTopics, setDashboardHotTopics] = useState<HotTopicItem[]>(initialHotTopics);
+  const cachedDashboardData = readDashboardDataCache();
+  const initialDashboardHotTopics = initialHotTopics.length ? initialHotTopics : cachedDashboardData?.hotTopics ?? [];
+  const [dashboardHotTopics, setDashboardHotTopics] = useState<HotTopicItem[]>(initialDashboardHotTopics);
   const [activeHotDomain, setActiveHotDomain] = useState<ActiveArticleDomain | null>(null);
-  const [aiProviderStatus, setAIProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
-  const [aiImageProviderStatus, setAIImageProviderStatus] = useState<AIProviderStatus>({ configured: false, label: "未检查" });
+  const [aiProviderStatus, setAIProviderStatus] = useState<AIProviderStatus>(cachedDashboardData?.aiProviderStatus ?? uncheckedProviderStatus);
+  const [aiImageProviderStatus, setAIImageProviderStatus] = useState<AIProviderStatus>(cachedDashboardData?.aiImageProviderStatus ?? uncheckedProviderStatus);
   const [currentGreeting, setCurrentGreeting] = useState("你好");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isHotTopicsLoading, setIsHotTopicsLoading] = useState(!initialDashboardHotTopics.length);
   const displayName = getUserDisplayName(user, "用户");
 
   useEffect(() => {
@@ -136,7 +166,21 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
 
   useEffect(() => {
     const loadDashboardData = async () => {
-      setIsLoading(true);
+      const cachedData = readDashboardDataCache();
+      if (cachedData) {
+        setDashboardHotTopics(cachedData.hotTopics);
+        setAIProviderStatus(cachedData.aiProviderStatus);
+        setAIImageProviderStatus(cachedData.aiImageProviderStatus);
+        setIsHotTopicsLoading(false);
+        return;
+      }
+
+      setIsHotTopicsLoading(!initialHotTopics.length);
+
+      let nextHotTopics = initialHotTopics;
+      let nextAIProviderStatus = uncheckedProviderStatus;
+      let nextAIImageProviderStatus = uncheckedProviderStatus;
+
       try {
         const hotTopicsPromise = initialHotTopics.length
           ? Promise.resolve(null)
@@ -153,27 +197,36 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         if (hotTopicsResponse) {
           const payload = await hotTopicsResponse.json().catch(() => null);
           if (hotTopicsResponse.ok && Array.isArray(payload?.items) && payload.items.length) {
-            setDashboardHotTopics(payload.items as HotTopicItem[]);
+            nextHotTopics = payload.items as HotTopicItem[];
+            setDashboardHotTopics(nextHotTopics);
           }
         }
 
         const providerPayload = await aiProviderResponse.json().catch(() => null);
         const activeProfile = providerPayload?.config?.activeProfile;
-        setAIProviderStatus({
+        nextAIProviderStatus = {
           configured: Boolean(activeProfile?.hasApiKey),
           label: activeProfile?.name || "未配置写作模型",
-        });
+        };
+        setAIProviderStatus(nextAIProviderStatus);
 
         const imageProviderPayload = await aiImageProviderResponse.json().catch(() => null);
         const activeImageProfile = imageProviderPayload?.config?.activeProfile;
-        setAIImageProviderStatus({
+        nextAIImageProviderStatus = {
           configured: Boolean(activeImageProfile?.hasApiKey),
           label: activeImageProfile?.name || activeImageProfile?.model || "未配置图片模型",
+        };
+        setAIImageProviderStatus(nextAIImageProviderStatus);
+
+        writeDashboardDataCache({
+          hotTopics: nextHotTopics,
+          aiProviderStatus: nextAIProviderStatus,
+          aiImageProviderStatus: nextAIImageProviderStatus,
         });
       } catch (error) {
         console.error("Failed to load dashboard data:", error);
       } finally {
-        setIsLoading(false);
+        setIsHotTopicsLoading(false);
       }
     };
 
@@ -255,21 +308,21 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         key: "editing",
         title: "正在编辑",
         description: "需要继续打磨",
-        items: recentDrafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").slice(0, 2),
+        items: recentDrafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").slice(0, 1),
         actionLabel: "继续编辑",
       },
       {
         key: "formatting",
         title: "待排版",
         description: "正文已准备好",
-        items: recentDrafts.filter((draft) => draft.body.trim() && draft.status !== "已发布").slice(0, 2),
+        items: recentDrafts.filter((draft) => draft.body.trim() && draft.status !== "已发布").slice(0, 1),
         actionLabel: "进入排版",
       },
       {
         key: "completed",
         title: "已完成",
         description: "可复用为新稿",
-        items: recentDrafts.filter((draft) => draft.status === "已发布").slice(0, 2),
+        items: recentDrafts.filter((draft) => draft.status === "已发布").slice(0, 1),
         actionLabel: "查看排版",
       },
     ];
@@ -399,7 +452,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           </div>
 
           <div className="p-4">
-            {isLoading ? (
+            {isHotTopicsLoading ? (
               <div className="space-y-3">
                 <div className="flex gap-2">
                   {[1, 2, 3].map((i) => (
@@ -505,25 +558,7 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
           </div>
 
           <div className="divide-y divide-border/70">
-            {isLoading ? (
-              <div className="px-5 py-12">
-                <div className="space-y-4">
-                  {[1, 2].map((i) => (
-                    <div key={i} className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-                        <div className="h-4 w-8 animate-pulse rounded-full bg-muted" />
-                      </div>
-                      <div className="space-y-2">
-                        {[1, 2].map((j) => (
-                          <div key={j} className="h-16 animate-pulse rounded-2xl bg-muted" />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : draftWorkflowGroups.length ? draftWorkflowGroups.map((group) => (
+            {draftWorkflowGroups.length ? draftWorkflowGroups.map((group) => (
               <div key={group.key} className="px-5 py-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>

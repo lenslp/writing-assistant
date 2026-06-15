@@ -409,8 +409,10 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   }, [activeCategory, activeSource, keyword, sortMode, items]);
 
   useEffect(() => {
-    if (activeSource && !sourceOptions.includes(activeSource)) {
-      setActiveSource("");
+    const firstSource = sourceOptions[0] ?? "";
+
+    if (!activeSource || !sourceOptions.includes(activeSource)) {
+      setActiveSource(firstSource);
     }
   }, [activeSource, sourceOptions]);
 
@@ -452,7 +454,10 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
 
       setRestrictedCount(typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0);
 
-      const nextWarning = formatFailedSourceWarning(payload.failedSources, typeof payload.message === "string" ? payload.message : "");
+      const hasUsableItems = Array.isArray(payload.items) && payload.items.length > 0;
+      const nextWarning = hasUsableItems
+        ? ""
+        : formatFailedSourceWarning(payload.failedSources, typeof payload.message === "string" ? payload.message : "");
       if (nextWarning) {
         setRefreshWarning(nextWarning);
       }
@@ -633,6 +638,11 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
                           >
                             {topic.title}
                           </button>
+                          {topic.source === "GitHub Trending" && topic.summary ? (
+                            <p className="mt-1 line-clamp-2 max-w-2xl text-[12px] leading-5 text-muted-foreground">
+                              {topic.summary}
+                            </p>
+                          ) : null}
                         </div>
                         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                           <div className="flex items-center gap-1 text-[12px] text-slate-500">

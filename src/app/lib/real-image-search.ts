@@ -1,8 +1,13 @@
 import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 import * as cheerio from "cheerio";
+import sharp from "sharp";
 import { resolveArticleDomain, type ArticleDomain } from "./content-domains";
 import { buildAutoImageSearchQuery } from "./article-auto-image";
+import { readAIProviderSecret } from "./app-config-db";
 import { readLatestHotTopicForTopic } from "./hot-topic-db";
 
 type RealImageSearchInput = {
@@ -50,6 +55,17 @@ const SEARCH_HEADERS = {
 // 增加搜索结果数量限制
 const MAX_SEARCH_RESULTS = 12;
 const MAX_CANDIDATES_TO_CHECK = 24;
+const MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024;
+const NORMALIZED_IMAGE_MIME = "image/jpeg";
+const NORMALIZED_IMAGE_QUALITY = 86;
+const VISION_MATCH_THRESHOLD = 72;
+const VALID_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+]);
 
 const BLOCKED_HOST_PATTERNS = [
   /shetu66\.com/i,
@@ -185,6 +201,57 @@ const GENERIC_STOPWORDS = new Set([
   "时代",
 ]);
 
+const CORE_TOPIC_STOPWORDS = new Set([
+  ...GENERIC_STOPWORDS,
+  "今天",
+  "明天",
+  "昨天",
+  "今年",
+  "去年",
+  "明年",
+  "五一",
+  "十一",
+  "假期",
+  "周末",
+  "突然",
+  "开始",
+  "已经",
+  "正在",
+  "为什么",
+  "怎么办",
+  "不是",
+  "只是",
+  "可以",
+  "可能",
+  "需要",
+  "没有",
+  "超过",
+  "上线",
+  "预售",
+  "发布",
+  "一篇",
+  "这个",
+  "那个",
+  "这种",
+  "这类",
+  "怎样",
+  "如何",
+  "避开",
+]);
+
+const LATIN_SEARCH_STOPWORDS = new Set([
+  "real",
+  "photo",
+  "image",
+  "picture",
+  "no",
+  "watermark",
+  "event",
+  "scene",
+  "news",
+  "article",
+]);
+
 function decodeHtmlUrl(value: string) {
   return value.replace(/&amp;/g, "&").trim();
 }
@@ -292,6 +359,79 @@ function extractAnchorTerms(input: RealImageSearchInput) {
     .slice(0, 8);
 }
 
+function extractCoreTopicAnchors(input: RealImageSearchInput) {
+  const sourceGroups = [
+    { text: input.title?.trim() || "", weight: 8 },
+    { text: input.summary?.trim() || "", weight: 5 },
+    { text: input.body?.trim().slice(0, 600) || "", weight: 2 },
+    { text: input.query?.trim() || "", weight: 1 },
+  ];
+  const anchors = new Map<string, number>();
+
+  const addAnchor = (rawTerm: string, weight: number) => {
+    const term = rawTerm
+      .replace(/^[第这那一二三四五六七八九十]+/, "")
+      .replace(/[的了着和与及或在从到为把被让只更最也都就会能可]+$/g, "")
+      .trim();
+    const normalized = normalizeText(term);
+
+    if (!term || term.length < 2 || term.length > 18) return;
+    if (CORE_TOPIC_STOPWORDS.has(term) || CORE_TOPIC_STOPWORDS.has(normalized)) return;
+    if (/^\d+$/.test(term)) return;
+    if (LATIN_SEARCH_STOPWORDS.has(normalized)) return;
+
+    anchors.set(term, Math.max(anchors.get(term) ?? 0, weight + Math.min(4, term.length)));
+  };
+
+  for (const { text, weight } of sourceGroups) {
+    if (!text) continue;
+
+    for (const match of text.matchAll(/[A-Za-z0-9][A-Za-z0-9+.-]{1,30}/g)) {
+      addAnchor(match[0], weight + 1);
+    }
+
+    for (const match of text.matchAll(/(?:《|「|“)([^》」”]{2,18})(?:》|」|”)/g)) {
+      addAnchor(match[1], weight + 4);
+    }
+
+    const titleLikeText = text
+      .replace(/[，。！？；、,.!?;:：()[\]（）【】《》「」“”]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+
+    for (const phrase of titleLikeText) {
+      if (/[\u4e00-\u9fa5]{2,12}/.test(phrase)) {
+        addAnchor(phrase, weight);
+        for (const part of phrase.split(/(?:去|到|在|从|和|与|及|的|了|着|怎样|如何|避开|为什么|怎么办)/).filter(Boolean)) {
+          addAnchor(part, Math.max(1, weight - 1));
+        }
+      }
+    }
+  }
+
+  return [...anchors.entries()]
+    .sort((left, right) => right[1] - left[1] || right[0].length - left[0].length)
+    .map(([term]) => term)
+    .filter((term, index, list) => !list.slice(0, index).some((existing) => existing.includes(term) || term.includes(existing)))
+    .slice(0, 8);
+}
+
+function countCoreTopicAnchorMatches(entryText: string, input: RealImageSearchInput) {
+  const normalizedEntry = normalizeText(entryText);
+  const anchors = extractCoreTopicAnchors(input);
+  const matchedAnchors = anchors.filter((term) => normalizedEntry.includes(normalizeText(term)));
+
+  return {
+    anchors,
+    matchedAnchors,
+    matchedCount: matchedAnchors.length,
+  };
+}
+
+function hasArticleContext(input: RealImageSearchInput) {
+  return Boolean(input.title?.trim() || input.summary?.trim() || input.body?.trim());
+}
+
 function shouldAvoidPortraitForSearch(input: RealImageSearchInput) {
   const text = `${input.title || ""} ${input.summary || ""} ${input.body || ""}`;
   if (/(比亚迪|理想|蔚来|小鹏|特斯拉|问界|极氪|大众|丰田|本田|宝马|奔驰|奥迪)/.test(text)) {
@@ -348,6 +488,280 @@ async function fetchSearchHtml(target: string) {
   });
 
   return stdout;
+}
+
+async function runFileMimeType(buffer: Buffer) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lens-image-"));
+  const tempFile = path.join(tempDir, "candidate");
+
+  try {
+    await fs.writeFile(tempFile, buffer);
+    const { stdout } = await execFileAsync("file", ["--brief", "--mime-type", tempFile], {
+      timeout: 5000,
+      maxBuffer: 1024,
+    });
+
+    return stdout.trim().toLowerCase();
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function downloadImageWithCurl(url: string) {
+  const curlArgs = [
+    "--max-time",
+    "18",
+    "--location",
+    "--silent",
+    "--show-error",
+    "--fail",
+    "--max-filesize",
+    String(MAX_IMAGE_DOWNLOAD_BYTES),
+    "-H",
+    `User-Agent: ${SEARCH_HEADERS["User-Agent"]}`,
+    "-H",
+    "Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    url,
+  ];
+  const { stdout } = await execFileAsync("curl", curlArgs, {
+    encoding: "buffer",
+    maxBuffer: MAX_IMAGE_DOWNLOAD_BYTES,
+    timeout: 22000,
+  });
+
+  const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
+  if (!buffer.length) {
+    throw new Error("图片下载结果为空");
+  }
+
+  const fileMimeType = await runFileMimeType(buffer);
+  if (!VALID_IMAGE_MIME_TYPES.has(fileMimeType)) {
+    throw new Error(`候选 URL 不是可用图片：${fileMimeType || "unknown"}`);
+  }
+
+  return {
+    buffer,
+    mimeType: fileMimeType,
+  };
+}
+
+async function normalizeDownloadedImage(buffer: Buffer) {
+  const normalized = await sharp(buffer)
+    .rotate()
+    .resize({
+      width: 1280,
+      height: 1280,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({
+      quality: NORMALIZED_IMAGE_QUALITY,
+      mozjpeg: true,
+    })
+    .toBuffer();
+
+  return {
+    buffer: normalized,
+    dataUrl: `data:${NORMALIZED_IMAGE_MIME};base64,${normalized.toString("base64")}`,
+  };
+}
+
+function extractJsonObject(text: string) {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1]?.trim() || trimmed.match(/\{[\s\S]*}/)?.[0] || "";
+  if (!candidate) return null;
+
+  try {
+    return JSON.parse(candidate) as { match?: unknown; score?: unknown; reason?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+function isLikelyVisionModel(model: string) {
+  return /(vision|视觉|vl|gpt-4o|gemini|claude-3|qwen-vl|qwen2\.5-vl|qvq)/i.test(model);
+}
+
+function resolveVisionModel(baseUrl: string, storedModel = "", storedFastModel = "") {
+  const explicitModel = process.env.AI_IMAGE_MATCH_MODEL?.trim();
+  if (explicitModel) return explicitModel;
+
+  if (isLikelyVisionModel(storedFastModel)) return storedFastModel;
+  if (isLikelyVisionModel(storedModel)) return storedModel;
+
+  if (/dashscope|aliyuncs/i.test(baseUrl)) return "qwen-vl-plus";
+  if (/openai/i.test(baseUrl)) return "gpt-4o-mini";
+  if (/openrouter/i.test(baseUrl)) return "openai/gpt-4o-mini";
+  return "";
+}
+
+function extractDataUrlParts(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mimeType: match[1],
+    base64: match[2],
+  };
+}
+
+function buildVisionMatchPrompt(articleContext: string) {
+  return [
+    "请判断图片是否和文章实际内容匹配。",
+    "要求：",
+    "1. 事件、主体、场景明显不一致时判为不匹配。",
+    "2. 通用素材、无关人物照、纯装饰图、海报模板、logo 图判为不匹配。",
+    "3. 如果图片是文章来源页截图，且能承载该热点信息，可以判为匹配。",
+    "返回格式：{\"match\":true|false,\"score\":0-100,\"reason\":\"一句话原因\"}",
+    "",
+    articleContext,
+  ].join("\n");
+}
+
+async function verifyImageMatchesArticle(input: RealImageSearchInput, imageDataUrl: string) {
+  const storedConfig = await readAIProviderSecret().catch(() => null);
+  const apiKey = storedConfig?.apiKey || process.env.AI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
+  const baseUrl = (
+    storedConfig?.baseUrl ||
+    process.env.AI_BASE_URL?.trim() ||
+    process.env.OPENAI_BASE_URL?.trim() ||
+    "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  )
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/i, "");
+  const model = resolveVisionModel(
+    baseUrl,
+    storedConfig?.model ||
+      process.env.AI_MODEL?.trim() ||
+      process.env.OPENAI_MODEL?.trim() ||
+      "",
+    storedConfig?.fastModel ||
+      process.env.AI_MODEL_FAST?.trim() ||
+      process.env.OPENAI_MODEL_FAST?.trim() ||
+      "",
+  );
+
+  if (!apiKey || !model) {
+    return {
+      passed: false,
+      score: 0,
+      reason: "视觉模型未配置，跳过真实配图",
+    };
+  }
+
+  const articleContext = [
+    input.title ? `标题：${input.title}` : "",
+    input.summary ? `摘要：${input.summary}` : "",
+    input.body ? `正文节选：${input.body.slice(0, 900)}` : "",
+    input.query ? `搜索词：${input.query}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const isAnthropic = /anthropic/i.test(baseUrl);
+  const imageParts = extractDataUrlParts(imageDataUrl);
+  if (isAnthropic && !imageParts) {
+    return {
+      passed: false,
+      score: 0,
+      reason: "图片 data URL 格式不正确",
+    };
+  }
+
+  const response = await fetch(isAnthropic ? `${baseUrl}/messages` : `${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: isAnthropic
+      ? {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        }
+      : {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+    signal: AbortSignal.timeout(45000),
+    body: JSON.stringify(
+      isAnthropic
+        ? {
+            model,
+            temperature: 0,
+            max_tokens: 512,
+            system:
+              "你是文章配图审核器。判断图片是否适合作为这篇文章的真实配图，只看图片内容和文章主题是否匹配。只返回 JSON。",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: buildVisionMatchPrompt(articleContext),
+                  },
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: imageParts!.mimeType,
+                      data: imageParts!.base64,
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : {
+            model,
+            temperature: 0,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "你是文章配图审核器。判断图片是否适合作为这篇文章的真实配图，只看图片内容和文章主题是否匹配。只返回 JSON。",
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: buildVisionMatchPrompt(articleContext),
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: imageDataUrl,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+    ),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        choices?: Array<{ message?: { content?: string } }>;
+        content?: Array<{ type?: string; text?: string }>;
+        error?: { message?: string };
+      }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `视觉校验失败：${response.status}`);
+  }
+
+  const content =
+    payload?.choices?.[0]?.message?.content ||
+    payload?.content?.map((item) => (item.type === "text" && item.text ? item.text : "")).join("\n") ||
+    "";
+  const parsed = extractJsonObject(content);
+  const score = typeof parsed?.score === "number" ? parsed.score : 0;
+  const passed = parsed?.match === true && score >= VISION_MATCH_THRESHOLD;
+
+  return {
+    passed,
+    score,
+    reason: typeof parsed?.reason === "string" && parsed.reason.trim() ? parsed.reason.trim() : "视觉模型未返回明确原因",
+  };
 }
 
 function extractBingImageEntries(html: string) {
@@ -417,6 +831,17 @@ function isRelevantEnoughEntry(entry: BingImageEntry, input: RealImageSearchInpu
   const inputText = `${input.title || ""} ${input.summary || ""} ${input.query || ""}`;
   const normalizedEntry = normalizeText(entryText);
 
+  if (hasArticleContext(input)) {
+    const { anchors, matchedCount } = countCoreTopicAnchorMatches(entryText, input);
+    if (anchors.length >= 2 && matchedCount < 1) {
+      return false;
+    }
+
+    if (anchors.length >= 4 && matchedCount < 2) {
+      return false;
+    }
+  }
+
   if (domain === "汽车") {
     const expectedBrand = findAutoBrand(inputText);
     if (expectedBrand) {
@@ -427,7 +852,7 @@ function isRelevantEnoughEntry(entry: BingImageEntry, input: RealImageSearchInpu
     }
   }
 
-  if (domain === "科技") {
+  if (domain === "科技" || domain === "AI") {
     const expectsRobotics = /(机器人|人形机器人|机器狗|robot|robotics)/i.test(inputText);
     const expectsRace = /(马拉松|比赛|赛道|夺冠|冠军|race|marathon|track|competition)/i.test(inputText);
 
@@ -525,6 +950,53 @@ function rankAndDedupeResults(results: RealImageSearchResult[], limit: number) {
     .slice(0, limit);
 }
 
+async function validateAndEmbedImage(result: RealImageSearchResult, input: RealImageSearchInput) {
+  try {
+    const downloaded = await downloadImageWithCurl(result.url);
+    const normalized = await normalizeDownloadedImage(downloaded.buffer);
+    const vision = await verifyImageMatchesArticle(input, normalized.dataUrl);
+
+    if (!vision.passed) {
+      return null;
+    }
+
+    const score = Math.max(result.score, vision.score);
+    return {
+      ...result,
+      url: normalized.dataUrl,
+      score,
+      confidence: getConfidence(score),
+      reason: `${result.reason}；视觉校验通过：${vision.reason}`,
+    } satisfies RealImageSearchResult;
+  } catch (error) {
+    console.warn(
+      "Skip invalid or mismatched image candidate:",
+      result.url.slice(0, 160),
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
+async function validateAndEmbedResults(
+  results: RealImageSearchResult[],
+  input: RealImageSearchInput,
+  limit: number,
+) {
+  const ranked = rankAndDedupeResults(results, Math.max(limit * 3, MAX_CANDIDATES_TO_CHECK));
+  const embedded: RealImageSearchResult[] = [];
+
+  for (const result of ranked) {
+    if (embedded.length >= limit) break;
+    const verified = await validateAndEmbedImage(result, input);
+    if (verified) {
+      embedded.push(verified);
+    }
+  }
+
+  return embedded;
+}
+
 function canUseSourceScreenshot(url: string) {
   try {
     const parsed = new URL(url);
@@ -619,7 +1091,7 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
   if (domain === "汽车" && /(autohome|bitauto|che168|pcauto|sohuauto|cheshi)/i.test(pageHost)) score += 8;
   if (domain === "旅游" && /(qunar|ctrip|mafengwo|feizhu|ly\.com|tuniu|lvmama|zuche|yundashequ|mafengwo|tripadvisor|booking|agoda|airbnb|xiaohongshu|dianping)/i.test(pageHost)) score += 8;
   if (domain === "社会" && /(news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 6;
-  if (domain === "科技" && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
+  if ((domain === "科技" || domain === "AI") && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
 
   if (/text\//i.test(entry.url) || /x_image_process=text/i.test(entry.url)) score -= 18;
   if (BLOCKED_TEXT_PATTERNS.some((pattern) => pattern.test(`${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`))) score -= 16;
@@ -628,7 +1100,14 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
   if (!terms.some(([term]) => haystack.includes(normalizeText(term)))) score -= 12;
   if (shouldAvoidPortraitForSearch(input) && isPortraitLikeEntry(entry)) score -= 20;
 
-  if (domain === "科技") {
+  const { anchors, matchedCount } = countCoreTopicAnchorMatches(`${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`, input);
+  if (hasArticleContext(input) && anchors.length) {
+    score += matchedCount * 12;
+    if (matchedCount === 0) score -= 40;
+    if (anchors.length >= 4 && matchedCount < 2) score -= 24;
+  }
+
+  if (domain === "科技" || domain === "AI") {
     const roboticsBoost = /(机器人|人形机器人|机器狗|robot|robotics)/.test(haystack);
     const raceBoost = /(马拉松|比赛|赛道|冠军|race|marathon|track|competition|event)/.test(haystack);
     const genericDeskPenalty = /(keyboard|workspace|desk|laptop|notebook|coffee|cup|flower|键盘|桌面|笔记本|咖啡|茶杯|花瓶)/.test(haystack);
@@ -658,6 +1137,18 @@ function hasConfidentRelevance(entry: BingImageEntry, input: RealImageSearchInpu
   const domain = resolveArticleDomain(input.domain) as ArticleDomain;
   const { score, matchedAnchorCount, matchedStrongAnchorCount } = analyzeEntryMatch(entry, input);
   const anchorTerms = extractAnchorTerms(input);
+  const entryText = `${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`;
+
+  if (hasArticleContext(input)) {
+    const { anchors, matchedCount } = countCoreTopicAnchorMatches(entryText, input);
+    if (anchors.length >= 2 && matchedCount < 1) {
+      return false;
+    }
+
+    if (anchors.length >= 4 && matchedCount < 2) {
+      return false;
+    }
+  }
 
   if (!anchorTerms.length) {
     if (domain === "旅游" || domain === "汽车") {
@@ -798,9 +1289,6 @@ function buildGithubRepoScreenshotUrl(repoUrl: string) {
 
 async function fetchGithubRepoScreenshot(repoUrl: string) {
   const screenshotUrl = buildGithubRepoScreenshotUrl(repoUrl);
-  if (!(await isReachableImage(screenshotUrl))) {
-    return [];
-  }
 
   return [
     {
@@ -857,7 +1345,6 @@ async function fetchGithubRepoPreviewImages(repoUrl: string) {
 
   const results: RealImageSearchResult[] = [];
   for (const candidate of ranked) {
-    if (!(await isReachableImage(candidate.url))) continue;
     results.push({
       url: candidate.url,
       source: "github",
@@ -962,7 +1449,6 @@ async function searchSourcePageImages(input: RealImageSearchInput): Promise<Real
 
   const results: RealImageSearchResult[] = [];
   for (const candidate of ranked) {
-    if (!(await isReachableImage(candidate.url))) continue;
     const score = 78 + Math.min(16, Math.max(0, candidate.score));
     results.push({
       url: candidate.url,
@@ -986,9 +1472,6 @@ async function searchSourcePageScreenshot(input: RealImageSearchInput): Promise<
   }
 
   const screenshotUrl = buildSourceScreenshotUrl(pageUrl);
-  if (!(await isReachableImage(screenshotUrl))) {
-    return [];
-  }
 
   return [
     {
@@ -1017,7 +1500,7 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
 
   const query = buildSearchQuery(input);
   if (!query) {
-    return rankAndDedupeResults(providerResults, targetCount);
+    return validateAndEmbedResults(providerResults, input, targetCount);
   }
   const searchQueries = buildFallbackSearchQueries(input, query);
   const baseCandidates: BingImageEntry[] = [];
@@ -1054,14 +1537,21 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
     .sort((left, right) => right.score - left.score)
     .map(({ entry }) => entry);
 
-  const candidates = (strictCandidates.length ? strictCandidates : relaxedCandidates.length ? relaxedCandidates : fallbackCandidates)
+  const candidates = (
+    strictCandidates.length
+      ? strictCandidates
+      : hasArticleContext(input)
+        ? []
+        : relaxedCandidates.length
+          ? relaxedCandidates
+          : fallbackCandidates
+  )
     .slice(0, MAX_CANDIDATES_TO_CHECK);
 
   const results: RealImageSearchResult[] = [];
   
   for (const candidate of candidates) {
     if (results.length >= MAX_CANDIDATES_TO_CHECK) break;
-    if (!(await isReachableImage(candidate.url))) continue;
     const score = Math.max(30, Math.min(74, scoreEntry(candidate, input) + 45));
     results.push({
       url: candidate.url,
@@ -1076,5 +1566,5 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
     });
   }
 
-  return rankAndDedupeResults([...providerResults, ...results], targetCount);
+  return validateAndEmbedResults([...providerResults, ...results], input, targetCount);
 }

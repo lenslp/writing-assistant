@@ -266,16 +266,6 @@ export function AuthPage() {
                 {submitting ? "处理中..." : submitLabel}
               </button>
             </form>
-
-            <div className="mt-6 rounded-2xl bg-accent/70 px-4 py-3">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                <div>
-                  <div className="text-[12px] text-foreground" style={{ fontWeight: 850 }}>账号用于同步创作资产</div>
-                  <div className="mt-1 text-[11px] leading-5 text-muted-foreground">保存草稿、模型设置和平台偏好，不会公开你的创作内容。</div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </section>

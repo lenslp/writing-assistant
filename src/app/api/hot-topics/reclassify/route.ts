@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   ARTICLE_ANALYSIS_CACHE_TAG,
   HOT_TOPICS_CACHE_TAG,
+  clearHotTopicsSnapshotCache,
 } from "../../../lib/hot-topic-refresh";
 import { hasPersistenceBackend } from "../../../lib/persistence";
 import { reclassifyHotTopicRecords } from "../../../lib/hot-topic-db";
@@ -23,6 +24,7 @@ export async function POST() {
 
     revalidateTag(HOT_TOPICS_CACHE_TAG);
     revalidateTag(ARTICLE_ANALYSIS_CACHE_TAG);
+    clearHotTopicsSnapshotCache();
 
     return NextResponse.json({
       ok: true,

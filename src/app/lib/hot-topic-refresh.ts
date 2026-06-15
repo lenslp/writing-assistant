@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { hasPersistenceBackend, shouldUseSupabaseAdmin } from "./persistence";
 import { readHotTopicRefreshMeta, readHotTopics } from "./hot-topic-db";
 import { scrapeHotTopics } from "./hot-topic-sources";
-import type { HotTopicItem } from "./hot-topics";
+import { buildHotTopicTimeLabel, type HotTopicItem } from "./hot-topics";
 import { prisma } from "./prisma";
 import { getSupabaseAdmin } from "./supabase-admin";
 
@@ -14,6 +14,26 @@ const CORE_PLATFORM_SOURCES = ["微博", "抖音", "知乎", "今日头条", "�
 const HOT_TOPICS_RETENTION_DAYS = 7;
 const HOT_TOPIC_FETCH_JOB_KEEP_COUNT = 100;
 const HOT_TOPIC_WRITE_BATCH_SIZE = 60;
+
+type HotTopicsSnapshot = {
+  items: HotTopicItem[];
+  source: "database" | "live";
+  persisted: boolean;
+  restrictedCount: number;
+  failedSources: unknown[];
+  refreshed: boolean;
+  stale: boolean;
+  ttlMs: number;
+  lastSuccessAt: string | null;
+};
+
+let hotTopicsSnapshotCache:
+  | {
+      limit: number;
+      expiresAt: number;
+      promise: Promise<HotTopicsSnapshot>;
+    }
+  | null = null;
 
 function stripHtmlTags(input: string) {
   return input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -175,11 +195,50 @@ function dedupeHotTopicsForPersistence<T extends { source: string; externalId?: 
   return Array.from(deduped.values());
 }
 
+function toHotTopicItems(items: Array<Omit<HotTopicItem, "time"> & { raw?: unknown }>, limit: number): HotTopicItem[] {
+  return items.slice(0, limit).map((item) => ({
+    ...item,
+    time: buildHotTopicTimeLabel(item),
+  }));
+}
+
 export async function getHotTopicsSnapshot(limit: number, ttlMs = HOT_TOPIC_CACHE_TTL_MS) {
+  const now = Date.now();
+  if (
+    hotTopicsSnapshotCache &&
+    hotTopicsSnapshotCache.limit >= limit &&
+    hotTopicsSnapshotCache.expiresAt > now
+  ) {
+    const cached = await hotTopicsSnapshotCache.promise;
+    return {
+      ...cached,
+      items: cached.items.slice(0, limit),
+      ttlMs,
+    };
+  }
+
+  const promise = buildHotTopicsSnapshot(limit, ttlMs);
+  hotTopicsSnapshotCache = {
+    limit,
+    expiresAt: now + ttlMs,
+    promise,
+  };
+
+  try {
+    return await promise;
+  } catch (error) {
+    if (hotTopicsSnapshotCache?.promise === promise) {
+      hotTopicsSnapshotCache = null;
+    }
+    throw error;
+  }
+}
+
+async function buildHotTopicsSnapshot(limit: number, ttlMs = HOT_TOPIC_CACHE_TTL_MS) {
   if (!hasPersistenceBackend()) {
     const { items, failedSources, restrictedCount } = await scrapeHotTopics();
     return {
-      items: items.slice(0, limit),
+      items: toHotTopicItems(items, limit),
       source: "live" as const,
       persisted: false,
       restrictedCount,
@@ -211,7 +270,7 @@ export async function getHotTopicsSnapshot(limit: number, ttlMs = HOT_TOPIC_CACH
     const { items, failedSources, restrictedCount } = await scrapeHotTopics();
 
     return {
-      items: items.slice(0, limit),
+      items: toHotTopicItems(items, limit),
       source: "live" as const,
       persisted: false,
       restrictedCount,
@@ -222,6 +281,40 @@ export async function getHotTopicsSnapshot(limit: number, ttlMs = HOT_TOPIC_CACH
       lastSuccessAt: null as string | null,
     };
   }
+}
+
+export function cacheHotTopicsSnapshot(items: HotTopicItem[], options: {
+  limit?: number;
+  ttlMs?: number;
+  source: "database" | "live";
+  persisted: boolean;
+  restrictedCount: number;
+  failedSources: unknown[];
+  refreshed?: boolean;
+  stale?: boolean;
+  lastSuccessAt?: string | null;
+}) {
+  const ttlMs = options.ttlMs ?? HOT_TOPIC_CACHE_TTL_MS;
+  const limit = options.limit ?? items.length;
+  hotTopicsSnapshotCache = {
+    limit,
+    expiresAt: Date.now() + ttlMs,
+    promise: Promise.resolve({
+      items: items.slice(0, limit),
+      source: options.source,
+      persisted: options.persisted,
+      restrictedCount: options.restrictedCount,
+      failedSources: options.failedSources,
+      refreshed: options.refreshed ?? false,
+      stale: options.stale ?? false,
+      ttlMs,
+      lastSuccessAt: options.lastSuccessAt ?? null,
+    }),
+  };
+}
+
+export function clearHotTopicsSnapshotCache() {
+  hotTopicsSnapshotCache = null;
 }
 
 export async function refreshHotTopicsAndPersist() {
@@ -467,7 +560,7 @@ export async function ensureHotTopicsCache(limit: number, ttlMs = HOT_TOPIC_CACH
   if (!hasPersistenceBackend()) {
     const { items, failedSources, restrictedCount } = await scrapeHotTopics();
     return {
-      items: items.slice(0, limit),
+      items: toHotTopicItems(items, limit),
       source: "live" as const,
       persisted: false,
       restrictedCount,
@@ -503,7 +596,7 @@ export async function ensureHotTopicsCache(limit: number, ttlMs = HOT_TOPIC_CACH
       const refreshed = await refreshHotTopicsAndPersist();
       if (!refreshed.persisted && refreshed.items.length) {
         return {
-          items: refreshed.items.slice(0, limit),
+          items: toHotTopicItems(refreshed.items, limit),
           source: "live" as const,
           persisted: false,
           restrictedCount: refreshed.restrictedCount,
@@ -531,7 +624,7 @@ export async function ensureHotTopicsCache(limit: number, ttlMs = HOT_TOPIC_CACH
     }
 
     const refreshed = await refreshHotTopicsAndPersist();
-    const items = refreshed.persisted ? await readHotTopics(limit) : refreshed.items.slice(0, limit);
+    const items = refreshed.persisted ? await readHotTopics(limit) : toHotTopicItems(refreshed.items, limit);
     const latestMeta = refreshed.persisted ? await readHotTopicRefreshMeta() : meta;
 
     return {
@@ -551,7 +644,7 @@ export async function ensureHotTopicsCache(limit: number, ttlMs = HOT_TOPIC_CACH
     const { items, failedSources, restrictedCount } = await scrapeHotTopics();
 
     return {
-      items: items.slice(0, limit),
+      items: toHotTopicItems(items, limit),
       source: "live" as const,
       persisted: false,
       restrictedCount,

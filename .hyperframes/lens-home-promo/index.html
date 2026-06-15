@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lens Assistant Product Demo</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #f7f9ff;
+        font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      }
+
+      #lens-home-promo {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        color: #080a1f;
+        background:
+          radial-gradient(circle at 76% 12%, rgba(111, 92, 255, 0.28), rgba(111, 92, 255, 0) 36%),
+          radial-gradient(circle at 18% 26%, rgba(30, 167, 255, 0.18), rgba(30, 167, 255, 0) 30%),
+          linear-gradient(180deg, #fbfcff 0%, #f4f6ff 54%, #f8fbff 100%);
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        background:
+          radial-gradient(circle at 74% 12%, rgba(111, 92, 255, 0.18), rgba(111, 92, 255, 0) 34%),
+          radial-gradient(circle at 16% 80%, rgba(30, 167, 255, 0.14), rgba(30, 167, 255, 0) 32%),
+          #f7f9ff;
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 2;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        padding: 74px 96px;
+        gap: 28px;
+      }
+
+      .grid,
+      .glow,
+      .ghost {
+        position: absolute;
+        pointer-events: none;
+      }
+
+      .grid {
+        inset: 0;
+        z-index: 0;
+        opacity: 0.22;
+        background-image:
+          linear-gradient(rgba(96, 112, 166, 0.18) 2px, rgba(255, 255, 255, 0) 2px),
+          linear-gradient(90deg, rgba(96, 112, 166, 0.16) 2px, rgba(255, 255, 255, 0) 2px);
+        background-size: 120px 120px;
+      }
+
+      .glow {
+        z-index: 0;
+        width: 620px;
+        height: 620px;
+        border-radius: 999px;
+        background: radial-gradient(circle, rgba(111, 92, 255, 0.22), rgba(111, 92, 255, 0) 65%);
+      }
+
+      .ghost {
+        z-index: 0;
+        color: rgba(111, 92, 255, 0.075);
+        font-size: 166px;
+        font-weight: 950;
+        line-height: 0.9;
+        letter-spacing: 0;
+        white-space: nowrap;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 16px;
+        color: #080a1f;
+        font-size: 29px;
+        font-weight: 950;
+      }
+
+      .brand-icon {
+        display: grid;
+        width: 54px;
+        height: 54px;
+        place-items: center;
+        border-radius: 18px;
+        color: #ffffff;
+        background: #6f5cff;
+        box-shadow: 0 18px 36px rgba(111, 92, 255, 0.28);
+      }
+
+      .status-pill,
+      .small-pill,
+      .button {
+        display: inline-flex;
+        align-items: center;
+        width: max-content;
+        border-radius: 999px;
+        font-weight: 850;
+      }
+
+      .status-pill {
+        gap: 11px;
+        border: 2px solid rgba(111, 92, 255, 0.22);
+        background: rgba(255, 255, 255, 0.82);
+        color: #6f5cff;
+        padding: 13px 20px;
+        font-size: 22px;
+        box-shadow: 0 16px 38px rgba(111, 92, 255, 0.12);
+      }
+
+      .small-pill {
+        gap: 8px;
+        border: 2px solid rgba(96, 112, 166, 0.16);
+        background: #ffffff;
+        color: #687191;
+        padding: 10px 16px;
+        font-size: 19px;
+      }
+
+      .button {
+        justify-content: center;
+        gap: 10px;
+        border: 0;
+        background: #6f5cff;
+        color: #ffffff;
+        padding: 18px 26px;
+        font-size: 23px;
+        box-shadow: 0 18px 42px rgba(111, 92, 255, 0.28);
+      }
+
+      .app-shell {
+        overflow: hidden;
+        flex: 1;
+        min-height: 0;
+        border: 3px solid rgba(96, 112, 166, 0.16);
+        border-radius: 42px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 36px 110px rgba(31, 41, 86, 0.14);
+      }
+
+      .app-chrome {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 72px;
+        padding: 0 30px;
+        border-bottom: 2px solid rgba(96, 112, 166, 0.12);
+        background: rgba(255, 255, 255, 0.78);
+      }
+
+      .traffic {
+        display: flex;
+        gap: 12px;
+      }
+
+      .traffic span {
+        width: 17px;
+        height: 17px;
+        border-radius: 999px;
+      }
+
+      .traffic span:nth-child(1) { background: #ff8a8f; }
+      .traffic span:nth-child(2) { background: #ffc63b; }
+      .traffic span:nth-child(3) { background: #56dca7; }
+
+      .app-body {
+        display: grid;
+        height: calc(100% - 72px);
+        grid-template-columns: 250px minmax(0, 1fr);
+      }
+
+      .sidebar {
+        border-right: 2px solid rgba(96, 112, 166, 0.12);
+        background: #f1efff;
+        padding: 30px 22px;
+      }
+
+      .nav-item {
+        margin-top: 18px;
+        border-radius: 20px;
+        padding: 16px 18px;
+        color: #687191;
+        font-size: 22px;
+        font-weight: 800;
+      }
+
+      .nav-item.active {
+        color: #6f5cff;
+        background: rgba(111, 92, 255, 0.14);
+      }
+
+      .main-grid {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: minmax(0, 0.94fr) minmax(470px, 0.78fr);
+        gap: 24px;
+        padding: 30px;
+      }
+
+      .panel {
+        min-height: 0;
+        border: 2px solid rgba(96, 112, 166, 0.15);
+        border-radius: 30px;
+        background: #fbfcff;
+        padding: 24px;
+        box-shadow: 0 14px 34px rgba(31, 41, 86, 0.06);
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .panel-title {
+        margin: 0;
+        color: #080a1f;
+        font-size: 31px;
+        line-height: 1.2;
+        font-weight: 950;
+      }
+
+      .panel-subtitle {
+        margin-top: 7px;
+        color: #687191;
+        font-size: 20px;
+        line-height: 1.35;
+        font-weight: 650;
+      }
+
+      .topic-row {
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 16px;
+        margin-top: 17px;
+        border: 2px solid rgba(96, 112, 166, 0.13);
+        border-radius: 24px;
+        background: #ffffff;
+        padding: 16px;
+      }
+
+      .topic-row.selected {
+        border-color: rgba(111, 92, 255, 0.55);
+        background: #f6f4ff;
+        box-shadow: 0 16px 36px rgba(111, 92, 255, 0.14);
+      }
+
+      .rank {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        place-items: center;
+        border-radius: 18px;
+        background: #ffffff;
+        color: #6f5cff;
+        border: 2px solid rgba(111, 92, 255, 0.24);
+        font-size: 22px;
+        font-weight: 950;
+      }
+
+      .topic-title {
+        color: #080a1f;
+        font-size: 22px;
+        line-height: 1.25;
+        font-weight: 900;
+      }
+
+      .topic-meta {
+        margin-top: 7px;
+        color: #687191;
+        font-size: 17px;
+        font-weight: 650;
+      }
+
+      .heat {
+        color: #6f5cff;
+        font-size: 20px;
+        font-weight: 950;
+      }
+
+      .angle-card {
+        margin-top: 22px;
+        border-radius: 26px;
+        background: #ffffff;
+        border: 2px solid rgba(96, 112, 166, 0.14);
+        padding: 22px;
+      }
+
+      .angle-title {
+        color: #080a1f;
+        font-size: 26px;
+        font-weight: 950;
+      }
+
+      .angle-copy {
+        margin-top: 12px;
+        color: #3d4669;
+        font-size: 21px;
+        line-height: 1.45;
+        font-weight: 650;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .chip {
+        border-radius: 999px;
+        background: #eef2ff;
+        color: #6f5cff;
+        padding: 10px 15px;
+        font-size: 17px;
+        font-weight: 850;
+      }
+
+      .cursor {
+        position: absolute;
+        z-index: 20;
+        width: 36px;
+        height: 36px;
+        color: #6f5cff;
+        filter: drop-shadow(0 12px 18px rgba(111, 92, 255, 0.32));
+      }
+
+      .cursor::before {
+        content: "";
+        position: absolute;
+        left: 6px;
+        top: 2px;
+        width: 0;
+        height: 0;
+        border-left: 24px solid #6f5cff;
+        border-top: 14px solid transparent;
+        border-bottom: 14px solid transparent;
+        transform: rotate(44deg);
+      }
+
+      .generation-layout {
+        display: grid;
+        flex: 1;
+        min-height: 0;
+        grid-template-columns: 420px minmax(0, 1fr);
+        gap: 26px;
+      }
+
+      .progress-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .progress-step {
+        border: 2px solid rgba(96, 112, 166, 0.14);
+        border-radius: 24px;
+        background: #ffffff;
+        padding: 19px;
+      }
+
+      .progress-step.done {
+        border-color: rgba(111, 92, 255, 0.42);
+        background: #f6f4ff;
+      }
+
+      .step-label {
+        color: #080a1f;
+        font-size: 23px;
+        font-weight: 950;
+      }
+
+      .step-desc {
+        margin-top: 6px;
+        color: #687191;
+        font-size: 18px;
+        line-height: 1.32;
+        font-weight: 650;
+      }
+
+      .editor-panel {
+        border: 2px solid rgba(96, 112, 166, 0.15);
+        border-radius: 34px;
+        background: #ffffff;
+        padding: 30px;
+        box-shadow: 0 20px 60px rgba(31, 41, 86, 0.08);
+      }
+
+      .doc-title {
+        color: #080a1f;
+        font-size: 42px;
+        line-height: 1.22;
+        font-weight: 950;
+      }
+
+      .doc-meta {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .doc-line {
+        height: 19px;
+        margin-top: 20px;
+        border-radius: 999px;
+        background: #eef2ff;
+      }
+
+      .doc-line.medium { width: 84%; }
+      .doc-line.short { width: 62%; }
+
+      .split-editor {
+        display: grid;
+        flex: 1;
+        min-height: 0;
+        grid-template-columns: minmax(0, 1fr) 520px;
+        gap: 24px;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+
+      .tool-group {
+        display: flex;
+        gap: 10px;
+      }
+
+      .tool {
+        display: grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border: 2px solid rgba(96, 112, 166, 0.14);
+        border-radius: 15px;
+        background: #ffffff;
+        color: #687191;
+        font-size: 20px;
+        font-weight: 900;
+      }
+
+      .template-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .template-pill {
+        border: 2px solid rgba(96, 112, 166, 0.16);
+        border-radius: 999px;
+        background: #ffffff;
+        color: #687191;
+        padding: 11px 18px;
+        font-size: 18px;
+        font-weight: 850;
+      }
+
+      .template-pill.active {
+        color: #6f5cff;
+        border-color: #6f5cff;
+        background: #f3f0ff;
+      }
+
+      .phone-preview {
+        overflow: hidden;
+        border: 3px solid rgba(96, 112, 166, 0.16);
+        border-radius: 38px;
+        background: #ffffff;
+        box-shadow: 0 28px 84px rgba(31, 41, 86, 0.13);
+      }
+
+      .phone-head {
+        padding: 24px 28px;
+        border-bottom: 2px solid rgba(96, 112, 166, 0.12);
+        color: #080a1f;
+        font-size: 24px;
+        font-weight: 950;
+      }
+
+      .phone-body {
+        padding: 28px;
+      }
+
+      .phone-title {
+        color: #080a1f;
+        font-size: 30px;
+        line-height: 1.28;
+        font-weight: 950;
+      }
+
+      .phone-p {
+        margin-top: 18px;
+        color: #3d4669;
+        font-size: 20px;
+        line-height: 1.55;
+        font-weight: 650;
+      }
+
+      .cta-box {
+        margin-top: 24px;
+        border-top: 2px solid #dbe3f2;
+        padding-top: 18px;
+        color: #4b5563;
+        text-align: center;
+        font-size: 19px;
+        font-weight: 750;
+      }
+
+      .publish-layout {
+        display: grid;
+        flex: 1;
+        min-height: 0;
+        grid-template-columns: minmax(0, 1fr) 520px;
+        gap: 28px;
+      }
+
+      .platform-card {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 18px;
+        margin-top: 16px;
+        border: 2px solid rgba(96, 112, 166, 0.14);
+        border-radius: 28px;
+        background: #ffffff;
+        padding: 20px;
+        box-shadow: 0 14px 32px rgba(31, 41, 86, 0.06);
+      }
+
+      .platform-icon {
+        display: grid;
+        width: 64px;
+        height: 64px;
+        place-items: center;
+        border-radius: 22px;
+        color: #ffffff;
+        background: #6f5cff;
+        font-size: 28px;
+        font-weight: 950;
+      }
+
+      .platform-name {
+        color: #080a1f;
+        font-size: 25px;
+        font-weight: 950;
+      }
+
+      .platform-desc {
+        margin-top: 6px;
+        color: #687191;
+        font-size: 18px;
+        font-weight: 650;
+      }
+
+      .ready {
+        color: #059669;
+        font-size: 19px;
+        font-weight: 950;
+      }
+
+      .final-card {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        border: 2px solid rgba(111, 92, 255, 0.24);
+        border-radius: 38px;
+        background: linear-gradient(180deg, #ffffff, #f4f2ff);
+        padding: 34px;
+        box-shadow: 0 26px 78px rgba(111, 92, 255, 0.16);
+      }
+
+      .final-mark {
+        display: grid;
+        width: 100px;
+        height: 100px;
+        place-items: center;
+        border-radius: 34px;
+        color: #ffffff;
+        background: #6f5cff;
+        font-size: 54px;
+        box-shadow: 0 22px 46px rgba(111, 92, 255, 0.28);
+      }
+
+      .final-title {
+        margin-top: 26px;
+        color: #080a1f;
+        font-size: 47px;
+        font-weight: 950;
+      }
+
+      .final-copy {
+        margin-top: 12px;
+        color: #687191;
+        font-size: 24px;
+        line-height: 1.42;
+        font-weight: 650;
+      }
+
+      .transition-cover {
+        position: absolute;
+        inset: 0;
+        z-index: 30;
+        background: #f7f9ff;
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="lens-home-promo" data-composition-id="lens-home-promo" data-start="0" data-width="1920" data-height="1080" data-duration="18">
+      <div class="grid"></div>
+      <div class="glow" style="right: -120px; top: -130px"></div>
+      <div class="glow" style="left: -170px; bottom: -190px"></div>
+
+      <section id="s1" class="scene">
+        <div class="ghost" style="right: 80px; bottom: 74px">TOPIC</div>
+        <div class="scene-content">
+          <div class="topbar">
+            <div class="brand"><span class="brand-icon">✦</span> Lens Assistant</div>
+            <div class="status-pill">实时热点已更新</div>
+          </div>
+          <div class="app-shell">
+            <div class="app-chrome">
+              <div class="traffic"><span></span><span></span><span></span></div>
+              <div class="small-pill">从热榜到选题角度</div>
+            </div>
+            <div class="app-body">
+              <aside class="sidebar">
+                <div class="brand"><span class="brand-icon">L</span> Lens</div>
+                <div class="nav-item active">热点中心</div>
+                <div class="nav-item">选题中心</div>
+                <div class="nav-item">AI 写作</div>
+                <div class="nav-item">发布管理</div>
+              </aside>
+              <div class="main-grid">
+                <div class="panel">
+                  <div class="panel-head">
+                    <div>
+                      <h2 class="panel-title">今天值得写什么</h2>
+                      <div class="panel-subtitle">按热度、趋势和账号领域排序</div>
+                    </div>
+                    <div class="small-pill">AI 筛选</div>
+                  </div>
+                  <div class="topic-row selected">
+                    <div class="rank">1</div>
+                    <div>
+                      <div class="topic-title">GPT-4o 发布：普通创作者如何抓住新一轮内容机会？</div>
+                      <div class="topic-meta">AI · 热度 98.7w · 上升 42%</div>
+                    </div>
+                    <div class="heat">可写</div>
+                  </div>
+                  <div class="topic-row">
+                    <div class="rank">2</div>
+                    <div>
+                      <div class="topic-title">小红书搜索习惯变化，标题应该怎么改？</div>
+                      <div class="topic-meta">运营 · 热度 76.3w</div>
+                    </div>
+                    <div class="heat">适配</div>
+                  </div>
+                  <div class="topic-row">
+                    <div class="rank">3</div>
+                    <div>
+                      <div class="topic-title">新能源汽车出海，用户到底关心什么？</div>
+                      <div class="topic-meta">汽车 · 热度 62.1w</div>
+                    </div>
+                    <div class="heat">长尾</div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-head">
+                    <div>
+                      <h2 class="panel-title">选题角度</h2>
+                      <div class="panel-subtitle">自动拆出受众、观点和结构</div>
+                    </div>
+                  </div>
+                  <div class="angle-card">
+                    <div class="angle-title">写给内容创作者：模型更新后，机会在哪里？</div>
+                    <div class="angle-copy">避开参数堆砌，聚焦“创作效率、平台表达、普通人可用性”三个问题。</div>
+                    <div class="chips">
+                      <span class="chip">受众：自媒体</span>
+                      <span class="chip">立场：理性分析</span>
+                      <span class="chip">结构：问题递进</span>
+                    </div>
+                  </div>
+                  <div class="button" style="margin-top: 24px">生成文章 →</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="cursor" id="cursor1"></div>
+        </div>
+      </section>
+
+      <section id="s2" class="scene">
+        <div class="ghost" style="left: 76px; bottom: 70px">DRAFT</div>
+        <div class="scene-content">
+          <div class="topbar">
+            <div class="brand"><span class="brand-icon">✦</span> AI 正在生成草稿</div>
+            <div class="status-pill">标题 · 大纲 · 正文</div>
+          </div>
+          <div class="generation-layout">
+            <div class="progress-panel">
+              <div class="progress-step done"><div class="step-label">01 确认选题</div><div class="step-desc">聚焦普通创作者可操作机会</div></div>
+              <div class="progress-step done"><div class="step-label">02 生成标题</div><div class="step-desc">输出 6 个可点击标题方向</div></div>
+              <div class="progress-step done"><div class="step-label">03 搭建大纲</div><div class="step-desc">按问题递进组织全文结构</div></div>
+              <div class="progress-step"><div class="step-label">04 写入正文</div><div class="step-desc">保留判断，把重复整理交给 AI</div></div>
+            </div>
+            <div class="editor-panel">
+              <div class="small-pill">AI 草稿已完成</div>
+              <div class="doc-title">GPT-4o 发布：普通创作者如何抓住新一轮内容机会？</div>
+              <div class="doc-meta">
+                <span class="chip">公众号长文</span>
+                <span class="chip">结构清晰</span>
+                <span class="chip">可继续编辑</span>
+              </div>
+              <div class="doc-line"></div>
+              <div class="doc-line medium"></div>
+              <div class="doc-line"></div>
+              <div class="doc-line short"></div>
+              <div class="angle-card">
+                <div class="angle-title">核心段落</div>
+                <div class="angle-copy">模型变化不只是技术新闻，对创作者来说，真正重要的是选题效率、表达成本和分发适配。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="s3" class="scene">
+        <div class="ghost" style="right: 74px; bottom: 66px">PREVIEW</div>
+        <div class="scene-content">
+          <div class="topbar">
+            <div class="brand"><span class="brand-icon">✦</span> 编辑与实时预览</div>
+            <div class="status-pill">模板同步完成</div>
+          </div>
+          <div class="split-editor">
+            <div class="editor-panel">
+              <div class="toolbar">
+                <div class="tool-group">
+                  <div class="tool">B</div>
+                  <div class="tool">I</div>
+                  <div class="tool">H</div>
+                  <div class="tool">•</div>
+                </div>
+                <div class="small-pill">保存中...</div>
+              </div>
+              <div class="doc-title">不是所有更新，都值得立刻追</div>
+              <div class="doc-line"></div>
+              <div class="doc-line medium"></div>
+              <div class="doc-line"></div>
+              <div class="template-row">
+                <span class="template-pill">极简白</span>
+                <span class="template-pill active">科技蓝</span>
+                <span class="template-pill">曜石黑</span>
+              </div>
+              <div class="angle-card">
+                <div class="angle-title">底部引导语</div>
+                <div class="angle-copy">觉得有用的话，点个「在看」让更多人看到</div>
+              </div>
+            </div>
+            <div class="phone-preview">
+              <div class="phone-head">实时预览 · 手机</div>
+              <div class="phone-body">
+                <div class="phone-title">GPT-4o 发布：普通创作者如何抓住新一轮内容机会？</div>
+                <div class="phone-p">系统自动整理热点背景、推荐标题和文章结构，保留你的判断。</div>
+                <div class="phone-p">买工具不是跟风，真正要看它是否能降低你的表达成本。</div>
+                <div class="cta-box">觉得有用的话，点个「在看」让更多人看到</div>
+              </div>
+            </div>
+          </div>
+          <div class="cursor" id="cursor3"></div>
+        </div>
+      </section>
+
+      <section id="s4" class="scene">
+        <div class="ghost" style="left: 64px; bottom: 70px">READY</div>
+        <div class="scene-content">
+          <div class="topbar">
+            <div class="brand"><span class="brand-icon">✦</span> 发布前检查完成</div>
+            <div class="status-pill">可复制 · 可导出 · 可推送</div>
+          </div>
+          <div class="publish-layout">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">多平台版本已准备</h2>
+                  <div class="panel-subtitle">同一篇内容，按渠道保留不同表达节奏</div>
+                </div>
+              </div>
+              <div class="platform-card">
+                <div class="platform-icon">微</div>
+                <div><div class="platform-name">微信公众号</div><div class="platform-desc">长文结构清晰，观点递进完整</div></div>
+                <div class="ready">已就绪</div>
+              </div>
+              <div class="platform-card">
+                <div class="platform-icon">红</div>
+                <div><div class="platform-name">小红书</div><div class="platform-desc">标题更抓眼，开头更直接</div></div>
+                <div class="ready">已适配</div>
+              </div>
+              <div class="platform-card">
+                <div class="platform-icon">知</div>
+                <div><div class="platform-name">知乎</div><div class="platform-desc">增强论证，补足专业语气</div></div>
+                <div class="ready">已适配</div>
+              </div>
+              <div class="button" style="margin-top: 26px">推送到公众号草稿箱 →</div>
+            </div>
+            <div class="final-card">
+              <div class="final-mark">✦</div>
+              <div class="final-title">Lens Assistant</div>
+              <div class="final-copy">从选题到成稿，把内容创作变成可复用的稳定流程。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="transition-cover"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.set("#s1", { opacity: 1 }, 0);
+      tl.set(["#s2", "#s3", "#s4"], { opacity: 0 }, 0);
+
+      tl.to(".grid", { x: -54, y: -28, duration: 18, ease: "none" }, 0);
+      tl.to(".glow", { scale: 1.08, x: -30, y: 22, duration: 5, repeat: 3, yoyo: true, ease: "sine.inOut" }, 0);
+
+      tl.fromTo("#s1 .brand", { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 0.12);
+      tl.fromTo("#s1 .status-pill", { opacity: 0, x: 34 }, { opacity: 1, x: 0, duration: 0.46, ease: "power3.out" }, 0.24);
+      tl.fromTo("#s1 .app-shell", { opacity: 0, y: 64, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.72, ease: "expo.out" }, 0.28);
+      tl.fromTo("#s1 .topic-row", { opacity: 0, x: -36 }, { opacity: 1, x: 0, duration: 0.44, stagger: 0.12, ease: "power3.out" }, 0.88);
+      tl.fromTo("#s1 .angle-card", { opacity: 0, x: 42 }, { opacity: 1, x: 0, duration: 0.54, ease: "power3.out" }, 1.46);
+      tl.fromTo("#s1 .chip", { opacity: 0, y: 18, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.34, stagger: 0.08, ease: "back.out(1.5)" }, 1.82);
+      tl.fromTo("#s1 .button", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 2.16);
+      tl.fromTo("#cursor1", { opacity: 0, x: 760, y: 500 }, { opacity: 1, x: 1110, y: 834, duration: 0.7, ease: "power2.inOut" }, 2.15);
+      tl.to("#s1 .button", { scale: 0.96, duration: 0.1, yoyo: true, repeat: 1, ease: "power2.inOut" }, 2.86);
+      tl.fromTo("#s1 .ghost", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.74, ease: "sine.out" }, 0.72);
+
+      tl.to(".transition-cover", { opacity: 0.78, duration: 0.25, ease: "power2.inOut" }, 3.92);
+      tl.set("#s2", { opacity: 1 }, 4.18);
+      tl.set("#s1", { opacity: 0 }, 4.18);
+      tl.to(".transition-cover", { opacity: 0, duration: 0.34, ease: "power2.inOut" }, 4.2);
+
+      tl.fromTo("#s2 .brand", { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 4.36);
+      tl.fromTo("#s2 .status-pill", { opacity: 0, x: 34 }, { opacity: 1, x: 0, duration: 0.42, ease: "power3.out" }, 4.48);
+      tl.fromTo("#s2 .progress-step", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.42, stagger: 0.13, ease: "power3.out" }, 4.78);
+      tl.fromTo("#s2 .editor-panel", { opacity: 0, y: 52, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.66, ease: "expo.out" }, 4.84);
+      tl.fromTo("#s2 .doc-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.56, ease: "power4.out" }, 5.34);
+      tl.fromTo("#s2 .doc-meta .chip", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.08, ease: "back.out(1.5)" }, 5.72);
+      tl.fromTo("#s2 .doc-line", { opacity: 0, scaleX: 0, transformOrigin: "left center" }, { opacity: 1, scaleX: 1, duration: 0.38, stagger: 0.08, ease: "circ.out" }, 6.06);
+      tl.fromTo("#s2 .angle-card", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.48, ease: "power3.out" }, 6.58);
+      tl.fromTo("#s2 .ghost", { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.7, ease: "sine.out" }, 4.7);
+
+      tl.to(".transition-cover", { opacity: 0.82, duration: 0.28, ease: "sine.inOut" }, 8.18);
+      tl.set("#s3", { opacity: 1 }, 8.48);
+      tl.set("#s2", { opacity: 0 }, 8.48);
+      tl.to(".transition-cover", { opacity: 0, duration: 0.4, ease: "sine.inOut" }, 8.5);
+
+      tl.fromTo("#s3 .brand", { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 8.72);
+      tl.fromTo("#s3 .status-pill", { opacity: 0, x: 34 }, { opacity: 1, x: 0, duration: 0.42, ease: "power3.out" }, 8.86);
+      tl.fromTo("#s3 .editor-panel", { opacity: 0, x: -54, scale: 0.98 }, { opacity: 1, x: 0, scale: 1, duration: 0.64, ease: "expo.out" }, 8.92);
+      tl.fromTo("#s3 .phone-preview", { opacity: 0, x: 58, scale: 0.98 }, { opacity: 1, x: 0, scale: 1, duration: 0.7, ease: "expo.out" }, 9.04);
+      tl.fromTo("#s3 .tool", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.25, stagger: 0.05, ease: "power2.out" }, 9.52);
+      tl.fromTo("#s3 .template-pill", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.08, ease: "back.out(1.45)" }, 9.96);
+      tl.fromTo("#cursor3", { opacity: 0, x: 420, y: 780 }, { opacity: 1, x: 670, y: 710, duration: 0.56, ease: "power2.inOut" }, 10.52);
+      tl.to("#s3 .template-pill.active", { scale: 0.96, duration: 0.1, yoyo: true, repeat: 1, ease: "power2.inOut" }, 11.08);
+      tl.fromTo("#s3 .cta-box", { opacity: 0.35, y: 24 }, { opacity: 1, y: 0, duration: 0.44, ease: "power3.out" }, 11.44);
+      tl.fromTo("#s3 .ghost", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.72, ease: "sine.out" }, 9.22);
+
+      tl.to(".transition-cover", { opacity: 0.74, duration: 0.26, ease: "power2.inOut" }, 13.18);
+      tl.set("#s4", { opacity: 1 }, 13.46);
+      tl.set("#s3", { opacity: 0 }, 13.46);
+      tl.to(".transition-cover", { opacity: 0, duration: 0.42, ease: "power2.inOut" }, 13.48);
+
+      tl.fromTo("#s4 .brand", { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 13.72);
+      tl.fromTo("#s4 .status-pill", { opacity: 0, x: 34 }, { opacity: 1, x: 0, duration: 0.42, ease: "power3.out" }, 13.86);
+      tl.fromTo("#s4 .panel", { opacity: 0, x: -52, scale: 0.98 }, { opacity: 1, x: 0, scale: 1, duration: 0.62, ease: "expo.out" }, 14.02);
+      tl.fromTo("#s4 .platform-card", { opacity: 0, y: 42 }, { opacity: 1, y: 0, duration: 0.46, stagger: 0.14, ease: "power3.out" }, 14.52);
+      tl.fromTo("#s4 .button", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.42, ease: "back.out(1.35)" }, 15.28);
+      tl.fromTo("#s4 .final-card", { opacity: 0, x: 64, scale: 0.96 }, { opacity: 1, x: 0, scale: 1, duration: 0.72, ease: "expo.out" }, 14.24);
+      tl.fromTo("#s4 .final-mark", { opacity: 0, scale: 0.72 }, { opacity: 1, scale: 1, duration: 0.55, ease: "back.out(1.55)" }, 14.88);
+      tl.fromTo("#s4 .final-title", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.46, ease: "power3.out" }, 15.2);
+      tl.fromTo("#s4 .final-copy", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, 15.48);
+      tl.fromTo("#s4 .ghost", { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.7, ease: "sine.out" }, 14.0);
+      tl.to("#s4 .scene-content", { opacity: 0, y: -14, duration: 0.42, ease: "power2.in" }, 17.56);
+
+      window.__timelines["lens-home-promo"] = tl;
+    </script>
+  </body>
+</html>
