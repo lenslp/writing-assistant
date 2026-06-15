@@ -60,8 +60,11 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to generate AI image:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "AI 图片生成失败，请稍后重试。" },
-      { status: 500 },
+      {
+        configured: true,
+        generated: false,
+        message: error instanceof Error ? error.message : "AI 图片生成失败，请稍后重试。",
+      },
     );
   }
 }

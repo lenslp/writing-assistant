@@ -35,6 +35,6 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ item, persisted: true });
   } catch (error) {
     console.error("Failed to update app config:", error);
-    return NextResponse.json({ message: "Failed to update app config" }, { status: 500 });
+    return NextResponse.json({ item: null, persisted: false, message: "配置已保存在本地，远端同步暂不可用。" });
   }
 }

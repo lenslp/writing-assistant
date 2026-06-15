@@ -684,7 +684,8 @@ export function WritingPage() {
 
         return nextResult;
       }
-    } catch {
+    } catch (error) {
+      console.warn("自动真实配图搜索失败，继续尝试 AI 配图。", error);
       // If real image search is unavailable, fall back to AI image generation below.
     }
 
@@ -706,6 +707,7 @@ export function WritingPage() {
 
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.url) {
+        console.warn("自动 AI 配图生成失败，已保留正文。", payload?.message ?? response.status);
         return result;
       }
 
@@ -738,7 +740,8 @@ export function WritingPage() {
       });
 
       return nextResult;
-    } catch {
+    } catch (error) {
+      console.warn("自动 AI 配图生成失败，已保留正文。", error);
       return result;
     }
   }

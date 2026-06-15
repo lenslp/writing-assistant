@@ -308,15 +308,8 @@ export function Dashboard({ initialHotTopics = [] }: { initialHotTopics?: HotTop
         key: "editing",
         title: "正在编辑",
         description: "需要继续打磨",
-        items: recentDrafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").slice(0, 1),
+        items: recentDrafts.filter((draft) => draft.status === "待修改" || draft.status === "审核中").slice(0, 3),
         actionLabel: "继续编辑",
-      },
-      {
-        key: "formatting",
-        title: "待排版",
-        description: "正文已准备好",
-        items: recentDrafts.filter((draft) => draft.body.trim() && draft.status !== "已发布").slice(0, 1),
-        actionLabel: "进入排版",
       },
       {
         key: "completed",

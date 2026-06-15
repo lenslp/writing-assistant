@@ -501,14 +501,14 @@ export function FormatEditor() {
 
       const payload = await response.json().catch(() => null);
 
-      if (!response.ok || !payload?.url) {
+      if (!response.ok) {
         throw new Error(payload?.message ?? "联网搜图失败");
       }
 
       const results = Array.isArray(payload.results) ? payload.results as RealImageSearchItem[] : [];
       setImageSearchResults(results);
       return {
-        url: payload.url as string,
+        url: typeof payload?.url === "string" ? payload.url : "",
         results,
       };
     } catch (error) {

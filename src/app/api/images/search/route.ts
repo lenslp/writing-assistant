@@ -26,7 +26,13 @@ export async function POST(request: Request) {
     });
 
     if (!results.length) {
-      return NextResponse.json({ message: "暂时没有找到合适的真实图片。" }, { status: 404 });
+      return NextResponse.json({
+        url: "",
+        results: [],
+        source: "none",
+        query: payload.query ?? "",
+        message: "暂时没有找到合适的真实图片。",
+      });
     }
 
     return NextResponse.json({
