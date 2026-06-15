@@ -11,9 +11,11 @@ import {
   Upload, Link2, WandSparkles, X, LoaderCircle, MoreHorizontal, Search,
 } from "lucide-react";
 import {
-  colorSchemes,
+  ctaStyles,
   createDefaultFormatting,
   formatDraftTime,
+  getTemplateColors,
+  getTemplateDotStyle,
   migrateDefaultFormattingToMinimal,
   templates,
   type Draft,
@@ -92,6 +94,9 @@ type RealImageSearchItem = {
   url: string;
   source: string;
   query: string;
+  score?: number;
+  confidence?: "high" | "medium" | "low";
+  reason?: string;
   title?: string;
   pageUrl?: string;
   thumbnailUrl?: string;
@@ -155,6 +160,8 @@ export function FormatEditor() {
   const [formatting, setFormatting] = useState<DraftFormatting>(
     migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createDefaultFormatting(settings.defaultTemplate)),
   );
+  const formattingSourceKey = currentDraft?.id ?? "empty";
+  const syncedFormattingSourceRef = useRef<string | null>(null);
   const [publishChannel, setPublishChannel] = useState<(typeof publishChannels)[number]>(currentDraft?.publishedChannel ?? "公众号");
   const [notice, setNotice] = useState("");
   const [previewMode, setPreviewMode] = useState<(typeof previewModes)[number]>("mobile");
@@ -201,12 +208,15 @@ export function FormatEditor() {
 
   useEffect(() => {
     if (!currentDraft) return;
+    if (syncedFormattingSourceRef.current === formattingSourceKey) return;
+    syncedFormattingSourceRef.current = formattingSourceKey;
+
     setTitle(currentDraft.title);
     setSummary(currentDraft.summary);
     setBody(currentDraft.body);
     setFormatting(migrateDefaultFormattingToMinimal(currentDraft.formatting ?? createDefaultFormatting(settings.defaultTemplate)));
     setPublishChannel(currentDraft.publishedChannel ?? "公众号");
-  }, [currentDraft, settings.defaultTemplate]);
+  }, [currentDraft, formattingSourceKey, settings.defaultTemplate]);
 
   useEffect(() => {
     let ignore = false;
@@ -318,7 +328,7 @@ export function FormatEditor() {
     };
   }, [isToolbarActionOpen]);
 
-  const activeScheme = colorSchemes.find((item) => item.name === formatting.colorScheme) ?? colorSchemes[0];
+  const activeScheme = getTemplateColors(formatting.template);
   const deferredBody = useDeferredValue(body);
   const previewBlocks = useMemo(() => extractContentBlocks(deferredBody), [deferredBody]);
   const articleDate = currentDraft ? formatDraftTime(currentDraft.updatedAt).split(" ")[0] : formatDraftTime(new Date().toISOString()).split(" ")[0];
@@ -330,7 +340,7 @@ export function FormatEditor() {
   const normalizedTitle = title.trim();
   const titleLength = normalizedTitle.length;
   const isWechatTitleTooLong = titleLength > WECHAT_TITLE_LIMIT;
-  const isDarkTemplate = formatting.template === "深色";
+  const isDarkTemplate = formatting.template === "曜石黑";
   const textPrimary = isWechatChannel ? "rgba(0,0,0,0.9)" : isDarkTemplate ? "#f9fafb" : "#111827";
   const textSecondary = isWechatChannel ? "#4a4a4a" : isDarkTemplate ? "#d1d5db" : "#4b5563";
   const textMuted = isWechatChannel ? "#8c8c8c" : isDarkTemplate ? "#94a3b8" : "#9ca3af";
@@ -742,7 +752,7 @@ export function FormatEditor() {
       { ...currentDraft, title, summary },
       body,
       settings.ctaEngage,
-      { includeTitle: false, includeSummary: false, includeCta: false },
+      { includeTitle: false, includeSummary: false, includeCta: false, ctaText: formatting.ctaText },
     );
     await writeRichClipboard(wechatHtml, wechatText);
     updateDraft(currentDraft.id, {
@@ -1316,8 +1326,6 @@ export function FormatEditor() {
                                 </h1>
                                 <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px]" style={{ color: textMuted }}>
                                   <span>作者：{previewAccountName}</span>
-                                  <span>·</span>
-                                  <span>{settings.accountPosition.slice(0, 20)}{settings.accountPosition.length > 20 ? "…" : ""}</span>
                                 </div>
                               </div>
 
@@ -1394,16 +1402,19 @@ export function FormatEditor() {
                                 }
 
                                 if (block.type === "quote") {
+                                  const quoteBorderColor = formatting.template === "曜石黑" ? "#475569" : activeScheme.primary;
+                                  const quoteBorderLeft = formatting.template === "极简白" ? "none" : `4px solid ${quoteBorderColor}`;
+
                                   return (
                                     <div
                                       key={`${block.type}-${block.content}-${index}`}
                                       className="px-4 py-4 my-6"
                                       style={{
-                                        borderLeft: `4px solid ${activeScheme.primary}`,
+                                        borderLeft: quoteBorderLeft,
                                         background: formatting.gradientQuote
                                           ? `linear-gradient(135deg, ${activeScheme.primary}14, ${activeScheme.accent}0f)`
                                           : `${activeScheme.primary}12`,
-                                        borderRadius: formatting.roundedQuote ? "0 14px 14px 0" : "0",
+                                        borderRadius: 0,
                                         boxShadow: isDarkTemplate ? "none" : "0 10px 30px rgba(15,23,42,0.04)",
                                       }}
                                     >
@@ -1967,33 +1978,18 @@ export function FormatEditor() {
                 <button
                   key={template}
                   onClick={() => setFormatting((current) => ({ ...current, template }))}
-                  className={`px-3 py-2 rounded-lg text-[12px] border transition-colors ${
+                  className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] border transition-colors ${
                     formatting.template === template
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border bg-background text-muted-foreground hover:bg-accent"
                   }`}
                   style={{ fontWeight: 500 }}
                 >
+                  <span
+                    className="inline-block h-2 w-2 rounded-full border align-middle"
+                    style={getTemplateDotStyle(template)}
+                  />
                   {template}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>配色方案</div>
-            <div className="space-y-2">
-              {colorSchemes.map((scheme) => (
-                <button
-                  key={scheme.name}
-                  onClick={() => setFormatting((current) => ({ ...current, colorScheme: scheme.name }))}
-                  className={`w-full flex items-center gap-2 p-2 rounded-lg cursor-pointer border transition-colors ${
-                    formatting.colorScheme === scheme.name ? "border-primary bg-primary/10" : "border-transparent hover:bg-accent"
-                  }`}
-                >
-                  <div className="w-6 h-6 rounded-full" style={{ background: scheme.primary }} />
-                  <div className="w-6 h-6 rounded-full" style={{ background: scheme.accent }} />
-                  <span className="text-[12px] text-muted-foreground" style={{ fontWeight: 500 }}>{scheme.name}</span>
                 </button>
               ))}
             </div>
@@ -2020,17 +2016,42 @@ export function FormatEditor() {
                 options={["16px", "20px", "24px"]}
                 onChange={(value) => setFormatting((current) => ({ ...current, paragraphSpacing: value as DraftFormatting["paragraphSpacing"] }))}
               />
+              <div>
+                <label className="mb-1 block text-[12px] text-muted-foreground">底部引导语</label>
+                <textarea
+                  value={formatting.ctaText ?? settings.ctaEngage}
+                  onChange={(event) => setFormatting((current) => ({ ...current, ctaText: event.target.value }))}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-[12px] leading-relaxed outline-none focus:border-primary focus:bg-card"
+                  placeholder="输入底部引导文案"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] text-muted-foreground">引导语样式</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {ctaStyles.map((styleName) => (
+                    <button
+                      key={styleName}
+                      type="button"
+                      onClick={() => setFormatting((current) => ({ ...current, ctaStyle: styleName }))}
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+                        (formatting.ctaStyle ?? "简洁") === styleName
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted-foreground hover:bg-accent"
+                      }`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      {styleName}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
           <div>
             <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>卡片样式</div>
             <div className="space-y-3">
-              <ToggleField
-                label="圆角引用块"
-                checked={formatting.roundedQuote}
-                onChange={() => setFormatting((current) => ({ ...current, roundedQuote: !current.roundedQuote }))}
-              />
               <ToggleField
                 label="渐变金句卡"
                 checked={formatting.gradientQuote}

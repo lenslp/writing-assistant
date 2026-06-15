@@ -1,5 +1,5 @@
 import { articleDomains, detectArticleDomainWithSignals, type ActiveArticleDomain } from "./content-domains";
-import type { HotTopicItem } from "./hot-topics";
+import { isAiRelevantHotTopic, type HotTopicItem } from "./hot-topics";
 
 export type WorkbenchHotTopicInput = Omit<HotTopicItem, "time"> & {
   time?: string;
@@ -12,8 +12,6 @@ export type TopicRecommendationCandidate = Pick<
   domain: ActiveArticleDomain;
   time: string;
 };
-
-const AI_TOPIC_PATTERN = /(ai|aigc|gpt|openai|claude|gemini|deepseek|agent|智能体|大模型|人工智能|生成式|llm|mcp)/i;
 
 export function resolveWorkbenchTopicDomain(topic: WorkbenchHotTopicInput): ActiveArticleDomain | null {
   const isExplicitActiveDomain = topic.domain && (articleDomains as readonly string[]).includes(topic.domain);
@@ -28,20 +26,17 @@ export function resolveWorkbenchTopicDomain(topic: WorkbenchHotTopicInput): Acti
     return null;
   }
 
-  if (explicitDomain) {
+  if (explicitDomain && explicitDomain !== "AI") {
     return explicitDomain;
   }
 
-  const pureAiSourcePattern = /(AI HOT|GitHub Trending|openai|anthropic|github|nvidia)/i;
-  const fastPathText = `${topic.title} ${topic.source} ${topic.tags.join(" ")}`;
-
-  if (pureAiSourcePattern.test(topic.source) || AI_TOPIC_PATTERN.test(fastPathText)) {
+  if (isAiRelevantHotTopic(topic)) {
     return "AI";
   }
 
   const signal = detectArticleDomainWithSignals(topic.title, topic.tags, topic.source, topic.summary ?? "");
   const resolvedSignalDomain = (articleDomains as readonly string[]).includes(signal.domain) ? (signal.domain as ActiveArticleDomain) : null;
-  if (resolvedSignalDomain && signal.confidence !== "low") {
+  if (resolvedSignalDomain && resolvedSignalDomain !== "AI" && signal.confidence !== "low") {
     return resolvedSignalDomain;
   }
 

@@ -6,8 +6,8 @@ import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./providers/auth-provider";
 
 export const metadata: Metadata = {
-  title: "写作助手",
-  description: "基于 Figma Make 设计还原的写作助手后台。",
+  title: "Lens Assistant",
+  description: "AI写作助手",
 };
 
 export default function RootLayout({

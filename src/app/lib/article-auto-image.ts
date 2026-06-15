@@ -102,25 +102,31 @@ export function collectAutoImageKeyPoints(body: string) {
 
 function extractVisualKeywords(texts: string[]) {
   const keywords: string[] = [];
+  const joinedText = texts.map((text) => text.trim()).filter(Boolean).join(" ");
 
-  texts
-    .map((text) => text.trim())
-    .filter(Boolean)
-    .join(" ")
-    .match(/[\u4e00-\u9fa5]{2,8}/g)
-    ?.forEach((item) => {
-      const normalized = item
+  const multiCharPatterns = [
+    /[\u4e00-\u9fa5]{4,8}/g,
+    /[\u4e00-\u9fa5]{2,3}(?:技术|模型|算法|系统|平台|产品|应用|服务|方案|工具|设备|场景)/g,
+    /(?:智能|数字|虚拟|自动|高效|便捷|创新|专业|精准|实时|云端|本地)/g,
+  ];
+
+  for (const pattern of multiCharPatterns) {
+    const matches = joinedText.matchAll(pattern);
+    for (const match of matches) {
+      const normalized = match[0]
         .replace(/^(一位|一个|一种|关于|围绕|失去|那个|这个)/, "")
         .replace(/(的话|这件事|这件|这个|那个)$/g, "")
         .trim();
 
-      if (!normalized || normalized.length < 2 || normalized.length > 8) return;
-      if (VISUAL_STOPWORDS.has(normalized)) return;
-      if (keywords.includes(normalized)) return;
+      if (!normalized || normalized.length < 2 || normalized.length > 10) continue;
+      if (VISUAL_STOPWORDS.has(normalized)) continue;
+      if (keywords.includes(normalized)) continue;
+      if (keywords.some((k) => k.includes(normalized) || normalized.includes(k))) continue;
       keywords.push(normalized);
-    });
+    }
+  }
 
-  return keywords.slice(0, 8);
+  return keywords.slice(0, 10);
 }
 
 function shouldAvoidAiPortrait(input: {
@@ -157,6 +163,7 @@ function buildImageScene(input: {
 }) {
   const text = `${input.title} ${input.summary} ${input.body}`;
   const avoidPortrait = shouldAvoidAiPortrait(input);
+  const subject = extractArticleSubject(input);
 
   if (/(失去孩子|母亲|儿子|女儿|去世|离世|亲人|逝者|悲伤|悼念)/.test(text)) {
     return "写实摄影感，一位中年母亲安静地坐在室内，旁边有旧手机或空椅子，气氛克制、安静、有留白";
@@ -164,6 +171,22 @@ function buildImageScene(input: {
 
   if (/(ai|AI|人工智能|数字人|机器人|大模型)/.test(text) && /(母亲|儿子|女儿|亲人|家庭|情感)/.test(text)) {
     return "现实主义场景，用人物、房间、旧物和微弱屏幕光表达技术与思念的距离感，不做科幻海报";
+  }
+
+  if (/(机器人|人形机器人|机器狗|robot|robotics)/i.test(text) && /(马拉松|比赛|赛道|夺冠|冠军|race|marathon|track|competition)/i.test(text)) {
+    return "人形机器人在马拉松赛道上奔跑，真实比赛场景，运动感强烈";
+  }
+
+  if (/(机器人|人形机器人|机器狗|robot|robotics)/i.test(text)) {
+    return subject ? `${subject}在真实环境中运行，科技感与现实感结合` : "人形机器人或机器狗在真实环境中运行，科技感与现实感结合";
+  }
+
+  if (/(芯片|算力|服务器|机房|半导体|gpu|cpu)/i.test(text)) {
+    return subject ? `${subject}特写，芯片或服务器细节，蓝色科技感光线` : "芯片或服务器特写，蓝色科技感光线";
+  }
+
+  if (/(发布会|新品|手机|电脑|耳机|平板|手表)/i.test(text)) {
+    return subject ? `${subject}产品展示，简洁背景，质感光影` : "科技产品展示，简洁背景，质感光影";
   }
 
   if (avoidPortrait && input.domain === "科技") return "真实办公或创作场景，电脑屏幕、耳机、键盘、文件或录音设备构成主体，不出现正脸人物";
@@ -175,7 +198,6 @@ function buildImageScene(input: {
   if (input.domain === "科技") return "现代感静物或人物场景，克制冷色调，真实摄影感，不做海报";
   if (input.domain === "教育") return "书桌、纸页或人物专注场景，温和自然光，安静干净";
   if (input.domain === "旅游") {
-    // 根据标题关键词动态调整场景描述
     if (/(古镇|古城|古村|苗寨|藏寨)/i.test(text)) return "古朴的建筑街道，有历史感的场景，温暖的光线";
     if (/(海边|海岛|沙滩|潜水|冲浪|邮轮)/i.test(text)) return "碧海蓝天，热带海岛风光，清澈的海水";
     if (/(雪山|冰川|滑雪|温泉)/i.test(text)) return "壮丽的雪山冰川，冬季运动场景，清冷的空气";
@@ -224,6 +246,75 @@ function buildImageStyle(input: { domain: ArticleDomain; title: string; summary:
   return "editorial photography, minimal, realistic, clean composition, muted tones";
 }
 
+function extractArticleSubject(input: { title: string; summary: string; body: string }) {
+  const text = `${input.title} ${input.summary}`;
+  const subjects: string[] = [];
+
+  const entityPatterns = [
+    /([\u4e00-\u9fa5]{2,6})(?:公司|集团|科技|智能|算法|模型|产品|平台|应用|技术|系统|方案|服务)/g,
+    /(?:关于|围绕|探讨|分析|解读|介绍|分享|推荐|评测)[\u4e00-\u9fa5]{2,8}/g,
+  ];
+
+  for (const pattern of entityPatterns) {
+    const matches = text.matchAll(pattern);
+    for (const match of matches) {
+      const subject = match[0].trim();
+      if (subject.length >= 4 && subject.length <= 12 && !subjects.includes(subject)) {
+        subjects.push(subject);
+      }
+    }
+  }
+
+  const titleSubject = input.title
+    .replace(/[《》「」【】]/g, "")
+    .replace(/[：:？?！!。，,.]/g, " ")
+    .split(/\s+/)
+    .find((word) => word.length >= 3 && word.length <= 10);
+
+  if (titleSubject && !subjects.some((s) => titleSubject.includes(s) || s.includes(titleSubject))) {
+    subjects.unshift(titleSubject);
+  }
+
+  return subjects.slice(0, 3).join("、");
+}
+
+function buildContentDrivenScene(input: {
+  title: string;
+  summary: string;
+  body: string;
+  domain: ArticleDomain;
+}) {
+  const text = `${input.title} ${input.summary} ${input.body}`;
+  const subject = extractArticleSubject(input);
+  const avoidPortrait = shouldAvoidAiPortrait(input);
+
+  if (/(测评|评测|体验|开箱|上手)/i.test(text)) {
+    return subject ? `真实产品展示场景，${subject}作为主体，干净的桌面或工作台，自然光线` : "真实产品展示场景，干净的桌面或工作台，自然光线";
+  }
+
+  if (/(教程|指南|方法|步骤|技巧|攻略)/i.test(text)) {
+    return subject ? `${subject}相关操作演示场景，手部或屏幕特写，清晰的操作过程` : "操作演示或学习场景，手部或屏幕特写";
+  }
+
+  if (/(新闻|事件|报道|发生|突发)/i.test(text)) {
+    return subject ? `与${subject}相关的纪实场景，真实环境，自然光线` : "纪实摄影场景，真实环境，自然光线";
+  }
+
+  if (/(数据|分析|报告|趋势|增长)/i.test(text)) {
+    return subject ? `${subject}数据分析场景，屏幕图表，办公环境` : "数据分析场景，屏幕图表，办公环境";
+  }
+
+  if (/(对比|比较|区别|差异)/i.test(text)) {
+    return subject ? `${subject}对比展示场景，多产品排列，简洁背景` : "产品对比展示场景，简洁背景";
+  }
+
+  if (/(观点|思考|反思|深度)/i.test(text)) {
+    return subject ? `与${subject}思考相关的安静场景，书桌、咖啡、窗外光线` : "安静思考场景，书桌、咖啡、窗外光线";
+  }
+
+  return buildImageScene(input);
+}
+
 export function buildAutoImagePrompt(input: {
   title: string;
   summary: string;
@@ -232,12 +323,20 @@ export function buildAutoImagePrompt(input: {
 }) {
   const keyPoints = collectAutoImageKeyPoints(input.body);
   const visualKeywords = extractVisualKeywords([input.title, input.summary, ...keyPoints]);
-  const scene = buildImageScene(input);
+  const subject = extractArticleSubject(input);
+  const scene = buildContentDrivenScene(input);
   const style = buildImageStyle(input);
   const avoidPortrait = shouldAvoidAiPortrait(input);
 
+  const contentDescription = subject
+    ? `Article is about: ${subject}.`
+    : input.summary
+      ? `Article topic: ${input.summary.slice(0, 60)}.`
+      : "";
+
   return [
     "Editorial body illustration for an article.",
+    contentDescription,
     `Scene: ${scene}.`,
     visualKeywords.length ? `Visual cues: ${visualKeywords.join(", ")}.` : "",
     `Style: ${style}.`,
@@ -271,7 +370,7 @@ export function buildAutoImageSearchQuery(input: {
         .match(/[A-Za-z0-9][A-Za-z0-9+.-]{1,}/g)
         ?.map((item) => item.trim())
         .filter((item) => item.length >= 2 && item.length <= 20)
-        .slice(0, 5) ?? [],
+        .slice(0, 4) ?? [],
     ),
   );
 
@@ -281,17 +380,17 @@ export function buildAutoImageSearchQuery(input: {
         .match(/[A-Za-z0-9][A-Za-z0-9+.-]{1,}/g)
         ?.map((item) => item.trim())
         .filter((item) => item.length >= 2 && item.length <= 20)
-        .slice(0, 3) ?? [],
+        .slice(0, 2) ?? [],
     ),
   );
 
-  const latinTokens = [...titleLatinTokens, ...bodyLatinTokens].slice(0, 5);
+  const latinTokens = [...titleLatinTokens, ...bodyLatinTokens].slice(0, 4);
 
   const titleHanTokens = Array.from(
     new Set(
       extractVisualKeywords([input.title, input.summary])
         .filter((item) => item.length >= 2 && item.length <= 6)
-        .slice(0, 5),
+        .slice(0, 4),
     ),
   );
 
@@ -299,13 +398,14 @@ export function buildAutoImageSearchQuery(input: {
     new Set(
       extractVisualKeywords([...collectAutoImageKeyPoints(input.body)])
         .filter((item) => item.length >= 2 && item.length <= 6)
-        .slice(0, 3),
+        .slice(0, 2),
     ),
   );
 
-  const hanTokens = [...titleHanTokens, ...bodyHanTokens].slice(0, 6);
+  const hanTokens = [...titleHanTokens, ...bodyHanTokens].slice(0, 5);
+  const sceneHint = buildSearchSceneHint(input);
 
-  return [...hanTokens, ...latinTokens, "real photo no watermark"]
+  return [...hanTokens, ...latinTokens, sceneHint, "real photo no watermark"]
     .filter(Boolean)
     .join(" ")
     .trim();

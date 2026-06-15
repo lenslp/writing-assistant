@@ -295,7 +295,7 @@ export function ArticleAnalysis({ initialData }: { initialData?: ArticleAnalysis
       body: [
         `这条热点《${selectedArticle.title}》之所以值得拆，不只是因为它热，而是因为它同时具备“传播性”和“可延展表达”两个特征。`,
         `如果你想写出更像公众号爆款的文章，核心不是照搬标题，而是把它的结构拆出来：先用 ${analysis.titleStructure.hook} 抓住注意力，再围绕「${selectedArticle.angle}」逐步建立判断。`,
-        `这类文章最适合的写法，是开头先把读者拉进情境，中段拆出变化与影响，再给出具体建议。你可以优先从 ${selectedArticle.topic.angles[0]} 这个角度下手，让文章更贴近自己的账号定位。`,
+        `这类文章最适合的写法，是开头先把读者拉进情境，中段拆出变化与影响，再给出具体建议。你可以优先从 ${selectedArticle.topic.angles[0]} 这个角度下手，让文章更贴近目标读者。`,
         `写作过程中，建议按照 ${analysis.rhythm.map((item) => item.section).join("—")} 的顺序组织内容，并保留 ${analysis.format.slice(0, 2).join("、")} 这类排版动作，让阅读节奏更清晰。`,
         `最后别忘了给读者一个明确判断：这条热点意味着什么、现在该怎么理解、接下来可以做什么。这样文章才能从“追热点”升级成“有观点的内容资产”。`,
       ].join("\n\n"),

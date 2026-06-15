@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import {
   createBody, createFormattingForDomain, createOutline, createSummary,
-  colorSchemes, templates, formatDraftTime, migrateDefaultFormattingToMinimal,
+  getTemplateColors, getTemplateDotStyle, templates, ctaStyles, formatDraftTime, migrateDefaultFormattingToMinimal,
   type Draft, type DraftFormatting, type TemplateName,
 } from "../lib/app-data";
 import {
@@ -81,6 +81,10 @@ type EditorToolbarMode =
   | "quote"
   | "divider"
   | "code";
+
+type RichTextEditorStyle = React.CSSProperties & {
+  "--editor-divider-color"?: string;
+};
 
 type RichTextEditorHandle = {
   getSelectedText: () => string;
@@ -277,7 +281,7 @@ const RichTextEditor = React.forwardRef<
     onChange: (value: string) => void;
     disabled?: boolean;
     placeholder: string;
-    editorStyle: React.CSSProperties;
+    editorStyle: RichTextEditorStyle;
   }
 >(function RichTextEditor({ value, onChange, disabled, placeholder, editorStyle }, ref) {
   const editor = useEditor({
@@ -352,6 +356,13 @@ const RichTextEditor = React.forwardRef<
 
   return (
     <div className="article-rich-editor flex-1" style={editorStyle}>
+      <style jsx>{`
+        .article-rich-editor :global(.article-rich-editor__content hr) {
+          border: none;
+          border-top: 2px solid var(--editor-divider-color, currentColor);
+          margin: 1.5em 0;
+        }
+      `}</style>
       <EditorContent editor={editor} />
     </div>
   );
@@ -512,9 +523,11 @@ export function WritingPage() {
   const [formatting, setFormatting] = useState<DraftFormatting>(
     migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createFormattingForDomain(selectedDomain, settings.defaultTemplate))
   );
+  const formattingSourceKey = currentDraft ? `draft:${currentDraft.id}` : `topic:${activeTopic?.id ?? "empty"}:${defaultDomain}`;
+  const syncedFormattingSourceRef = useRef<string | null>(null);
   const activeScheme = useMemo(
-    () => colorSchemes.find((s) => s.name === formatting.colorScheme) ?? colorSchemes[0],
-    [formatting.colorScheme],
+    () => getTemplateColors(formatting.template),
+    [formatting.template],
   );
 
   const [previewMode, setPreviewMode] = useState<"mobile" | "desktop">("mobile");
@@ -535,7 +548,7 @@ export function WritingPage() {
   );
 
   const isWechatChannel = publishChannel === "公众号";
-  const isDarkTemplate = formatting.template === "深色";
+  const isDarkTemplate = formatting.template === "曜石黑";
 
   const textPrimary = isWechatChannel ? "rgba(0,0,0,0.9)" : isDarkTemplate ? "#f9fafb" : "#111827";
   const textSecondary = isWechatChannel ? "#4a4a4a" : isDarkTemplate ? "#d1d5db" : "#4b5563";
@@ -543,7 +556,7 @@ export function WritingPage() {
   const surfaceBackground = isWechatChannel ? "#ffffff" : isDarkTemplate ? "#0f172a" : "#ffffff";
   const phoneShellBackground = isWechatChannel ? "#ffffff" : isDarkTemplate ? "#0b1120" : "#ffffff";
 
-  const previewAccountName = getUserDisplayName(user, settings.accountName || "公众号");
+  const previewAccountName = settings.accountName.trim() || getUserDisplayName(user, "公众号");
   const previewAccountInitials = previewAccountName.slice(0, 2);
   const articleDate = currentDraft ? formatDraftTime(currentDraft.updatedAt).split(" ")[0] : formatDraftTime(new Date().toISOString()).split(" ")[0];
 
@@ -647,13 +660,16 @@ export function WritingPage() {
   }, [currentDraft, draftId, router, topicId]);
 
   useEffect(() => {
+    if (syncedFormattingSourceRef.current === formattingSourceKey) return;
+    syncedFormattingSourceRef.current = formattingSourceKey;
+
     setSelectedTitle(currentDraft?.title ?? "");
     setSummary(currentDraft?.summary ?? fallbackSummary);
     setOutline(currentDraft?.outline ?? fallbackOutline);
     setBody(currentDraft?.body ?? fallbackBody);
     setSelectedDomain(defaultDomain);
     setFormatting(migrateDefaultFormattingToMinimal(currentDraft?.formatting ?? createFormattingForDomain(defaultDomain, settings.defaultTemplate)));
-  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary, settings.defaultTemplate]);
+  }, [currentDraft, defaultDomain, fallbackBody, fallbackOutline, fallbackSummary, formattingSourceKey, settings.defaultTemplate]);
 
   useEffect(() => {
     if (!articleTypeOptions.includes(articleType)) {
@@ -904,9 +920,10 @@ export function WritingPage() {
       });
       const searchPayload = await searchResponse.json().catch(() => null);
       const searchResults = Array.isArray(searchPayload?.results)
-        ? (searchPayload.results as Array<{ url?: string }>)
+        ? (searchPayload.results as Array<{ url?: string; confidence?: string }>)
         : [];
       const realImages = searchResults
+        .filter((item) => item.confidence !== "low")
         .map((item) => item.url)
         .filter((url): url is string => Boolean(url?.trim()))
         .slice(0, remainingImageCount)
@@ -1093,7 +1110,8 @@ export function WritingPage() {
       currentDraft.title === inferredTitle &&
       currentDraft.summary === summary &&
       currentDraft.body === body &&
-      JSON.stringify(currentDraft.outline) === JSON.stringify(outline)
+      JSON.stringify(currentDraft.outline) === JSON.stringify(outline) &&
+      JSON.stringify(currentDraft.formatting) === JSON.stringify(formatting)
     );
   }
 
@@ -1401,10 +1419,7 @@ export function WritingPage() {
         summary,
         outline,
         body,
-        formatting:
-          currentDraft.domain === selectedDomain
-            ? currentDraft.formatting
-            : createFormattingForDomain(selectedDomain, settings.defaultTemplate),
+        formatting,
         status: currentDraft.status === "已发布" ? "已发布" : "待修改",
       });
 
@@ -1425,6 +1440,7 @@ export function WritingPage() {
     editorBody,
     isWritingBusy,
     outline,
+    formatting,
     router,
     selectedDomain,
     selectedTitle,
@@ -1471,7 +1487,7 @@ export function WritingPage() {
       { ...draft, title: inferredTitle, summary },
       htmlBody,
       "",
-      { includeTitle: false, includeSummary: false, includeCta: false },
+      { includeTitle: false, includeSummary: false, includeCta: false, ctaText: formatting.ctaText },
     );
     writeRichClipboard(html, plainText).then(() => {
       setSaveNotice("已复制公众号格式");
@@ -1678,8 +1694,6 @@ export function WritingPage() {
               </h1>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px]" style={{ color: textMuted }}>
                 <span>作者：{previewAccountName}</span>
-                <span>·</span>
-                <span>{settings.accountPosition.slice(0, 20)}{settings.accountPosition.length > 20 ? "…" : ""}</span>
               </div>
             </div>
           </div>
@@ -1725,16 +1739,19 @@ export function WritingPage() {
               }
 
               if (block.type === "quote") {
+                const quoteBorderColor = formatting.template === "曜石黑" ? "#475569" : activeScheme.primary;
+                const quoteBorderLeft = formatting.template === "极简白" ? "none" : `4px solid ${quoteBorderColor}`;
+
                 return (
                   <div
                     key={`${block.type}-${block.content}-${index}`}
                     className="px-4 py-4 my-6"
                     style={{
-                      borderLeft: `4px solid ${activeScheme.primary}`,
+                      borderLeft: quoteBorderLeft,
                       background: formatting.gradientQuote
                         ? `linear-gradient(135deg, ${activeScheme.primary}14, ${activeScheme.accent}0f)`
                         : `${activeScheme.primary}12`,
-                      borderRadius: formatting.roundedQuote ? "0 14px 14px 0" : "0",
+                      borderRadius: 0,
                       boxShadow: isDarkTemplate ? "none" : "0 10px 30px rgba(15,23,42,0.04)",
                     }}
                   >
@@ -2083,31 +2100,19 @@ export function WritingPage() {
                     <button
                       key={t}
                       onClick={() => setFormatting((f) => ({ ...f, template: t }))}
-                      className={`px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
+                      className={`inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] border transition-colors ${
                         formatting.template === t
                           ? "border-primary bg-primary/10 text-primary"
                           : "border-border bg-card text-muted-foreground hover:bg-accent"
                       }`}
                       style={{ fontWeight: 700 }}
                     >
+                      <span
+                        className="inline-block h-2 w-2 rounded-full border align-middle"
+                        style={getTemplateDotStyle(t)}
+                      />
                       {t}
                     </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-[12px] text-muted-foreground">配色</label>
-                <div className="flex gap-2">
-                  {colorSchemes.map((s) => (
-                    <button
-                      key={s.name}
-                      onClick={() => setFormatting((f) => ({ ...f, colorScheme: s.name }))}
-                      title={s.name}
-                      className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
-                        formatting.colorScheme === s.name ? "scale-110 border-foreground" : "border-border"
-                      }`}
-                      style={{ backgroundColor: s.primary }}
-                    />
                   ))}
                 </div>
               </div>
@@ -2122,6 +2127,36 @@ export function WritingPage() {
                   <option value="16px">16px 默认</option>
                   <option value="17px">17px 舒适</option>
                 </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] text-muted-foreground">底部引导语</label>
+                <textarea
+                  value={formatting.ctaText ?? settings.ctaEngage}
+                  onChange={(event) => setFormatting((current) => ({ ...current, ctaText: event.target.value }))}
+                  rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-[12px] leading-relaxed outline-none focus:border-primary"
+                  placeholder="输入底部引导文案"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[12px] text-muted-foreground">引导语样式</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {ctaStyles.map((styleName) => (
+                    <button
+                      key={styleName}
+                      type="button"
+                      onClick={() => setFormatting((current) => ({ ...current, ctaStyle: styleName }))}
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+                        (formatting.ctaStyle ?? "简洁") === styleName
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-card text-muted-foreground hover:bg-accent"
+                      }`}
+                      style={{ fontWeight: 700 }}
+                    >
+                      {styleName}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -2177,7 +2212,7 @@ export function WritingPage() {
                 }
               >
                 <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col">
-                  <div className="mb-5 border-b pb-5" style={{ borderColor: isDarkTemplate ? "#1f2937" : "#f1f1f1" }}>
+                  <div className="mb-5 border-b pb-5" style={{ borderColor: "#f1f1f1" }}>
                     <textarea
                       value={selectedTitle}
                       onChange={(event) => handleTitleChange(event.target.value)}
@@ -2202,7 +2237,7 @@ export function WritingPage() {
                         justifyContent: domainPreviewStyle.metaAlign,
                       }}
                     >
-                      <span className="text-[15px]" style={{ fontWeight: 400, color: isDarkTemplate ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)" }}>{previewAccountName}</span>
+                      <span className="text-[15px]" style={{ fontWeight: 500, color: "#576b95" }}>{previewAccountName}</span>
                       <span>·</span>
                       <span>{articleDate}</span>
                     </div>
@@ -2241,6 +2276,7 @@ export function WritingPage() {
                         lineHeight: formatting.lineHeight,
                         color: isWechatChannel ? domainPreviewStyle.paragraphColor : textPrimary,
                         fontFamily: isWechatChannel ? domainPreviewStyle.paragraphFontFamily : undefined,
+                        "--editor-divider-color": "#eeeeee",
                       }}
                     />
                   )}
@@ -2263,7 +2299,7 @@ export function WritingPage() {
                     maxWidth: previewMode === "mobile" ? 390 : 760,
                     background: phoneShellBackground,
                     color: textPrimary,
-                    borderColor: isDarkTemplate ? "#1f2937" : "#e5e7eb",
+                    borderColor: isDarkTemplate ? "transparent" : "#e5e7eb",
                   }}
                 >
                   <div

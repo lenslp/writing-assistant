@@ -129,6 +129,8 @@ const AI_TONE_INLINE_REPLACEMENTS = [
   { pattern: /在某种程度上/g, replacement: "" },
   // 刻意模仿人类：去掉刻意铺垫
   { pattern: /一个普通的(周日|周末|下午|早晨|夜晚|工作日)/g, replacement: "那天" },
+  { pattern: /上周(一|二|三|四|五|六|日|天)(早上|上午|中午|下午|晚上|夜里|凌晨)?[一二三四五六七八九十两零点半分]+[，,]/g, replacement: "" },
+  { pattern: /那一刻的(停滞|沉默|迟疑|恍惚)[，,]/g, replacement: "" },
   // 刻意模仿人类：去掉四字感官堆砌
   { pattern: /旋律流畅，制作精致/g, replacement: "挺好听" },
   { pattern: /制作精致，旋律流畅/g, replacement: "挺好听" },
@@ -185,6 +187,8 @@ const AIISH_SENTENCE_PATTERNS = [
   /^(公司的未来看起来光明|激动人心的时代即将到来|这代表了.*重要一步)/,
   // 刻意模仿人类：用「普通」营造日常感
   /^(一个普通的(周|星期|下午|早晨|周末|夜晚|工作日))/,
+  /^(上周(一|二|三|四|五|六|日|天)(早上|上午|中午|下午|晚上|夜里|凌晨)?[一二三四五六七八九十两零点半分]*)/,
+  /^(那一刻的(停滞|沉默|迟疑|恍惚))/,
   // 刻意模仿人类：戏剧性「直到」转折
   /^(直到.*提醒|直到.*告诉|直到.*说)/,
   // 刻意模仿人类：过度利落的结论
@@ -250,6 +254,8 @@ const STRUCTURAL_AI_PATTERNS = [
   /画面精美.*剧情动人|剧情动人.*画面精美/,
   // 刻意模仿人类：过于工整的起承转合叙事
   /(一个普通的).{2,6}(，).{4,15}(。).{2,8}(，).{4,15}(。)/,
+  /(上周|周末|昨晚|前天|那天).{0,12}(早上|上午|中午|下午|晚上|夜里|凌晨|十一点|十点).{0,28}(我正|我在|我刚|屏幕|手机|电脑)/,
+  /那一刻的(停滞|沉默|迟疑|恍惚).{0,24}(不只是|更让人|让人意识到)/,
 ] as const;
 
 /**
@@ -309,7 +315,7 @@ function buildQualityRewriteNotes(issue?: string) {
     "少用抽象大词，多写具体对象、真实处境、明确代价和读者能感到的后果。",
     "段落长度要有变化。两项可以，不要硬凑三项。句子不要每段都用同一种转折。",
     "禁止刻意模仿人类：不要用「一个普通的X下午」开头，不要写四字感官堆砌（旋律流畅、制作精致），不要用「直到X提醒」制造戏剧转折，不要用新闻导语式利落收尾。",
-    "叙事结构不要太完美。允许跳跃、不完整、随意感。真实的人写东西不会起承转合这么干净。",
+    "不要为了显得像人写而虚构时间、地点、聊天对象、屏幕弹窗、停顿瞬间等现场感；没有素材支撑时，直接从事实和影响写起。",
   ].filter(Boolean);
 }
 
@@ -393,7 +399,7 @@ const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
   { scope: "universal", text: "禁止使用 AI/报告腔连接词：首先、其次、最后、总的来说、综上所述、不难发现、值得一提的是、由此可见、此外、然而。直接说事，不要铺垫。" },
   { scope: "universal", text: "不要编造具体数据、人物发言、采访、机构结论和百分比；事实不足时用因果判断和经验推理补足。" },
   { scope: "universal", text: "深度不是堆术语。复杂概念先翻译成人话，再解释它为什么重要。默认读者不是行业从业者。" },
-  { scope: "universal", text: "语气像见过很多类似事情的朋友在帮读者把复杂问题讲明白，不要像评论员发言或咨询报告。" },
+  { scope: "universal", text: "语气像一个克制的科技编辑在解释事情：判断清楚、信息具体、少表演情绪，不要像评论员发言或咨询报告。" },
   { scope: "universal", text: "有观点有态度，不要两头讨好。结尾可以俏皮或犀利，不要烂尾。" },
   { scope: "universal", text: "标点必须用中文全角（，。！？：；），英文半角逗号会挤在一起，非常难看。" },
   { scope: "universal", text: "不要在文章中展示数据来源/信息出处（不说「数据来源：XXX」「信息来自XXX」），数据要有来源感但不要暴露出处。" },
@@ -409,24 +415,24 @@ const CORE_WRITING_RULES: ReadonlyArray<{ scope: RuleScope; text: string }> = [
 
   // ── universal: 反「刻意模仿人类」规则 ──
   { scope: "universal", text: "禁止刻意模仿人类写作。不要用「一个普通的周末下午」这类刻意铺垫日常感的开头，直接说事。" },
-  { scope: "universal", text: "叙事不要有完美的起承转合。真实的人写东西不会这么干净利落，允许有跳跃、有不完整、有随意感。" },
+  { scope: "universal", text: "不要为了制造人味而虚构私人场景。没有真实素材时，不写“上周某个晚上”“我正在处理任务”“那一刻”这类伪现场开头。" },
   { scope: "universal", text: "禁止四字感官填充词堆砌：不要用「旋律流畅，制作精致」「画面精美，剧情动人」这种泛泛的形容。要写就写具体感受。" },
   { scope: "universal", text: "禁止戏剧性「直到」转折：不要写「直到朋友提醒：这听起来像…」这种刻意制造悬念的句式。" },
   { scope: "universal", text: "结尾不要利落收束。不要写「现在，X告诉我，这种怀疑可以直接验证了」这种新闻导语式的结论。" },
 
   // ── planning: 标题/结构规则 ──────────────────
-  { scope: "planning", text: "标题要像编辑最后拍板的成品，优先使用具体对象、真实场景、冲突或后果。避免过于工整的对仗句和大词堆叠。" },
+  { scope: "planning", text: "标题要像编辑最后拍板的成品，优先使用具体对象、明确变化、冲突或后果。避免过于工整的对仗句和大词堆叠。" },
   { scope: "planning", text: "摘要不要以「这篇文章」「本文」「今天聊聊」开头，直接进入判断、场景或问题，像转发前的一段导语。" },
   { scope: "planning", text: "大纲不能只是「背景-影响-建议」的流水账，至少 2 个小标题要像判断句而非栏目名。" },
 
   // ── drafting: 正文规则（humanizer-zh 增强版） ────────────────────────────────
-  { scope: "drafting", text: "开头不要解释文章要讲什么，直接进入读者当下的处境、事件冲突或核心判断。不要写「在这个信息爆炸的时代」这类悬浮开场。" },
+  { scope: "drafting", text: "开头不要解释文章要讲什么，也不要虚构生活化场景；直接进入事件本身、明确变化或核心判断。不要写「在这个信息爆炸的时代」这类悬浮开场。" },
   { scope: "drafting", text: "多用短段落（每段 1-3 句），句子节奏有长有短。重要部分多写，次要部分收着写，不要机械平均展开。" },
   { scope: "drafting", text: "结尾不要像社论收口，更像朋友把话说透后给一个清楚提醒，附 2-3 条可执行建议。" },
   // humanizer-zh: 新增正文规则
   { scope: "drafting", text: "适当使用「我」。第一人称不是不专业——而是诚实。「我一直在思考…」「让我困扰的是…」表明有真实的人在思考。" },
   { scope: "drafting", text: "承认复杂性。真实的人有复杂的感受。「这令人印象深刻但也有点不安」胜过「这令人印象深刻」。" },
-  { scope: "drafting", text: "对感受要具体。不是「这令人担忧」，而是「凌晨三点没人看着的时候，智能体还在不停地运转，这让人不安」。" },
+  { scope: "drafting", text: "感受只在有事实支撑时写，不要用“凌晨三点”“屏幕弹窗”“朋友提醒”这类编出来的细节制造代入感。" },
   { scope: "drafting", text: "不要用破折号（—）制造悬念。直接说事。「这个术语主要由荷兰机构推广，而不是由人民自己」比用破折号更自然。" },
   { scope: "drafting", text: "不要用粗体强调关键词。让内容自己说话。" },
   { scope: "drafting", text: "不要用表情符号装饰标题或项目符号。" },
@@ -1760,10 +1766,10 @@ function buildGithubTrendingPromptSections(
   if (mode === "drafting" || (mode === "generate" && (request.scope === "body" || request.scope === "full"))) {
     sections.push(
       `正文请按开源项目推荐文来写，默认围绕「${projectName} 是什么」「它最吸引人的地方在哪」「普通人为什么会想点进去看」「值不值得试」自然展开。`,
-      "全文更像在认真给朋友推荐一个项目，语气要像编辑在介绍一个新鲜东西，不要像讲解课件，也不要像评审报告。",
+      "全文像科技编辑在介绍一个新项目：先说清楚它是什么、为什么突然被关注，再讲适合谁看。不要写成私人体验日记。",
       "小标题尽量自然一点，允许有一两个判断句或场景句，不要每段都长得像说明书；也不要每次都以“项目简介/为什么火/怎么上手”开头。",
       "开头先把热度和看点讲出来，再进入项目细节；不要一上来讲行业背景，也不要先做概念科普。",
-      "默认正文节奏是：一段轻一点的引子 + 几段自然介绍 + 一段短判断，不要写成长篇评论。",
+      "默认正文节奏是：一段事实导入 + 几段自然介绍 + 一段短判断，不要写成长篇评论，也不要用虚构场景做引子。",
       "至少补 1-2 个实际使用示例，优先用代码块、命令行或最小可运行片段来展示，而不是只用口头描述。",
       "如果项目适合上手，给出一个很短的示例片段或安装命令，让读者一眼知道怎么试。",
       "结尾给出一句轻判断：这个项目适不适合现在去看、值不值得试、如果要试先看哪里。"
@@ -1834,7 +1840,6 @@ function buildSharedTaskContext(request: {
     `选题理由：${request.topic.reason}`,
     `文章类型：${request.articleType}`,
     `目标字数：严格控制在 ${wordCount.normalized} 字，允许误差不超过 ${wordCount.tolerance} 字`,
-    `账号定位：${request.settings.accountPosition}`,
     `内容领域：${request.settings.contentAreas.join("、")}`,
     `禁写：${request.settings.bannedTopics.join("、") || "无"}`,
     `互动 CTA：${request.settings.ctaEngage}`,
@@ -1947,7 +1952,7 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest, qualityIssue?:
     isFullArticle
       ? [
           "本次生成流程必须按顺序执行，但只输出最终 JSON：",
-          "1. 先完整阅读并吸收所有热点素材、事实卡片、账号定位、禁写规则和写作要求。",
+          "1. 先完整阅读并吸收所有热点素材、事实卡片、内容领域、禁写规则和写作要求。",
           "2. 在脑中搭好文章结构和段落节奏，但不要把结构、大纲、写作计划、分析过程写出来。",
           "3. 一口气写完最终主标题和完整正文。正文可以使用自然的 ## 小标题分节，但不能输出提纲式占位内容。",
           "4. 输出前自行检查 AI 味，删掉模板句、空泛拔高、三段式套话、硬凑排比和写作说明。",
@@ -1961,7 +1966,7 @@ function buildGenerateUserPrompt(request: AIWriteGenerateRequest, qualityIssue?:
       ? "要求：以上内容来自热点详情页自动提取，可作为事实和细节参考；请优先信任“热点事实卡片”，再参考详情正文展开。如果提取内容不完整，请基于已知信息写作，不要自行编造。"
       : "",
     scope === "body" || scope === "full"
-      ? `${wordCount.sentence} 使用 ## 小标题分节。结构建议：1) 开头用真实场景或冲突切入；2) 中段拆 3-4 个核心判断；3) 末尾给出可执行建议和互动收束。`
+      ? `${wordCount.sentence} 使用 ## 小标题分节。结构建议：1) 开头直接交代事件、变化或结论；2) 中段拆 3-4 个核心判断；3) 末尾给出可执行建议和互动收束。不要虚构时间、地点、对话或私人经历来制造现场感。`
       : "",
     draft?.title ? `当前标题：${draft.title}` : "",
     draft?.summary ? `当前摘要：${draft.summary}` : "",
@@ -1997,7 +2002,7 @@ function buildPlanningSystemPrompt() {
     "",
     "## 写作规则",
     ...getRulesForPhase("planning").map((rule, index) => `${index + 1}. ${rule}`),
-    "整体写法：自然、有信息量、有判断感，不套固定风格模板。",
+    "整体写法：自然、有信息量、有判断感，不套固定风格模板；不要虚构生活场景来显得自然。",
     "请严格返回 JSON，不要额外解释。",
   ].join("\n");
 }
@@ -2064,7 +2069,6 @@ function buildDraftingUserPrompt(
     `文章领域：${resolvedDomain}`,
     `领域提醒：${domainConfig.promptHint}`,
     `文章类型：${request.articleType}`,
-    `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
     ...buildSourceContextPromptSections(sourceContext, "drafting"),
     ...buildGithubTrendingPromptSections(request, "drafting"),
@@ -2126,7 +2130,6 @@ function buildTransformUserPrompt(request: AIWriteTransformRequest) {
     `领域重点：${domainConfig.writingFocus.join("、")}`,
     `角度：${request.topic.angles.join("；")}`,
     `文章类型：${request.articleType}`,
-    `账号定位：${request.settings.accountPosition}`,
     `互动 CTA：${request.settings.ctaEngage}`,
     "改写方向：更像公众号爆文作者，而不是报告写作者。多用短句，保留判断感和节奏感。",
     "去味清单：删掉填充连接词、空泛拔高、模糊归因、宣传腔、否定式排比和硬凑三连词；把能说具体的地方都说具体。",

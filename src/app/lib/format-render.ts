@@ -21,6 +21,7 @@ export type ContentBlock =
   | { type: "code"; content: string; language: string }
   | { type: "golden"; content: string }
   | { type: "highlight"; content: string }
+  | { type: "cta"; content: string }
   | { type: "unordered-list"; items: string[] }
   | { type: "ordered-list"; items: string[] }
   | { type: "paragraph"; content: string };
@@ -48,6 +49,7 @@ export const AUTO_HIGHLIGHT_PATTERNS = [
 export const IMAGE_MARKDOWN_PATTERN = /^!\[(.*?)\]\((.+)\)$/;
 export const IMAGE_CAPTION_PATTERN = /^(?:图注|说明|caption)[:：]\s*(.+)$/i;
 export const CODE_BLOCK_PATTERN = /^```(\w+)?\s*\n([\s\S]*?)\n```$/;
+const CTA_BLOCK_PATTERN = /(?:在看|点赞|关注|转发|分享|留言|评论|收藏|有启发|有帮助|更多人看到|欢迎交流)/;
 
 // ---------------------------------------------------------------------------
 // Color helpers
@@ -257,7 +259,7 @@ export function splitBodySections(body: string) {
 // Inline HTML rendering
 // ---------------------------------------------------------------------------
 
-export function renderInlineHtml(text: string, options?: { autoHighlight?: boolean; highlightStyle?: string }) {
+export function renderInlineHtml(text: string, options?: { autoHighlight?: boolean; highlightStyle?: string; quoteColor?: string }) {
   const tokens = collectInlineTokens(text, options?.autoHighlight);
 
   if (!tokens.length) {
@@ -275,7 +277,7 @@ export function renderInlineHtml(text: string, options?: { autoHighlight?: boole
     if (token.kind === "bold") {
       html += `<strong>${escapeHtml(token.content)}</strong>`;
     } else if (token.kind === "quote") {
-      html += `<span style="color:#2563eb;">${escapeHtml(token.content)}</span>`;
+      html += `<span style="color:${options?.quoteColor ?? "#2563eb"};">${escapeHtml(token.content)}</span>`;
     } else {
       html += `<span style="${options?.highlightStyle ?? ""}">${escapeHtml(token.content)}</span>`;
     }
@@ -295,9 +297,12 @@ export function renderInlineHtml(text: string, options?: { autoHighlight?: boole
 // ---------------------------------------------------------------------------
 
 export function extractContentBlocks(body: string): ContentBlock[] {
-  return splitBodySections(body)
+  const sections = splitBodySections(body).filter(Boolean);
+  const lastSectionIndex = sections.length - 1;
+
+  return sections
     .filter(Boolean)
-    .map((section) => {
+    .map((section, sectionIndex) => {
       const lines = section.split("\n").map((line) => line.trim()).filter(Boolean);
       const codeMatch = section.match(CODE_BLOCK_PATTERN);
       const imageBlock = parseImageSection(section);
@@ -338,6 +343,15 @@ export function extractContentBlocks(body: string): ContentBlock[] {
         return { type: "highlight", content: section.replace("【重点】", "").trim() } satisfies ContentBlock;
       }
 
+      if (
+        sectionIndex === lastSectionIndex &&
+        lines.length === 1 &&
+        section.length <= 90 &&
+        CTA_BLOCK_PATTERN.test(section)
+      ) {
+        return { type: "cta", content: section } satisfies ContentBlock;
+      }
+
       if (lines.length > 1 && lines.every((line) => line.startsWith("- "))) {
         return {
           type: "unordered-list",
@@ -368,6 +382,7 @@ export function buildWechatText(
     includeTitle?: boolean;
     includeSummary?: boolean;
     includeCta?: boolean;
+    ctaText?: string;
   },
 ) {
   const plainBody = extractContentBlocks(body)
@@ -396,6 +411,10 @@ export function buildWechatText(
 
       if (block.type === "divider") {
         return "---";
+      }
+
+      if (block.type === "cta") {
+        return options?.ctaText?.trim() || block.content;
       }
 
       return block.content;
@@ -470,6 +489,46 @@ type ExportTemplateTheme = {
 };
 
 function getTemplateExportTheme(template: DraftFormatting["template"], primary: string, accent: string): ExportTemplateTheme {
+  if (template === "杂志绿") {
+    return {
+      headerVariant: "minimal",
+      pageBackground: "#ffffff",
+      articleBackground: "#ffffff",
+      articleBorder: "1px solid #e5e7eb",
+      articleRadius: "18px",
+      articlePadding: "34px 24px",
+      articleShadow: "0 16px 36px rgba(15,23,42,0.04)",
+      bodyTextColor: "#202124",
+      mutedTextColor: "#777777",
+      titleColor: "#111827",
+      badgeBackground: "#187b45",
+      badgeColor: "#ffffff",
+      badgeBorder: "none",
+      summaryBackground: "#f3faf6",
+      summaryBorder: "1px solid #d7eadf",
+      summaryColor: "#2f5f45",
+      summaryRadius: "12px",
+      summaryPadding: "16px 18px",
+      quoteBackground: "#f8eee9",
+      quoteTextColor: "#b45309",
+      quoteBorderColor: "#f59e0b",
+      highlightBackground: "#f3faf6",
+      highlightBorderColor: "#cfe8d9",
+      highlightTextColor: "#187b45",
+      goldenBackground: "#f8eee9",
+      goldenBorderColor: "#f59e0b",
+      goldenTextColor: "#b45309",
+      dividerColor: "#e5e7eb",
+      imageBorderColor: "#e5e7eb",
+      imageBackground: "#ffffff",
+      imageShadow: "none",
+      imageRadius: "12px",
+      imageCaptionColor: "#777777",
+      headingCardBackground: "#ffffff",
+      headingCardBorderColor: "#d7eadf",
+    };
+  }
+
   if (template === "科技蓝") {
     return {
       headerVariant: "hero",
@@ -554,7 +613,7 @@ function getTemplateExportTheme(template: DraftFormatting["template"], primary: 
     };
   }
 
-  if (template === "暖色调") {
+  if (template === "活力橙") {
     return {
       headerVariant: "warm",
       pageBackground: "linear-gradient(180deg, #fff7ed 0%, #fffaf5 50%, #ffffff 100%)",
@@ -596,7 +655,7 @@ function getTemplateExportTheme(template: DraftFormatting["template"], primary: 
     };
   }
 
-  if (template === "深色") {
+  if (template === "曜石黑") {
     return {
       headerVariant: "dark",
       pageBackground: "linear-gradient(180deg, #020617 0%, #0f172a 100%)",
@@ -610,20 +669,20 @@ function getTemplateExportTheme(template: DraftFormatting["template"], primary: 
       titleColor: "#f8fafc",
       badgeBackground: `linear-gradient(135deg, ${primary}, ${accent})`,
       badgeColor: "#f8fafc",
-      badgeBorder: `1px solid ${withAlpha(accent, 0.22)}`,
-      summaryBackground: withAlpha(accent, 0.14),
-      summaryBorder: `1px solid ${withAlpha(accent, 0.22)}`,
+      badgeBorder: "1px solid #475569",
+      summaryBackground: "#111827",
+      summaryBorder: "1px solid #334155",
       summaryColor: "#dbeafe",
       summaryRadius: "18px",
       summaryPadding: "18px 18px",
       quoteBackground: "#111827",
       quoteTextColor: "#cbd5e1",
-      quoteBorderColor: accent,
-      highlightBackground: withAlpha(primary, 0.14),
-      highlightBorderColor: withAlpha(accent, 0.28),
+      quoteBorderColor: "#475569",
+      highlightBackground: "#111827",
+      highlightBorderColor: "#334155",
       highlightTextColor: "#f8fafc",
-      goldenBackground: `linear-gradient(135deg, ${withAlpha(primary, 0.18)}, ${withAlpha(accent, 0.24)})`,
-      goldenBorderColor: accent,
+      goldenBackground: "linear-gradient(135deg, #111827, #1e293b)",
+      goldenBorderColor: "#475569",
       goldenTextColor: "#f8fafc",
       dividerColor: "#334155",
       imageBorderColor: "#475569",
@@ -632,9 +691,9 @@ function getTemplateExportTheme(template: DraftFormatting["template"], primary: 
       imageRadius: "18px",
       imageCaptionColor: "#94a3b8",
       headingCardBackground: "#111827",
-      headingCardBorderColor: withAlpha(accent, 0.24),
-      headerBackground: `linear-gradient(135deg, ${withAlpha(primary, 0.22)}, ${withAlpha(accent, 0.16)})`,
-      headerBorder: `1px solid ${withAlpha(accent, 0.22)}`,
+      headingCardBorderColor: "#334155",
+      headerBackground: "linear-gradient(135deg, #111827, #1e293b)",
+      headerBorder: "1px solid #334155",
       headerShadow: "0 14px 32px rgba(2,6,23,0.36)",
       headerTitleColor: "#f8fafc",
       headerMetaColor: "#cbd5e1",
@@ -706,6 +765,139 @@ function renderExportHeader(args: {
   return `<header style="margin:0 0 20px;">${badgeHtml}${titleHtml}${metaHtml}</header>`;
 }
 
+type WechatBodyStyleContext = {
+  template: DraftFormatting["template"];
+  primary: string;
+  accent: string;
+  headingIndex: number;
+  headingTextColor: string;
+  paragraphFontFamily: string;
+  quoteBackground: string;
+  quoteTextColor: string;
+  quoteBorderColor: string;
+  highlightBackground: string;
+  highlightBorderColor: string;
+  highlightTextColor: string;
+  goldenBackground: string;
+  goldenBorderColor: string;
+  goldenTextColor: string;
+};
+
+function renderWechatHeading(contentHtml: string, context: WechatBodyStyleContext) {
+  const { template, primary, accent, headingIndex, headingTextColor, paragraphFontFamily } = context;
+
+  if (template === "杂志绿") {
+    return `<section style="margin:34px 0 18px;"><div style="display:flex;align-items:center;gap:10px;"><span style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:999px;background:#187b45;color:#ffffff;font-size:14px;font-weight:800;line-height:30px;flex:0 0 auto;">${headingIndex}</span><h2 style="margin:0;font-size:22px;font-weight:900;line-height:1.35;color:#191919;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></div></section>`;
+  }
+
+  if (template === "科技蓝") {
+    return `<section style="margin:42px 0 22px;"><div style="padding:14px 16px;border:1px solid ${withAlpha(primary, 0.14)};border-radius:12px;background:linear-gradient(135deg, ${mixWithWhite(primary, 0.08)}, ${mixWithWhite(accent, 0.10)});"><h2 style="margin:0;font-size:21px;font-weight:800;line-height:1.4;color:#18324a;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></div></section>`;
+  }
+
+  if (template === "商务灰") {
+    return `<section style="margin:42px 0 22px;"><h2 style="display:inline-block;margin:0;padding:0 0 9px;border-bottom:2px solid #111827;font-size:21px;font-weight:800;line-height:1.42;color:#111827;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></section>`;
+  }
+
+  if (template === "活力橙") {
+    return `<section style="margin:42px 0 22px;"><h2 style="margin:0;padding:12px 16px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;font-size:21px;font-weight:800;line-height:1.42;color:#7c4a03;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></section>`;
+  }
+
+  if (template === "曜石黑") {
+    return `<section style="margin:42px 0 22px;"><h2 style="margin:0;padding:13px 16px;border-radius:12px;background:#111827;border:1px solid #334155;font-size:21px;font-weight:800;line-height:1.42;color:#f8fafc;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></section>`;
+  }
+
+  return `<section style="margin:44px 0 22px;"><h2 style="margin:0;font-size:22px;font-weight:800;line-height:1.35;color:${headingTextColor};letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h2></section>`;
+}
+
+function renderWechatSubheading(contentHtml: string, context: WechatBodyStyleContext) {
+  const { template, accent, paragraphFontFamily } = context;
+
+  if (template === "杂志绿") {
+    return `<h3 style="margin:28px 0 16px;font-size:19px;font-weight:800;line-height:1.55;color:#187b45;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h3>`;
+  }
+
+  if (template === "商务灰") {
+    return `<h3 style="margin:24px 0 16px;padding-left:10px;border-left:3px solid #94a3b8;font-size:18px;font-weight:800;line-height:1.55;color:#334155;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h3>`;
+  }
+
+  if (template === "活力橙") {
+    return `<h3 style="margin:24px 0 16px;font-size:18px;font-weight:800;line-height:1.55;color:#9a5a16;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h3>`;
+  }
+
+  if (template === "曜石黑") {
+    return `<h3 style="margin:24px 0 16px;font-size:18px;font-weight:800;line-height:1.55;color:#0f766e;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h3>`;
+  }
+
+  return `<h3 style="margin:22px 0 16px;font-size:18px;font-weight:800;line-height:1.55;color:${accent};letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</h3>`;
+}
+
+function renderWechatQuote(contentHtml: string, context: WechatBodyStyleContext) {
+  const { template, quoteBackground, quoteTextColor, quoteBorderColor } = context;
+
+  if (template === "杂志绿") {
+    return `<blockquote style="margin:34px 0;padding:22px 24px;background:#f8eee9;border-left:5px solid #f59e0b;border-radius:0;font-size:17px;line-height:1.95;color:#b45309;letter-spacing:0.01em;font-weight:700;">${contentHtml}</blockquote>`;
+  }
+
+  if (template === "商务灰") {
+    return `<blockquote style="margin:28px 0;padding:16px 0 16px 18px;background:#ffffff;border-left:4px solid #64748b;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;border-radius:0;font-size:16px;line-height:1.9;color:#475569;letter-spacing:0.01em;">${contentHtml}</blockquote>`;
+  }
+
+  if (template === "曜石黑") {
+    return `<blockquote style="margin:28px 0;padding:16px 18px;background:#111827;border:1px solid #334155;border-left:4px solid ${quoteBorderColor};border-radius:0;font-size:16px;line-height:1.9;color:#cbd5e1;letter-spacing:0.01em;">${contentHtml}</blockquote>`;
+  }
+
+  return `<blockquote style="margin:28px 0;padding:16px 20px;background:${quoteBackground};border-left:4px solid ${quoteBorderColor};border-radius:0;font-size:16px;line-height:1.9;color:${quoteTextColor};letter-spacing:0.01em;">${contentHtml}</blockquote>`;
+}
+
+function renderWechatFeatureBlock(kind: "golden" | "highlight", contentHtml: string, context: WechatBodyStyleContext) {
+  const { template, accent, paragraphFontFamily, highlightBackground, highlightBorderColor, highlightTextColor, goldenBackground, goldenBorderColor, goldenTextColor } = context;
+  const isGolden = kind === "golden";
+
+  if (template === "杂志绿") {
+    return isGolden
+      ? `<blockquote style="margin:34px 0;padding:22px 24px;background:#f8eee9;border-left:5px solid #f59e0b;border-radius:0;color:#b45309;font-size:17px;line-height:1.95;font-weight:800;letter-spacing:0;">${contentHtml}</blockquote>`
+      : `<div style="margin:26px 0;padding:18px 20px;background:#f3faf6;border-radius:12px;color:#187b45;font-size:17px;line-height:1.95;font-weight:700;letter-spacing:0;">${contentHtml}</div>`;
+  }
+
+  if (template === "极简白") {
+    return isGolden
+      ? `<p style="margin:28px 0;padding:0 0 0 14px;border-left:3px solid ${accent};font-size:19px;line-height:1.65;color:${accent};font-weight:800;letter-spacing:0;font-family:${paragraphFontFamily};">${contentHtml}</p>`
+      : `<div style="margin:24px 0;padding:14px 16px;background:#f8fafc;color:#3f3f46;font-size:16px;line-height:1.85;font-weight:600;">${contentHtml}</div>`;
+  }
+
+  if (template === "商务灰") {
+    return `<div style="margin:${isGolden ? "28px" : "24px"} 0;padding:${isGolden ? "18px 0" : "16px 18px"};background:${isGolden ? "#ffffff" : "#f8fafc"};border-top:1px solid #d1d5db;border-bottom:1px solid #d1d5db;color:${isGolden ? "#111827" : "#334155"};font-size:${isGolden ? "18px" : "16px"};line-height:${isGolden ? "1.75" : "1.85"};font-weight:${isGolden ? "800" : "600"};letter-spacing:0;">${contentHtml}</div>`;
+  }
+
+  if (template === "曜石黑") {
+    return `<div style="margin:${isGolden ? "28px" : "24px"} 0;padding:${isGolden ? "18px 20px" : "16px 18px"};border-radius:14px;background:${isGolden ? goldenBackground : "#111827"};border:1px solid ${isGolden ? goldenBorderColor : highlightBorderColor};color:${isGolden ? goldenTextColor : "#dbeafe"};font-size:${isGolden ? "18px" : "16px"};line-height:${isGolden ? "1.75" : "1.85"};font-weight:${isGolden ? "800" : "600"};letter-spacing:0;">${contentHtml}</div>`;
+  }
+
+  return `<div style="margin:${isGolden ? "28px" : "24px"} 0;padding:${isGolden ? "18px 20px" : "16px 18px"};border-radius:${template === "活力橙" ? "16px" : "14px"};background:${isGolden ? goldenBackground : highlightBackground};border:1px solid ${isGolden ? goldenBorderColor : highlightBorderColor};color:${isGolden ? goldenTextColor : highlightTextColor};font-size:${isGolden ? "18px" : "16px"};line-height:${isGolden ? "1.75" : "1.85"};font-weight:${isGolden ? "800" : "600"};letter-spacing:0;">${contentHtml}</div>`;
+}
+
+function renderWechatCta(contentHtml: string, context: WechatBodyStyleContext, formatting: DraftFormatting) {
+  const { template, primary, accent, paragraphFontFamily } = context;
+  const style = formatting.ctaStyle ?? "简洁";
+  const isDark = template === "曜石黑";
+  const isDarkMinimal = isDark && style === "简洁";
+  const textColor = isDarkMinimal ? "#4b5563" : isDark ? "#e2e8f0" : style === "强调" ? primary : "#4b5563";
+  const borderColor = isDarkMinimal ? "#334155" : withAlpha(isDark ? accent : primary, style === "强调" ? 0.28 : 0.16);
+  const background = style === "简洁"
+    ? "transparent"
+    : isDark
+      ? "#111827"
+      : style === "强调"
+        ? mixWithWhite(primary, 0.08)
+      : "#f8fafc";
+
+  if (style === "简洁") {
+    return `<section style="margin:34px 0 0;padding-top:18px;border-top:1px solid ${borderColor};text-align:center;color:${textColor};font-size:15px;line-height:1.85;letter-spacing:0.01em;font-family:${paragraphFontFamily};">${contentHtml}</section>`;
+  }
+
+  return `<section style="margin:34px 0 0;padding:16px 18px;border:1px solid ${borderColor};border-radius:${style === "强调" ? "14px" : "12px"};background:${background};text-align:center;color:${textColor};font-size:15px;line-height:1.85;font-weight:${style === "强调" ? "700" : "500"};letter-spacing:0.01em;font-family:${paragraphFontFamily};">${contentHtml}</section>`;
+}
+
 type WechatRichHtmlOptions = {
   includeDocumentShell?: boolean;
   includeHeader?: boolean;
@@ -744,6 +936,7 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
     imageSrcMap,
   } = args;
   const isWechatChannel = publishChannel === "公众号";
+  let wechatHeadingIndex = 0;
   const metaDate = formatDraftTime(draft.publishedAt ?? draft.updatedAt ?? new Date().toISOString()).split(" ")[0];
   const inlineHighlightHtmlStyle = getInlineHighlightHtmlStyle(primary, accent);
   const domainStyle = getWechatDomainPreviewStyle(domain, primary, accent);
@@ -758,15 +951,32 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
   const wechatParagraphFontFamily = "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Segoe UI',sans-serif";
   const paragraphColor = isWechatChannel ? wechatBodyTextColor : templateTheme.bodyTextColor;
   const headingTextColor = isWechatChannel ? wechatHeadingTextColor : templateTheme.titleColor ?? templateTheme.bodyTextColor ?? domainStyle.headingTextColor;
-  const quoteBackground = isWechatChannel ? "#f7f7f7" : templateTheme.quoteBackground ?? domainStyle.quoteBackground;
-  const quoteTextColor = isWechatChannel ? "#4d4d4d" : templateTheme.quoteTextColor ?? domainStyle.quoteTextColor;
-  const quoteBorderColor = isWechatChannel ? wechatAccent : templateTheme.quoteBorderColor ?? primary;
+  const quoteBackground = isWechatChannel ? templateTheme.quoteBackground ?? "#f7f7f7" : templateTheme.quoteBackground ?? domainStyle.quoteBackground;
+  const quoteTextColor = isWechatChannel ? templateTheme.quoteTextColor ?? "#4d4d4d" : templateTheme.quoteTextColor ?? domainStyle.quoteTextColor;
+  const quoteBorderColor = isWechatChannel ? templateTheme.quoteBorderColor ?? wechatAccent : templateTheme.quoteBorderColor ?? primary;
   const dividerColor = isWechatChannel ? "#eeeeee" : templateTheme.dividerColor ?? domainStyle.dividerColor;
-  const imageBorderColor = isWechatChannel ? "#eef0f3" : templateTheme.imageBorderColor ?? String(domainStyle.imageFrameStyle.borderColor);
-  const imageBackground = isWechatChannel ? "#ffffff" : templateTheme.imageBackground ?? String(domainStyle.imageFrameStyle.background);
-  const imageShadow = isWechatChannel ? "none" : templateTheme.imageShadow ?? String(domainStyle.imageFrameStyle.boxShadow);
-  const imageRadius = isWechatChannel ? "10px" : templateTheme.imageRadius ?? String(domainStyle.imageFrameStyle.borderRadius);
-  const imageCaptionColor = isWechatChannel ? wechatMutedTextColor : templateTheme.imageCaptionColor ?? domainStyle.imageCaptionColor;
+  const imageBorderColor = isWechatChannel ? templateTheme.imageBorderColor ?? "#eef0f3" : templateTheme.imageBorderColor ?? String(domainStyle.imageFrameStyle.borderColor);
+  const imageBackground = isWechatChannel ? templateTheme.imageBackground ?? "#ffffff" : templateTheme.imageBackground ?? String(domainStyle.imageFrameStyle.background);
+  const imageShadow = isWechatChannel ? templateTheme.imageShadow ?? "none" : templateTheme.imageShadow ?? String(domainStyle.imageFrameStyle.boxShadow);
+  const imageRadius = isWechatChannel ? templateTheme.imageRadius ?? "10px" : templateTheme.imageRadius ?? String(domainStyle.imageFrameStyle.borderRadius);
+  const imageCaptionColor = isWechatChannel ? templateTheme.imageCaptionColor ?? wechatMutedTextColor : templateTheme.imageCaptionColor ?? domainStyle.imageCaptionColor;
+  const wechatBodyStyleContext: WechatBodyStyleContext = {
+    template: formatting.template,
+    primary,
+    accent: wechatAccent,
+    headingIndex: 0,
+    headingTextColor,
+    paragraphFontFamily: wechatParagraphFontFamily,
+    quoteBackground,
+    quoteTextColor,
+    quoteBorderColor,
+    highlightBackground: templateTheme.highlightBackground,
+    highlightBorderColor: templateTheme.highlightBorderColor,
+    highlightTextColor: templateTheme.highlightTextColor,
+    goldenBackground: templateTheme.goldenBackground,
+    goldenBorderColor: templateTheme.goldenBorderColor,
+    goldenTextColor: templateTheme.goldenTextColor,
+  };
   const summaryBackground = templateTheme.summaryBackground ?? String(domainStyle.summaryStyle.background);
   const summaryBorder = templateTheme.summaryBorder ?? String(domainStyle.summaryStyle.border);
   const summaryColor = templateTheme.summaryColor ?? String(domainStyle.summaryStyle.color);
@@ -787,23 +997,28 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
       const resolvedImageSrc = block.type === "image" && block.src ? imageSrcMap?.[block.src] ?? block.src : undefined;
 
       if (block.type === "heading") {
+        const contentHtml = renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle });
+
         if (!isWechatChannel) {
-          return `<h2 style="font-size:20px;font-weight:700;margin:24px 0 12px;color:${primary};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</h2>`;
+          return `<h2 style="font-size:20px;font-weight:700;margin:24px 0 12px;color:${primary};">${contentHtml}</h2>`;
         }
 
-        return `<section style="margin:44px 0 22px;"><h2 style="margin:0;padding:0 0 0 14px;border-left:6px solid ${wechatAccent};font-size:22px;font-weight:800;line-height:1.35;color:${headingTextColor};letter-spacing:0.01em;font-family:${wechatParagraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h2></section>`;
+        wechatHeadingIndex += 1;
+        return renderWechatHeading(contentHtml, { ...wechatBodyStyleContext, headingIndex: wechatHeadingIndex });
       }
 
       if (block.type === "quote") {
+        const contentHtml = renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle });
         return isWechatChannel
-          ? `<blockquote style="margin:28px 0;padding:16px 20px;background:${quoteBackground};border-left:4px solid ${quoteBorderColor};border-radius:0;font-size:16px;line-height:1.9;color:${quoteTextColor};letter-spacing:0.015em;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`
-          : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${quoteBorderColor};background:${quoteBackground};border-radius:${formatting.roundedQuote ? "0 12px 12px 0" : "0"};line-height:1.9;color:${quoteTextColor};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</blockquote>`;
+          ? renderWechatQuote(contentHtml, wechatBodyStyleContext)
+          : `<blockquote style="margin:24px 0;padding:16px 18px;border-left:4px solid ${quoteBorderColor};background:${quoteBackground};border-radius:0;line-height:1.9;color:${quoteTextColor};">${contentHtml}</blockquote>`;
       }
 
       if (block.type === "subheading") {
+        const contentHtml = renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle });
         return isWechatChannel
-          ? `<h3 style="margin:20px 0 18px;font-size:19px;font-weight:800;line-height:1.55;color:${wechatAccent};letter-spacing:0.01em;font-family:${wechatParagraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: true, highlightStyle: inlineHighlightHtmlStyle })}</h3>`
-          : `<h3 style="font-size:18px;font-weight:700;margin:22px 0 10px;color:${primary};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</h3>`;
+          ? renderWechatSubheading(contentHtml, wechatBodyStyleContext)
+          : `<h3 style="font-size:18px;font-weight:700;margin:22px 0 10px;color:${primary};">${contentHtml}</h3>`;
       }
 
       if (block.type === "divider") {
@@ -813,6 +1028,10 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
       if (block.type === "image") {
         if (resolvedImageSrc) {
           const caption = block.caption || block.alt || "配图";
+          if (isWechatChannel && formatting.template === "杂志绿") {
+            return `<figure style="margin:34px 0 36px;"><img src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;box-shadow:none;object-fit:cover;" /><figcaption style="margin-top:12px;text-align:center;color:#777777;font-size:13px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
+          }
+
           return isWechatChannel
             ? `<figure style="margin:30px 0;"><img src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${imageRadius};border:1px solid ${imageBorderColor};background:${imageBackground};box-shadow:${imageShadow};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${imageCaptionColor};font-size:13px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`
             : `<figure style="margin:24px 0;"><img src="${escapeHtml(resolvedImageSrc)}" alt="${escapeHtml(block.alt || caption)}" style="display:block;width:100%;height:auto;border-radius:${imageRadius};border:1px solid ${imageBorderColor};background:${imageBackground};box-shadow:${imageShadow};object-fit:cover;" /><figcaption style="margin-top:10px;text-align:center;color:${imageCaptionColor};font-size:12px;line-height:1.7;">${escapeHtml(caption)}</figcaption></figure>`;
@@ -831,15 +1050,29 @@ function buildRichHtml(args: RichHtmlBuildArgs) {
       }
 
       if (block.type === "golden") {
+        const contentHtml = renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle });
         return isWechatChannel
-          ? `<p style="margin:28px 0;font-size:19px;line-height:1.65;color:${wechatAccent};font-weight:800;letter-spacing:0.01em;font-family:${wechatParagraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
-          : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:${templateTheme.goldenBackground};border-left:3px solid ${templateTheme.goldenBorderColor};color:${templateTheme.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
+          ? renderWechatFeatureBlock("golden", contentHtml, wechatBodyStyleContext)
+          : `<div style="margin:24px 0;padding:20px 18px;border-radius:18px;background:${templateTheme.goldenBackground};border-left:3px solid ${templateTheme.goldenBorderColor};color:${templateTheme.goldenTextColor};font-weight:600;line-height:1.85;text-align:${domainStyle.goldenTextAlign};">${contentHtml}</div>`;
       }
 
       if (block.type === "highlight") {
+        const contentHtml = renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle });
         return isWechatChannel
-          ? `<p style="margin:28px 0 22px;font-size:19px;line-height:1.65;color:${wechatAccent};font-weight:800;letter-spacing:0.01em;font-family:${wechatParagraphFontFamily};">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</p>`
-          : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${templateTheme.highlightBorderColor};background:${templateTheme.highlightBackground};color:${templateTheme.highlightTextColor};line-height:1.85;">${renderInlineHtml(block.content, { autoHighlight: isWechatChannel, highlightStyle: inlineHighlightHtmlStyle })}</div>`;
+          ? renderWechatFeatureBlock("highlight", contentHtml, wechatBodyStyleContext)
+          : `<div style="margin:20px 0;padding:16px 18px;border-radius:16px;border:1px solid ${templateTheme.highlightBorderColor};background:${templateTheme.highlightBackground};color:${templateTheme.highlightTextColor};line-height:1.85;">${contentHtml}</div>`;
+      }
+
+      if (block.type === "cta") {
+        const ctaContent = formatting.ctaText?.trim() || block.content;
+        const contentHtml = renderInlineHtml(ctaContent, {
+          autoHighlight: isWechatChannel,
+          highlightStyle: inlineHighlightHtmlStyle,
+          quoteColor: formatting.template === "曜石黑" && (formatting.ctaStyle ?? "简洁") === "简洁" ? "#4b5563" : undefined,
+        });
+        return isWechatChannel
+          ? renderWechatCta(contentHtml, wechatBodyStyleContext, formatting)
+          : `<div style="margin:28px 0 0;padding:14px 16px;border-radius:14px;border:1px solid ${templateTheme.highlightBorderColor};background:${templateTheme.highlightBackground};color:${templateTheme.highlightTextColor};line-height:1.8;text-align:center;">${contentHtml}</div>`;
       }
 
       if (block.type === "unordered-list") {
@@ -924,7 +1157,30 @@ export function buildWechatArticleHtml(
 // ---------------------------------------------------------------------------
 
 export function getTemplatePreviewStyle(template: DraftFormatting["template"], primary: string, accent: string) {
-  if (template === "暖色调") {
+  if (template === "杂志绿") {
+    return {
+      shellGradient: "linear-gradient(180deg, rgba(255,255,255,0.99), rgba(248,250,248,1))",
+      shellTint: "radial-gradient(circle at top left, rgba(24,123,69,0.10), transparent 42%)",
+      heroGradient: "linear-gradient(145deg, rgba(255,255,255,0.98), rgba(243,250,246,0.95))",
+      heroBorder: "rgba(24,123,69,0.18)",
+      sectionBackground: "rgba(248,250,248,0.92)",
+      bodyOverlay: "linear-gradient(180deg, rgba(24,123,69,0.035), transparent 18%)",
+      accentSoft: "rgba(24,123,69,0.10)",
+      deviceBorder: "#d7eadf",
+      deviceHeaderBackground: "#f8fbf9",
+      deviceHeaderBorder: "#d7eadf",
+      titlePanelBackground: "linear-gradient(180deg, rgba(255,255,255,1), rgba(248,250,248,0.98))",
+      titlePanelBorder: "#d7eadf",
+      titlePanelShadow: "0 14px 28px rgba(24,123,69,0.06)",
+      badgeBackground: "#187b45",
+      badgeColor: "#ffffff",
+      badgeBorder: "none",
+      contentCardBackground: "rgba(255,255,255,0.92)",
+      contentCardBorder: "#d7eadf",
+    };
+  }
+
+  if (template === "活力橙") {
     return {
       shellGradient: "linear-gradient(180deg, rgba(255,247,237,0.98), rgba(255,255,255,1))",
       shellTint: "radial-gradient(circle at top left, rgba(251,146,60,0.16), transparent 42%)",
@@ -970,24 +1226,24 @@ export function getTemplatePreviewStyle(template: DraftFormatting["template"], p
     };
   }
 
-  if (template === "深色") {
+  if (template === "曜石黑") {
     return {
       shellGradient: "linear-gradient(180deg, rgba(2,6,23,0.98), rgba(15,23,42,1))",
-      shellTint: "radial-gradient(circle at top left, rgba(16,185,129,0.18), transparent 46%)",
+      shellTint: "radial-gradient(circle at top left, rgba(148,163,184,0.14), transparent 46%)",
       heroGradient: `linear-gradient(150deg, rgba(15,23,42,0.98), ${primary}18 58%, rgba(15,23,42,0.94))`,
       heroBorder: "rgba(71,85,105,0.5)",
       sectionBackground: "rgba(15,23,42,0.7)",
-      bodyOverlay: "radial-gradient(circle at top right, rgba(16,185,129,0.10), transparent 32%)",
-      accentSoft: "rgba(16,185,129,0.12)",
-      deviceBorder: "#334155",
+      bodyOverlay: "radial-gradient(circle at top right, rgba(148,163,184,0.10), transparent 32%)",
+      accentSoft: "rgba(148,163,184,0.12)",
+      deviceBorder: "transparent",
       deviceHeaderBackground: "#111827",
       deviceHeaderBorder: "#374151",
       titlePanelBackground: "linear-gradient(145deg, rgba(15,23,42,0.98), rgba(30,41,59,0.96))",
       titlePanelBorder: "rgba(71,85,105,0.62)",
       titlePanelShadow: "0 20px 44px rgba(2,6,23,0.40)",
-      badgeBackground: "linear-gradient(135deg, rgba(16,185,129,0.24), rgba(15,23,42,0.36))",
-      badgeColor: "#d1fae5",
-      badgeBorder: "1px solid rgba(16,185,129,0.32)",
+      badgeBackground: "linear-gradient(135deg, rgba(71,85,105,0.44), rgba(15,23,42,0.36))",
+      badgeColor: "#e2e8f0",
+      badgeBorder: "1px solid rgba(148,163,184,0.28)",
       contentCardBackground: "rgba(15,23,42,0.46)",
       contentCardBorder: "rgba(71,85,105,0.56)",
     };

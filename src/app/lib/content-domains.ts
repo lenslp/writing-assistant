@@ -19,8 +19,7 @@ export type DomainConfig = {
   label: ArticleDomain;
   icon: string;
   description: string;
-  template: "极简白" | "科技蓝" | "商务灰" | "暖色调" | "深色";
-  colorScheme: "默认蓝" | "科技绿" | "商务橙" | "高级紫";
+  template: "极简白" | "科技蓝" | "商务灰" | "活力橙" | "曜石黑" | "杂志绿";
   aliases: string[];
   writingFocus: string[];
   promptHint: string;
@@ -32,7 +31,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🤖",
     description: "适合 AI 趋势、大模型、产品更新、商业影响类内容。",
     template: "极简白",
-    colorScheme: "默认蓝",
     aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "卫星", "其他", "其它", "综合", "泛热点", "杂谈", "社会", "情感", "体育", "娱乐", "财经", "文化"],
     writingFocus: ["趋势判断", "产品解读", "用户价值", "行业影响"],
     promptHint: "重点写 AI 变化、产品能力、行业影响和普通读者该怎么理解。",
@@ -42,7 +40,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🤖",
     description: "适合科技趋势、AI、产品更新、商业影响类内容。",
     template: "极简白",
-    colorScheme: "默认蓝",
     aliases: ["ai", "人工智能", "科技", "互联网", "产品", "数码", "大模型", "开源", "芯片", "航天", "卫星"],
     writingFocus: ["趋势判断", "产品解读", "用户价值", "行业影响"],
     promptHint: "重点写技术变化、产品能力、行业影响和普通读者该怎么理解。",
@@ -52,7 +49,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "📚",
     description: "适合学习方法、家长教育、成长建议和知识科普。",
     template: "极简白",
-    colorScheme: "商务橙",
     aliases: ["教育", "学习", "家长", "成长", "考试", "升学", "课堂", "老师"],
     writingFocus: ["方法建议", "认知升级", "案例启发", "成长路径"],
     promptHint: "重点写学习方法、成长建议、家长视角和可执行步骤。",
@@ -62,7 +58,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "✈️",
     description: "适合目的地攻略、路线规划、预算建议、小众景点推荐和避坑内容。",
     template: "极简白",
-    colorScheme: "科技绿",
     aliases: [
       "旅游", "旅行", "酒店", "民宿", "景点", "出行", "攻略", "路线", "文旅", "旅居",
       "景区", "度假", "出游", "自驾游", "周边游", "国内游", "出境游", "穷游", "背包客",
@@ -76,7 +71,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "💕",
     description: "适合关系表达、情绪疗愈、共鸣故事和边界话题。",
     template: "极简白",
-    colorScheme: "高级紫",
     aliases: ["情感", "恋爱", "婚姻", "关系", "治愈", "共鸣", "心理", "温暖"],
     writingFocus: ["情绪共鸣", "关系判断", "沟通建议", "边界感"],
     promptHint: "重点写情绪变化、关系判断、代入感和温柔但清晰的表达。",
@@ -86,7 +80,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "📰",
     description: "适合社会热点、民生观察、公共议题和现实案例。",
     template: "极简白",
-    colorScheme: "商务橙",
     aliases: ["社会", "社会热点", "民生", "新闻", "事件", "观察", "调查", "舆论", "搞笑", "法律", "法院", "文化"],
     writingFocus: ["事件脉络", "现实影响", "公众情绪", "观点判断"],
     promptHint: "重点写事件背景、现实影响、公众关注点和清晰判断。",
@@ -96,7 +89,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🚗",
     description: "适合车型评测、购车建议、配置对比和用车体验。",
     template: "极简白",
-    colorScheme: "默认蓝",
     aliases: ["汽车", "新能源", "车型", "suv", "轿车", "试驾", "评测", "配置", "续航", "机车", "摩托"],
     writingFocus: ["配置参数", "驾驶体验", "购车决策", "性价比判断"],
     promptHint: "重点写参数、体验、优缺点对比和购买决策建议。",
@@ -106,7 +98,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🏟️",
     description: "适合赛事、运动员、竞技表现和体育商业类内容。",
     template: "极简白",
-    colorScheme: "默认蓝",
     aliases: ["体育", "赛事", "比赛", "运动", "足球", "篮球", "电竞", "冠军", "夺冠"],
     writingFocus: ["赛事脉络", "竞技表现", "情绪价值", "商业影响"],
     promptHint: "重点写赛事情绪、关键转折、人物表现和圈外读者为什么会关心。",
@@ -116,7 +107,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🎬",
     description: "适合明星、影视综艺、演唱会、奖项和文娱热点。",
     template: "极简白",
-    colorScheme: "高级紫",
     aliases: ["娱乐", "明星", "影视", "综艺", "电影", "演员", "歌手", "演唱会", "奖项"],
     writingFocus: ["公众情绪", "粉丝生态", "作品价值", "舆论变化"],
     promptHint: "重点写清热闹背后的情绪机制、作品或人物变化，以及大众为什么会代入。",
@@ -126,7 +116,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "💹",
     description: "适合公司、消费、商业、融资、市场和宏观经济类内容。",
     template: "极简白",
-    colorScheme: "商务橙",
     aliases: ["财经", "商业", "消费", "公司", "融资", "投资", "估值", "市场", "经济"],
     writingFocus: ["商业模式", "市场变化", "消费决策", "风险边界"],
     promptHint: "重点写商业动因、成本收益、市场影响和普通读者该怎么判断。",
@@ -136,7 +125,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🎭",
     description: "适合文化现象、阅读、艺术、历史、城市生活和审美话题。",
     template: "极简白",
-    colorScheme: "高级紫",
     aliases: ["文化", "阅读", "艺术", "历史", "文学", "城市", "影像", "照片", "审美"],
     writingFocus: ["文化现象", "审美变化", "社会情绪", "生活方式"],
     promptHint: "重点写文化现象背后的情绪、审美和生活方式变化，不只做资讯罗列。",
@@ -146,7 +134,6 @@ export const domainConfigs: Record<ArticleDomain, DomainConfig> = {
     icon: "🧩",
     description: "适合暂时难以归类的泛热点、综合观察和跨领域内容。",
     template: "极简白",
-    colorScheme: "默认蓝",
     aliases: ["其他", "其它", "综合", "泛热点", "杂谈"],
     writingFocus: ["信息提炼", "角度归纳", "读者价值", "跨领域连接"],
     promptHint: "重点写清事件本身、核心看点和读者真正需要知道的部分，不强行套某个垂直领域。",

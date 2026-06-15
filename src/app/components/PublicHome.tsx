@@ -10,7 +10,6 @@ import {
   LayoutDashboard,
   Lightbulb,
   LogOut,
-  PenTool,
   Send,
   Sparkles,
   User,
@@ -52,12 +51,12 @@ export function PublicHome() {
       <header className="sticky top-0 z-20 border-b border-border bg-background/88 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between px-5">
           <Link href="/" className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-white shadow-[0_12px_28px_rgba(111,92,255,0.22)]">
-              <PenTool className="h-4.5 w-4.5" />
+            <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white shadow-[0_12px_28px_rgba(111,92,255,0.16)] ring-1 ring-border/70">
+              <img src="/brand-logo.png" alt="Lens Assistant" className="h-full w-full object-cover" />
             </div>
             <div>
-              <div className="text-[16px] leading-none" style={{ fontWeight: 850 }}>写作助手</div>
-              <div className="mt-1 text-[11px] text-muted-foreground">Creator Writing Desk</div>
+              <div className="text-[16px] leading-none" style={{ fontWeight: 850 }}>Lens Assistant</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">AI写作助手</div>
             </div>
           </Link>
 
@@ -114,7 +113,7 @@ export function PublicHome() {
             <span className="text-primary">写成作品</span>
           </h1>
           <p className="mt-5 max-w-[640px] text-[16px] leading-8 text-muted-foreground">
-            写作助手帮你追踪热点、拆解选题、生成草稿，并为公众号、小红书、知乎等平台保留不同表达偏好。
+            AI写作助手，帮你追踪热点、拆解选题、生成草稿，并为公众号、小红书、知乎等平台保留不同表达偏好。
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -163,7 +162,7 @@ export function PublicHome() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[15px] text-foreground" style={{ fontWeight: 900 }}>今天最值得写什么</div>
-                    <div className="mt-1 text-[12px] text-muted-foreground">按热度、趋势和账号定位排序</div>
+                    <div className="mt-1 text-[12px] text-muted-foreground">按热度、趋势和内容领域排序</div>
                   </div>
                   <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] text-primary" style={{ fontWeight: 850 }}>AI 分析</span>
                 </div>
@@ -215,7 +214,7 @@ export function PublicHome() {
           <div className="grid gap-3 sm:grid-cols-3">
             {[
               { step: "01", title: "抓热点", desc: "定时更新可写话题" },
-              { step: "02", title: "定角度", desc: "匹配账号定位和受众" },
+              { step: "02", title: "定角度", desc: "匹配内容领域和受众" },
               { step: "03", title: "出草稿", desc: "生成可继续打磨的正文" },
             ].map((item) => (
               <div key={item.step} className="rounded-[22px] border border-border bg-card p-5">

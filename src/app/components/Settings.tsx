@@ -10,8 +10,6 @@ import {
   Pencil,
   Trash2,
   UserRound,
-  ShieldAlert,
-  LayoutTemplate,
   Bot,
   ImageIcon,
   Send,
@@ -21,7 +19,9 @@ import {
 import { defaultSettings } from "../lib/app-data";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
+import { useAuth } from "../providers/auth-provider";
 
 type WechatAccountView = {
   id: string;
@@ -201,9 +201,7 @@ const settingsSections: Array<{
   hint: string;
   icon: LucideIcon;
 }> = [
-  { id: "account-profile", title: "账号定位", hint: "名称、定位与覆盖领域", icon: UserRound },
-  { id: "restricted-topics", title: "禁写范围", hint: "敏感词与限制话题", icon: ShieldAlert },
-  { id: "default-template", title: "排版模板", hint: "默认模板偏好", icon: LayoutTemplate },
+  { id: "account-profile", title: "账号信息", hint: "用户名与覆盖领域", icon: UserRound },
   { id: "ai-writer", title: "AI 写作模型", hint: "正文生成模型配置", icon: Bot },
   { id: "ai-image", title: "AI 图片模型", hint: "AI 配图模型配置", icon: ImageIcon },
   { id: "wechat-account", title: "公众号接入", hint: "公众号账号与推送配置", icon: Send },
@@ -211,6 +209,8 @@ const settingsSections: Array<{
 
 export function Settings() {
   const { settings, saveSettings } = useAppStore();
+  const { user } = useAuth();
+  const userDisplayName = getUserDisplayName(user, settings.accountName || "用户");
   const [form, setForm] = useState(settings);
   const [notice, setNotice] = useState("");
   const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
@@ -236,8 +236,8 @@ export function Settings() {
   const isProgrammaticScrollRef = useRef(false);
 
   useEffect(() => {
-    setForm(settings);
-  }, [settings]);
+    setForm({ ...settings, accountName: settings.accountName || userDisplayName });
+  }, [settings, userDisplayName]);
 
   useEffect(() => {
     void loadWechatAccounts();
@@ -344,7 +344,7 @@ export function Settings() {
     setSettingsSaving(true);
 
     try {
-      await saveSettings(form);
+      await saveSettings({ ...form, accountName: form.accountName.trim() || userDisplayName, accountPosition: "" });
       setNotice("设置已保存");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
@@ -359,8 +359,9 @@ export function Settings() {
     setSettingsSaving(true);
 
     try {
-      await saveSettings(defaultSettings);
-      setForm(defaultSettings);
+      const nextSettings = { ...defaultSettings, accountName: userDisplayName, accountPosition: "" };
+      await saveSettings(nextSettings);
+      setForm(nextSettings);
       setNotice("已恢复默认设置");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
@@ -1018,34 +1019,9 @@ export function Settings() {
             </div>
           </div>
 
-      <Section id="account-profile" title="账号定位">
+      <Section id="account-profile" title="账号信息">
         <Field label="账号名称" value={form.accountName} onChange={(value) => updateField("accountName", value)} />
-        <Field label="账号定位" value={form.accountPosition} onChange={(value) => updateField("accountPosition", value)} />
         <DomainSelector label="账号可覆盖领域" values={form.contentAreas} onChange={(values) => updateField("contentAreas", values)} />
-      </Section>
-
-      <Section id="restricted-topics" title="禁写领域 / 敏感词">
-        <TagEditor label="禁止涉及的话题或词汇" values={form.bannedTopics} color="red" onChange={(values) => updateField("bannedTopics", values)} />
-      </Section>
-
-      <Section id="default-template" title="默认排版模板">
-        <div>
-          <label className="text-[12px] text-muted-foreground mb-1.5 block">首选模板</label>
-          <div className="grid grid-cols-4 gap-2">
-            {["极简白", "科技蓝", "商务灰", "暖色调"].map((template) => (
-              <button
-                key={template}
-                onClick={() => updateField("defaultTemplate", template)}
-                className={`p-3 rounded-lg border text-[12px] text-center transition-colors ${
-                  form.defaultTemplate === template ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted"
-                }`}
-                style={{ fontWeight: 500 }}
-              >
-                {template}
-              </button>
-            ))}
-          </div>
-        </div>
       </Section>
 
       <Section id="ai-writer" title="AI 写作模型">
@@ -1569,76 +1545,81 @@ export function Settings() {
       </Section>
 
       <Section id="wechat-account" title="公众号接入">
-        <div className="rounded-xl border border-border/70 bg-accent px-4 py-3 text-[13px] leading-6 text-muted-foreground">
-          AppSecret 只会走服务端保存，不会进入浏览器本地草稿和普通设置同步里。
-        </div>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="text-[13px] text-foreground" style={{ fontWeight: 600 }}>已配置公众号</div>
+        <div className="rounded-[22px] border border-border bg-[var(--surface-strong)] p-5 shadow-[0_12px_36px_rgba(31,41,86,0.05)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Accounts</div>
+              <div className="mt-1 text-[16px] text-foreground" style={{ fontWeight: 700 }}>公众号账号列表</div>
+              <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                添加公众号账号后，可以在排版页选择并推送到对应草稿箱。
+              </div>
+            </div>
             <button
               type="button"
               onClick={openNewWechatAccountDialog}
-              className="rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:bg-background"
-              style={{ fontWeight: 500 }}
+              className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
+              style={{ fontWeight: 600 }}
             >
+              <Plus className="h-4 w-4" />
               新增账号
             </button>
           </div>
 
           {!wechatAccounts.length && wechatLoaded ? (
-            <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6 text-[13px] text-muted-foreground">
-              还没有配置公众号账号。添加后就可以在排版页选择并推送到对应草稿箱。
+            <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
+              当前还没有公众号账号。添加一套后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
 
-          <div className="space-y-3">
+          <div className="mt-5 grid gap-3">
             {wechatAccounts.map((account) => {
               const isSelected = selectedWechatAccountId === account.id;
 
               return (
-                <div key={account.id} className={`rounded-xl border px-4 py-3 ${isSelected ? "border-primary bg-primary/10" : "border-border bg-card"}`}>
+                <div key={account.id} className={`rounded-2xl border px-4 py-4 transition-colors ${isSelected ? "border-primary bg-primary/10" : "border-border bg-card"}`}>
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[14px] text-foreground" style={{ fontWeight: 600 }}>{account.name}</span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-[14px] text-foreground" style={{ fontWeight: 700 }}>{account.name}</div>
                         {isSelected ? (
-                          <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] text-white">默认</span>
+                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary" style={{ fontWeight: 700 }}>
+                            默认
+                          </span>
                         ) : null}
                       </div>
-                      <div className="mt-1 text-[12px] text-muted-foreground">AppID：{account.appIdMasked}</div>
-                      <div className="mt-1 text-[12px] text-muted-foreground">
+                      <div className="mt-2 text-[13px] leading-6 text-muted-foreground">AppID：{account.appIdMasked}</div>
+                      <div className="text-[12px] leading-5 text-muted-foreground">
                         Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
                       </div>
                     </div>
-                    <div className="flex flex-nowrap items-center gap-2 lg:max-w-[46%] lg:justify-end">
+                    <div className="flex flex-wrap items-center gap-2">
                       {!isSelected ? (
                         <button
                           type="button"
                           onClick={() => void handleSelectWechatAccount(account.id)}
-                          aria-label="设为默认"
-                          title="设为默认"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-background"
+                          disabled={wechatLoading}
+                          className="rounded-xl border border-primary px-3 py-2 text-[12px] text-primary hover:bg-primary/10 disabled:opacity-60"
+                          style={{ fontWeight: 600 }}
                         >
-                          <Star className="h-4 w-4" />
+                          设为默认
                         </button>
                       ) : null}
                       <button
                         type="button"
                         onClick={() => handleEditWechatAccount(account)}
-                        aria-label="编辑"
-                        title="编辑"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-background"
+                        className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
+                        style={{ fontWeight: 500 }}
                       >
-                        <Pencil className="h-4 w-4" />
+                        编辑
                       </button>
                       <button
                         type="button"
                         onClick={() => void handleDeleteWechatAccount(account.id)}
-                        aria-label="删除"
-                        title="删除"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-100 text-red-500 hover:bg-red-50"
+                        disabled={wechatLoading}
+                        className="rounded-xl border border-rose-100 px-3 py-2 text-[12px] text-rose-600 hover:bg-rose-50 disabled:opacity-60"
+                        style={{ fontWeight: 500 }}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        删除
                       </button>
                     </div>
                   </div>

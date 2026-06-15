@@ -127,8 +127,8 @@ export function normalizeTrend(score: number) {
 }
 
 const CORE_SOURCE_PRIORITY = ["AI HOT", "微博", "Twitter/X", "GitHub Trending", "知乎", "抖音", "百度", "今日头条"] as const;
-const AI_HOT_TOPIC_PATTERN = /(ai|aigc|gpt|openai|claude|gemini|deepseek|agent|copilot|llm|mcp|人工智能|大模型|智能体|生成式|机器人|算力|芯片|半导体|多模态|机器学习|深度学习|自动驾驶|人形机器人)/i;
-const AI_FRIENDLY_SOURCE_PATTERN = /(36氪|爱范儿|少数派|极客公园|infoq)/i;
+const AI_HOT_TOPIC_PATTERN = /(ai|aigc|gpt|openai|anthropic|claude|gemini|deepseek|agent|copilot|llm|mcp|人工智能|大模型|大语言模型|智能体|生成式|多模态|机器学习|深度学习|自动驾驶|人形机器人|ai芯片|算力|gpu|npu|英伟达|nvidia|豆包|kimi|千问|通义|文心|星火|智谱|minimax|海螺|sora|runway|midjourney|llama|token)/i;
+const AI_NATIVE_SOURCE_PATTERN = /^(AI HOT)$/i;
 
 function sortSources(left: string, right: string) {
   const leftPriority = CORE_SOURCE_PRIORITY.indexOf(left as typeof CORE_SOURCE_PRIORITY[number]);
@@ -241,16 +241,21 @@ type BalancedHotTopicCandidate = {
 export function isAiRelevantHotTopic<T extends { title: string; source: string; tags?: string[]; summary?: string }>(
   item: T,
 ) {
-  if (item.source === "微博") {
+  if (AI_NATIVE_SOURCE_PATTERN.test(item.source)) {
+    return true;
+  }
+
+  if (/微博/i.test(item.source)) {
     return false;
   }
+
   const text = `${item.title} ${item.source} ${(item.tags ?? []).join(" ")} ${item.summary ?? ""}`;
   if (AI_HOT_TOPIC_PATTERN.test(text)) {
     return true;
   }
 
   const domain = detectArticleDomain(item.title, item.tags ?? [], item.source, item.summary ?? "");
-  return domain === "AI" && AI_FRIENDLY_SOURCE_PATTERN.test(item.source);
+  return domain === "AI" && AI_HOT_TOPIC_PATTERN.test(`${item.title} ${(item.tags ?? []).join(" ")} ${item.summary ?? ""}`);
 }
 
 function getAiRelevantFloor(limit: number, availableCount: number) {

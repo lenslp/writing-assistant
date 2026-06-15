@@ -8,19 +8,20 @@ export type DraftStatus = "待生成" | "待修改" | "审核中" | "已发布";
 
 export type TopicType = "热点型" | "常青型" | "行业型";
 
-export type TemplateName = "极简白" | "科技蓝" | "商务灰" | "暖色调" | "深色";
+export type TemplateName = "极简白" | "科技蓝" | "商务灰" | "活力橙" | "曜石黑" | "杂志绿";
 
-export type ColorSchemeName = "默认蓝" | "科技绿" | "商务橙" | "高级紫";
+export type CtaStyleName = "简洁" | "卡片" | "强调";
 
 export type DraftFormatting = {
   template: TemplateName;
-  colorScheme: ColorSchemeName;
   fontSize: "15px" | "16px" | "17px";
   lineHeight: "1.75" | "1.9" | "2.0";
   paragraphSpacing: "16px" | "20px" | "24px";
   roundedQuote: boolean;
   gradientQuote: boolean;
   numberedBadge: boolean;
+  ctaText?: string;
+  ctaStyle?: CtaStyleName;
 };
 
 export type TopicSuggestion = {
@@ -71,24 +72,48 @@ export type AppSettings = {
   contentPreferences: string[];
 };
 
-export const templates: TemplateName[] = ["极简白", "科技蓝", "商务灰", "暖色调", "深色"];
+export const templates: TemplateName[] = ["极简白", "科技蓝", "商务灰", "活力橙", "曜石黑", "杂志绿"];
 
-export const colorSchemes: Array<{ name: ColorSchemeName; primary: string; accent: string }> = [
-  { name: "默认蓝", primary: "#2563eb", accent: "#3b82f6" },
-  { name: "科技绿", primary: "#059669", accent: "#10b981" },
-  { name: "商务橙", primary: "#ea580c", accent: "#f97316" },
-  { name: "高级紫", primary: "#7c3aed", accent: "#8b5cf6" },
-];
+export const ctaStyles: CtaStyleName[] = ["简洁", "卡片", "强调"];
+
+export type TemplateColors = { primary: string; accent: string };
+export type TemplateDotStyle = { backgroundColor: string; borderColor?: string };
+
+export function getTemplateColors(template: TemplateName): TemplateColors {
+  const colorMap: Record<TemplateName, TemplateColors> = {
+    极简白: { primary: "#2563eb", accent: "#3b82f6" },
+    科技蓝: { primary: "#2563eb", accent: "#3b82f6" },
+    商务灰: { primary: "#64748b", accent: "#94a3b8" },
+    活力橙: { primary: "#ea580c", accent: "#f97316" },
+    曜石黑: { primary: "#111827", accent: "#475569" },
+    杂志绿: { primary: "#059669", accent: "#10b981" },
+  };
+
+  return colorMap[template] ?? colorMap.极简白;
+}
+
+export function getTemplateDotStyle(template: TemplateName): TemplateDotStyle {
+  const dotMap: Record<TemplateName, TemplateDotStyle> = {
+    极简白: { backgroundColor: "#ffffff", borderColor: "#cbd5e1" },
+    科技蓝: { backgroundColor: "#2563eb" },
+    商务灰: { backgroundColor: "#64748b" },
+    活力橙: { backgroundColor: "#ea580c" },
+    曜石黑: { backgroundColor: "#111827" },
+    杂志绿: { backgroundColor: "#059669" },
+  };
+
+  return dotMap[template] ?? dotMap.极简白;
+}
 
 export const recommendedTopics: TopicSuggestion[] = [];
 
 export const defaultSettings: AppSettings = {
-  accountName: "内容灵感研究所",
-  accountPosition: "一个覆盖多领域内容的自媒体账号，擅长把热点、经验和观点写成适合多平台传播的内容",
+  accountName: "",
+  accountPosition: "",
   contentAreas: [...articleDomains],
   bannedTopics: ["政治敏感", "时政新闻", "两岸关系", "国际冲突", "军事外交", "医疗建议", "投资理财推荐", "色情暴力"],
-  ctaFollow: "关注「内容灵感研究所」，持续获取多领域优质内容",
-  ctaEngage: "觉得有启发？点个「在看」分享给更多人",
+  ctaFollow: "关注我，持续获取多领域优质内容",
+  ctaEngage: "觉得有用的话，点个「在看」让更多人看到",
   ctaShare: "转发给你身边同样喜欢优质内容的朋友",
   defaultTemplate: "极简白",
   contentPreferences: ["深度分析", "实用攻略", "观点表达", "案例拆解", "共鸣内容"],
@@ -100,39 +125,47 @@ const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((?:data:[^)]+|[^)]+)\)/g;
 const IMAGE_PLACEHOLDER_PATTERN = /\[图片占位[^\]]*]/g;
 
 export function createDefaultFormatting(defaultTemplate: string): DraftFormatting {
-  const template = templates.includes(defaultTemplate as TemplateName) ? (defaultTemplate as TemplateName) : "极简白";
-  const defaultColorMap: Record<TemplateName, ColorSchemeName> = {
-    极简白: "默认蓝",
-    科技蓝: "默认蓝",
-    商务灰: "高级紫",
-    暖色调: "商务橙",
-    深色: "科技绿",
-  };
+  const normalizedTemplate = defaultTemplate === "深色" ? "曜石黑" : defaultTemplate === "暖色调" ? "活力橙" : defaultTemplate;
+  const template = templates.includes(normalizedTemplate as TemplateName) ? (normalizedTemplate as TemplateName) : "极简白";
 
   return {
     template,
-    colorScheme: defaultColorMap[template],
     fontSize: "16px",
     lineHeight: "1.9",
     paragraphSpacing: "20px",
-    roundedQuote: true,
+    roundedQuote: false,
     gradientQuote: template !== "极简白",
     numberedBadge: template !== "极简白",
+    ctaText: defaultSettings.ctaEngage,
+    ctaStyle: "简洁",
   };
 }
 
 export function migrateDefaultFormattingToMinimal(formatting: DraftFormatting): DraftFormatting {
+  const legacyTemplate = formatting.template as TemplateName | "深色" | "暖色调";
+  const template = legacyTemplate === "深色" ? "曜石黑" : legacyTemplate === "暖色调" ? "活力橙" : legacyTemplate;
+  const normalizedFormatting: DraftFormatting = {
+    template,
+    fontSize: formatting.fontSize,
+    lineHeight: formatting.lineHeight,
+    paragraphSpacing: formatting.paragraphSpacing,
+    roundedQuote: formatting.roundedQuote,
+    gradientQuote: formatting.gradientQuote,
+    numberedBadge: formatting.numberedBadge,
+    ctaText: formatting.ctaText ?? defaultSettings.ctaEngage,
+    ctaStyle: formatting.ctaStyle ?? "简洁",
+  };
+
   if (
-    formatting.template !== "科技蓝" ||
-    formatting.colorScheme !== "默认蓝" ||
-    !formatting.gradientQuote ||
-    !formatting.numberedBadge
+    normalizedFormatting.template !== "科技蓝" ||
+    !normalizedFormatting.gradientQuote ||
+    !normalizedFormatting.numberedBadge
   ) {
-    return formatting;
+    return normalizedFormatting;
   }
 
   return {
-    ...formatting,
+    ...normalizedFormatting,
     template: "极简白",
     gradientQuote: false,
     numberedBadge: false,
@@ -140,19 +173,19 @@ export function migrateDefaultFormattingToMinimal(formatting: DraftFormatting): 
 }
 
 export function createFormattingForDomain(domain: ArticleDomain, fallbackTemplate = defaultSettings.defaultTemplate): DraftFormatting {
-  const presets: Record<ArticleDomain, Pick<DraftFormatting, "template" | "colorScheme" | "gradientQuote" | "roundedQuote" | "numberedBadge">> = {
-    AI: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    科技: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    教育: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    旅游: { template: "极简白", colorScheme: "科技绿", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    情感: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    社会: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    汽车: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    体育: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    娱乐: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    财经: { template: "极简白", colorScheme: "商务橙", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    文化: { template: "极简白", colorScheme: "高级紫", gradientQuote: false, roundedQuote: true, numberedBadge: false },
-    其他: { template: "极简白", colorScheme: "默认蓝", gradientQuote: false, roundedQuote: true, numberedBadge: false },
+  const presets: Record<ArticleDomain, Pick<DraftFormatting, "template" | "gradientQuote" | "roundedQuote" | "numberedBadge">> = {
+    AI: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    科技: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    教育: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    旅游: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    情感: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    社会: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    汽车: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    体育: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    娱乐: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    财经: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    文化: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
+    其他: { template: "极简白", gradientQuote: false, roundedQuote: false, numberedBadge: false },
   };
 
   return {
@@ -170,9 +203,8 @@ export function createFormattingForTopicInput(input: {
     return {
       ...createDefaultFormatting(input.fallbackTemplate ?? defaultSettings.defaultTemplate),
       template: "极简白",
-      colorScheme: "商务橙",
       gradientQuote: false,
-      roundedQuote: true,
+      roundedQuote: false,
       numberedBadge: false,
     };
   }

@@ -1,4 +1,4 @@
-import { colorSchemes, createDefaultFormatting, type DraftFormatting } from "./app-data";
+import { createDefaultFormatting, getTemplateColors, type DraftFormatting } from "./app-data";
 import { readWechatAccountSecret } from "./app-config-db";
 import { domainConfigs, type ArticleDomain } from "./content-domains";
 import { buildWechatArticleHtml, extractContentBlocks } from "./format-render";
@@ -800,7 +800,7 @@ export async function pushArticleToWechatDraft(input: WechatDraftInput) {
   validateWechatDraftTitle(input.title);
   const digestInfo = normalizeWechatDigest(input.summary);
   const formatting = input.formatting ?? createDefaultFormatting("极简白");
-  const activeScheme = colorSchemes.find((item) => item.name === formatting.colorScheme) ?? colorSchemes[0];
+  const activeScheme = getTemplateColors(formatting.template);
   const blocks = extractContentBlocks(input.body);
   const imageBlocks = blocks.filter((block): block is Extract<ReturnType<typeof extractContentBlocks>[number], { type: "image"; src?: string }> => block.type === "image" && Boolean(block.src));
 

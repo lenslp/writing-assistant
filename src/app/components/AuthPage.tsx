@@ -11,7 +11,6 @@ import {
   LoaderCircle,
   LockKeyhole,
   Mail,
-  PenTool,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth, type AuthMode } from "../providers/auth-provider";
@@ -113,12 +112,12 @@ export function AuthPage() {
     <main className="lens-app-surface min-h-screen text-foreground">
       <header className="mx-auto flex h-16 max-w-[1180px] items-center justify-between px-5">
         <Link href="/" className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-white shadow-[0_12px_28px_rgba(111,92,255,0.2)]">
-            <PenTool className="h-4.5 w-4.5" />
+          <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-white shadow-[0_12px_28px_rgba(111,92,255,0.16)] ring-1 ring-border/70">
+            <img src="/brand-logo.png" alt="Lens Assistant" className="h-full w-full object-cover" />
           </div>
           <div>
-            <div className="text-[16px] leading-none" style={{ fontWeight: 850 }}>写作助手</div>
-            <div className="mt-1 text-[11px] text-muted-foreground">Creator Writing Desk</div>
+            <div className="text-[16px] leading-none" style={{ fontWeight: 850 }}>Lens Assistant</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">AI写作助手</div>
           </div>
         </Link>
         <div className="flex items-center gap-2">
@@ -133,8 +132,8 @@ export function AuthPage() {
         <div className="w-full max-w-[440px]">
           <div className="rounded-[28px] border border-border bg-card/95 p-7 shadow-[0_30px_100px_rgba(31,41,86,0.14)]">
             <div className="text-center">
-              <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-primary/10 text-primary">
-                <PenTool className="h-5 w-5" />
+              <div className="mx-auto grid h-12 w-12 place-items-center overflow-hidden rounded-2xl bg-white shadow-[0_12px_28px_rgba(111,92,255,0.14)] ring-1 ring-border/70">
+                <img src="/brand-logo.png" alt="Lens Assistant" className="h-full w-full object-cover" />
               </div>
               <h1 className="mt-4 text-[26px] text-foreground" style={{ fontWeight: 900 }}>{title}</h1>
               <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{subtitle}</p>

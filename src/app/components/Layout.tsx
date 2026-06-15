@@ -28,13 +28,13 @@ type LayoutProps = {
 export function Layout({ children }: LayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { drafts, topics, selectTopic } = useAppStore();
+  const { drafts, topics, selectTopic, settings } = useAppStore();
   const { user, signOut } = useAuth();
   const isFullWidth = pathname === "/writing" || pathname === "/format-editor";
   const [keyword, setKeyword] = useState("");
   const [signingOut, setSigningOut] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const displayName = getUserDisplayName(user, "用户");
+  const displayName = settings.accountName.trim() || getUserDisplayName(user, "用户");
   const quickPages = useMemo(
     () => navItems.map((item) => ({ keyword: item.label, href: item.to })),
     [],
@@ -99,12 +99,12 @@ export function Layout({ children }: LayoutProps) {
 
       <aside className="relative z-10 flex w-[244px] min-w-[244px] flex-col border-r border-sidebar-border bg-sidebar/90 backdrop-blur-2xl">
         <div className="flex h-20 items-center border-b border-sidebar-border px-5">
-          <div className="mr-3 grid h-11 w-11 place-items-center rounded-2xl bg-[var(--brand-gradient)] text-white shadow-[0_16px_38px_rgba(111,92,255,0.30)]">
-            <PenTool className="h-5 w-5" />
+          <div className="mr-3 grid h-11 w-11 place-items-center overflow-hidden rounded-2xl bg-white shadow-[0_16px_38px_rgba(111,92,255,0.18)] ring-1 ring-border/70">
+            <img src="/brand-logo.png" alt="Lens Assistant" className="h-full w-full object-cover" />
           </div>
           <div>
-            <div className="text-[16px] tracking-tight text-sidebar-foreground font-black">写作助手</div>
-            <div className="text-[11px] text-muted-foreground">AI Creator Studio</div>
+            <div className="text-[16px] tracking-tight text-sidebar-foreground font-black">Lens Assistant</div>
+            <div className="text-[11px] text-muted-foreground">AI写作助手</div>
           </div>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto px-4 py-5">

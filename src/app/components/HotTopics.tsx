@@ -7,7 +7,7 @@ import {
   ArrowUpDown, AlertCircle, LoaderCircle, X, ExternalLink, Clock
 } from "lucide-react";
 import { useAppStore } from "../providers/app-store";
-import { type HotTopicItem } from "../lib/hot-topics";
+import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import {
   articleDomains,
@@ -22,8 +22,6 @@ const HOT_TOPICS_CACHE_KEY = "wechat-writer:hot-topics:view-cache:v2";
 const HOT_TOPICS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HOT_TOPICS_GROUPED_PAGE_SIZE = 10;
 const SOURCE_PRIORITY = ["AI HOT", "GitHub Trending", "36氪", "爱范儿", "少数派", "微博", "抖音", "知乎", "今日头条", "百度"] as const;
-const AI_TOPIC_PATTERN = /(ai|aigc|gpt|openai|claude|gemini|deepseek|agent|copilot|llm|mcp|人工智能|大模型|智能体|生成式|机器学习|深度学习|自动驾驶|人形机器人|豆包|kimi|千问|文心|星火|智谱|minimax|海螺|sora|runway|midjourney|llama|token)/i;
-const AI_SOURCE_PATTERN = /(AI HOT|GitHub Trending|36氪|爱范儿|少数派|虎嗅|openai|anthropic|github|nvidia)/i;
 
 type HotTopicsCachePayload = {
   items: HotTopicItem[];
@@ -112,7 +110,6 @@ function formatFailedSourceWarning(failedSources: unknown, baseMessage = "") {
 function resolveDisplayDomain(topic: HotTopicItem): ActiveArticleDomain | null {
   const isExplicitActiveDomain = topic.domain && (articleDomains as readonly string[]).includes(topic.domain);
   const explicitDomain = isExplicitActiveDomain ? (topic.domain as ActiveArticleDomain) : null;
-  const text = `${topic.title} ${topic.source} ${topic.tags.join(" ")} ${topic.summary ?? ""}`;
 
   // Weibo is never AI
   if (topic.source === "微博") {
@@ -124,20 +121,17 @@ function resolveDisplayDomain(topic: HotTopicItem): ActiveArticleDomain | null {
     return null;
   }
 
-  if (explicitDomain) {
+  if (explicitDomain && explicitDomain !== "AI") {
     return explicitDomain;
   }
 
-  const PURE_AI_SOURCE_PATTERN = /(AI HOT|GitHub Trending|openai|anthropic|github|nvidia)/i;
-  const fastPathText = `${topic.title} ${topic.source} ${topic.tags.join(" ")}`;
-
-  if (PURE_AI_SOURCE_PATTERN.test(topic.source) || AI_TOPIC_PATTERN.test(fastPathText)) {
+  if (isAiRelevantHotTopic(topic)) {
     return "AI";
   }
 
   const signal = detectArticleDomainWithSignals(topic.title, topic.tags, topic.source, topic.summary ?? "");
   const resolvedSignalDomain = (articleDomains as readonly string[]).includes(signal.domain) ? (signal.domain as ActiveArticleDomain) : null;
-  if (resolvedSignalDomain && signal.confidence !== "low") {
+  if (resolvedSignalDomain && resolvedSignalDomain !== "AI" && signal.confidence !== "low") {
     return resolvedSignalDomain;
   }
 
@@ -415,13 +409,8 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   }, [activeCategory, activeSource, keyword, sortMode, items]);
 
   useEffect(() => {
-    if (!sourceOptions.length) {
+    if (activeSource && !sourceOptions.includes(activeSource)) {
       setActiveSource("");
-      return;
-    }
-
-    if (!sourceOptions.includes(activeSource)) {
-      setActiveSource(sourceOptions[0]);
     }
   }, [activeSource, sourceOptions]);
 
@@ -447,6 +436,9 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setRefreshWarning("");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(HOT_TOPICS_CACHE_KEY);
+    }
 
     try {
       const response = await fetch("/api/hot-topics/refresh", { method: "POST" });

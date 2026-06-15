@@ -15,10 +15,16 @@ type RealImageSearchInput = {
   source?: string;
 };
 
+type ImageSearchSource = "source-page" | "source-screenshot" | "github" | "bing";
+type ImageSearchConfidence = "high" | "medium" | "low";
+
 export type RealImageSearchResult = {
   url: string;
-  source: "bing";
+  source: ImageSearchSource;
   query: string;
+  score: number;
+  confidence: ImageSearchConfidence;
+  reason: string;
   title?: string;
   pageUrl?: string;
   thumbnailUrl?: string;
@@ -389,17 +395,10 @@ function matchesBlockedHost(url: string) {
 function isLikelyUsableEntry(entry: BingImageEntry) {
   try {
     const parsed = new URL(entry.url);
-    const href = parsed.toString();
-    const text = `${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.thumbnailUrl}`;
 
     if (!/^https?:$/i.test(parsed.protocol)) return false;
     if (matchesBlockedHost(entry.url) || matchesBlockedHost(entry.pageUrl)) return false;
-    if (BLOCKED_TEXT_PATTERNS.some((pattern) => pattern.test(href))) return false;
-    if (BLOCKED_TEXT_PATTERNS.some((pattern) => pattern.test(text))) return false;
     if (/\.svg($|\?)/i.test(parsed.pathname)) return false;
-    if (/\.png($|\?)/i.test(parsed.pathname)) return false;
-    if (/\.webp($|\?)/i.test(parsed.pathname)) return false;
-    if (/\.avif($|\?)/i.test(parsed.pathname)) return false;
 
     return true;
   } catch {
@@ -460,7 +459,106 @@ function isRelevantEnoughEntry(entry: BingImageEntry, input: RealImageSearchInpu
   return true;
 }
 
+function toAbsoluteUrl(baseUrl: string, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith("//")) return `https:${trimmed}`;
+
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function isUsableSourcePageImage(url: string) {
+  if (!url) return false;
+  if (!/^https?:\/\//i.test(url)) return false;
+  if (matchesBlockedHost(url)) return false;
+  if (/\.svg($|\?)/i.test(url)) return false;
+  if (/avatar|badge|icon|emoji|sponsor|favicon|logo|qrcode|qr-code/i.test(url)) return false;
+  return true;
+}
+
+function scoreSourcePageImage(url: string, alt = "") {
+  const text = normalizeText(`${url} ${alt}`);
+  let score = 0;
+
+  if (/og:image|twitter:image|cover|hero|banner|article|news|post/.test(text)) score += 20;
+  if (/screenshot|demo|preview|product|launch|event|showcase/.test(text)) score += 16;
+  if (/upload|media|image|img|photo|picture/.test(text)) score += 8;
+  if (/avatar|badge|icon|logo|qrcode|qr code|emoji|sprite/.test(text)) score -= 30;
+  if (/\.gif($|\?)/i.test(url)) score -= 8;
+
+  return score;
+}
+
+function getConfidence(score: number): ImageSearchConfidence {
+  if (score >= 80) return "high";
+  if (score >= 60) return "medium";
+  return "low";
+}
+
+function normalizeResultUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
+}
+
+function rankAndDedupeResults(results: RealImageSearchResult[], limit: number) {
+  const seen = new Set<string>();
+
+  return results
+    .sort((left, right) => right.score - left.score)
+    .filter((result) => {
+      const key = normalizeResultUrl(result.url);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+function canUseSourceScreenshot(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/i.test(parsed.protocol)) return false;
+    if (/github\.com$/i.test(parsed.hostname)) return false;
+    if (matchesBlockedHost(url)) return false;
+    if (/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(parsed.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildSourceScreenshotUrl(pageUrl: string) {
+  return `https://image.thum.io/get/width/1440/noanimate/${pageUrl}`;
+}
+
 async function isReachableImage(url: string) {
+  const isUsableResponse = (response: Response) => {
+    const contentType = response.headers.get("content-type") || "";
+    const contentLengthHeader = response.headers.get("content-length");
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+
+    return (
+      response.ok &&
+      (
+        /^image\/(jpeg|jpg|png|gif|webp|avif)$/i.test(contentType) ||
+        contentType === "binary/octet-stream" ||
+        !contentType
+      ) &&
+      contentLength !== 0
+    );
+  };
+
   try {
     const response = await fetch(url, {
       method: "HEAD",
@@ -469,16 +567,23 @@ async function isReachableImage(url: string) {
       redirect: "follow",
     });
 
-    const contentType = response.headers.get("content-type") || "";
-    const contentLength = Number(response.headers.get("content-length") || "0");
-    return (
-      response.ok &&
-      (
-        /^image\/(jpeg|jpg|png|gif)$/i.test(contentType) ||
-        contentType === "binary/octet-stream"
-      ) &&
-      contentLength !== 0
-    );
+    if (isUsableResponse(response)) return true;
+  } catch {
+    // Some CDNs reject HEAD. Fall back to a tiny GET below.
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": SEARCH_HEADERS["User-Agent"],
+        Range: "bytes=0-4095",
+      },
+      signal: AbortSignal.timeout(9000),
+      redirect: "follow",
+    });
+
+    return isUsableResponse(response);
   } catch {
     return false;
   }
@@ -517,9 +622,11 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
   if (domain === "科技" && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
 
   if (/text\//i.test(entry.url) || /x_image_process=text/i.test(entry.url)) score -= 18;
+  if (BLOCKED_TEXT_PATTERNS.some((pattern) => pattern.test(`${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`))) score -= 16;
   if (/图库|壁纸|头像|素材|海报|模板/.test(`${entry.title} ${entry.desc}`)) score -= 18;
   if (/千库网|摄图网|包图网|我图网|昵图网|视觉中国|盖帝图像|watermark|copyright/.test(`${entry.title} ${entry.desc} ${entry.pageUrl} ${entry.url}`)) score -= 30;
   if (!terms.some(([term]) => haystack.includes(normalizeText(term)))) score -= 12;
+  if (shouldAvoidPortraitForSearch(input) && isPortraitLikeEntry(entry)) score -= 20;
 
   if (domain === "科技") {
     const roboticsBoost = /(机器人|人形机器人|机器狗|robot|robotics)/.test(haystack);
@@ -585,6 +692,26 @@ function getRelaxedScoreThreshold(input: RealImageSearchInput) {
   if (domain === "汽车" || domain === "旅游") return 8;
   if (domain === "社会") return 10;
   return 12;
+}
+
+function buildFallbackSearchQueries(input: RealImageSearchInput, primaryQuery: string) {
+  const queries = [primaryQuery.trim()];
+  const title = input.title?.trim() || "";
+
+  if (title && !queries.includes(title)) {
+    queries.push(title);
+  }
+
+  const titleTerms = extractWeightedTerms({ ...input, query: title || input.query })
+    .map(([term]) => term)
+    .slice(0, 4)
+    .join(" ")
+    .trim();
+  if (titleTerms && !queries.includes(titleTerms)) {
+    queries.push(titleTerms);
+  }
+
+  return queries.filter(Boolean).slice(0, 3);
 }
 
 function isGithubTrendingInput(input: RealImageSearchInput) {
@@ -678,8 +805,11 @@ async function fetchGithubRepoScreenshot(repoUrl: string) {
   return [
     {
       url: screenshotUrl,
-      source: "bing" as const,
+      source: "github" as const,
       query: repoUrl,
+      score: 88,
+      confidence: "high" as const,
+      reason: "GitHub 仓库页面截图",
       title: "GitHub Repo Screenshot",
       pageUrl: repoUrl,
     },
@@ -730,8 +860,11 @@ async function fetchGithubRepoPreviewImages(repoUrl: string) {
     if (!(await isReachableImage(candidate.url))) continue;
     results.push({
       url: candidate.url,
-      source: "bing",
+      source: "github",
       query: repoUrl,
+      score: 82 + Math.min(12, Math.max(0, candidate.score)),
+      confidence: "high",
+      reason: "GitHub README 或仓库预览图",
       title: "GitHub Repo Preview",
       pageUrl: repoUrl,
     });
@@ -777,49 +910,171 @@ async function searchGithubTrendingRepoImages(input: RealImageSearchInput): Prom
   return fetchGithubRepoPreviewImages(repoUrl);
 }
 
-export async function searchRealArticleImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
-  const githubImages = await searchGithubTrendingRepoImages(input);
-  if (githubImages.length) {
-    return githubImages.slice(0, Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS)));
+async function readSourcePageUrl(input: RealImageSearchInput) {
+  const hotTopic = await readLatestHotTopicForTopic({
+    title: input.title?.trim() || input.query?.trim() || "",
+    source: input.source || "",
+  }).catch(() => null);
+
+  return hotTopic?.url?.trim() || "";
+}
+
+async function searchSourcePageImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
+  const pageUrl = await readSourcePageUrl(input);
+  if (!pageUrl || /github\.com/i.test(pageUrl)) {
+    return [];
   }
+
+  const html = await fetchSearchHtml(pageUrl).catch(() => "");
+  if (!html) return [];
+
+  const $ = cheerio.load(html);
+  const candidates: Array<{ url: string; title: string; score: number }> = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (rawUrl: string, title = "") => {
+    const url = toAbsoluteUrl(pageUrl, rawUrl);
+    if (!isUsableSourcePageImage(url) || seen.has(url)) return;
+    seen.add(url);
+    candidates.push({
+      url,
+      title,
+      score: scoreSourcePageImage(url, title),
+    });
+  };
+
+  [
+    $('meta[property="og:image"]').attr("content"),
+    $('meta[property="og:image:url"]').attr("content"),
+    $('meta[name="twitter:image"]').attr("content"),
+    $('meta[name="twitter:image:src"]').attr("content"),
+  ].forEach((url) => pushCandidate(url || "", "source meta image"));
+
+  $("article img, main img, .article-content img, .entry-content img, .post-content img, .content img").each((_, element) => {
+    const src = $(element).attr("src") || $(element).attr("data-src") || $(element).attr("data-original") || "";
+    const alt = $(element).attr("alt") || $(element).attr("title") || "source article image";
+    pushCandidate(src, alt);
+  });
+
+  const ranked = candidates
+    .sort((left, right) => right.score - left.score)
+    .slice(0, MAX_CANDIDATES_TO_CHECK);
+
+  const results: RealImageSearchResult[] = [];
+  for (const candidate of ranked) {
+    if (!(await isReachableImage(candidate.url))) continue;
+    const score = 78 + Math.min(16, Math.max(0, candidate.score));
+    results.push({
+      url: candidate.url,
+      source: "source-page",
+      query: pageUrl,
+      score,
+      confidence: getConfidence(score),
+      reason: candidate.title === "source meta image" ? "原文页面 meta 配图" : "原文正文图片",
+      title: candidate.title,
+      pageUrl,
+    });
+  }
+
+  return results;
+}
+
+async function searchSourcePageScreenshot(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
+  const pageUrl = await readSourcePageUrl(input);
+  if (!pageUrl || !canUseSourceScreenshot(pageUrl)) {
+    return [];
+  }
+
+  const screenshotUrl = buildSourceScreenshotUrl(pageUrl);
+  if (!(await isReachableImage(screenshotUrl))) {
+    return [];
+  }
+
+  return [
+    {
+      url: screenshotUrl,
+      source: "source-screenshot",
+      query: pageUrl,
+      score: 76,
+      confidence: "medium",
+      reason: "热点来源页面截图",
+      title: "来源页面截图",
+      pageUrl,
+    },
+  ];
+}
+
+export async function searchRealArticleImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
+  const targetCount = Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS));
+  const sourcePageImages = await searchSourcePageImages(input).catch(() => []);
+  const githubImages = await searchGithubTrendingRepoImages(input).catch(() => []);
+  const sourcePageScreenshots = await searchSourcePageScreenshot(input).catch(() => []);
+  const providerResults: RealImageSearchResult[] = [
+    ...sourcePageImages,
+    ...githubImages,
+    ...sourcePageScreenshots,
+  ];
 
   const query = buildSearchQuery(input);
   if (!query) {
-    return [];
+    return rankAndDedupeResults(providerResults, targetCount);
   }
-  const avoidPortrait = shouldAvoidPortraitForSearch(input);
+  const searchQueries = buildFallbackSearchQueries(input, query);
+  const baseCandidates: BingImageEntry[] = [];
+  const seenUrls = new Set<string>();
 
-  const target = `https://cn.bing.com/images/search?q=${encodeURIComponent(query)}`;
-  const html = await fetchSearchHtml(target);
-  const baseCandidates = extractBingImageEntries(html)
-    .filter(isLikelyUsableEntry)
-    .filter((entry) => (avoidPortrait ? !isPortraitLikeEntry(entry) : true))
-    .filter((entry) => isRelevantEnoughEntry(entry, input));
+  for (const searchQuery of searchQueries) {
+    const target = `https://cn.bing.com/images/search?q=${encodeURIComponent(searchQuery)}`;
+    const html = await fetchSearchHtml(target);
+    const entries = extractBingImageEntries(html)
+      .filter(isLikelyUsableEntry)
+      .filter((entry) => isRelevantEnoughEntry(entry, input));
+
+    for (const entry of entries) {
+      if (seenUrls.has(entry.url)) continue;
+      seenUrls.add(entry.url);
+      baseCandidates.push(entry);
+    }
+
+    if (baseCandidates.length >= MAX_CANDIDATES_TO_CHECK * 2) break;
+  }
 
   const strictCandidates = baseCandidates
     .filter((entry) => hasConfidentRelevance(entry, input))
     .sort((left, right) => scoreEntry(right, input) - scoreEntry(left, input));
 
-  const candidates = (strictCandidates.length ? strictCandidates : baseCandidates
-    .filter((entry) => scoreEntry(entry, input) >= getRelaxedScoreThreshold(input))
-    .sort((left, right) => scoreEntry(right, input) - scoreEntry(left, input)))
+  const relaxedCandidates = baseCandidates
+    .map((entry) => ({ entry, score: scoreEntry(entry, input) }))
+    .filter(({ score }) => score >= getRelaxedScoreThreshold(input))
+    .sort((left, right) => right.score - left.score)
+    .map(({ entry }) => entry);
+
+  const fallbackCandidates = baseCandidates
+    .map((entry) => ({ entry, score: scoreEntry(entry, input) }))
+    .sort((left, right) => right.score - left.score)
+    .map(({ entry }) => entry);
+
+  const candidates = (strictCandidates.length ? strictCandidates : relaxedCandidates.length ? relaxedCandidates : fallbackCandidates)
     .slice(0, MAX_CANDIDATES_TO_CHECK);
 
   const results: RealImageSearchResult[] = [];
-  const targetCount = Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS));
   
   for (const candidate of candidates) {
-    if (results.length >= targetCount) break;
+    if (results.length >= MAX_CANDIDATES_TO_CHECK) break;
     if (!(await isReachableImage(candidate.url))) continue;
+    const score = Math.max(30, Math.min(74, scoreEntry(candidate, input) + 45));
     results.push({
       url: candidate.url,
       source: "bing",
       query,
+      score,
+      confidence: getConfidence(score),
+      reason: "Bing 图片搜索候选",
       title: candidate.title,
       pageUrl: candidate.pageUrl,
       thumbnailUrl: candidate.thumbnailUrl,
     });
   }
 
-  return results;
+  return rankAndDedupeResults([...providerResults, ...results], targetCount);
 }
