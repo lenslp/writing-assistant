@@ -644,7 +644,7 @@ async function verifyImageMatchesArticle(input: RealImageSearchInput, imageDataU
   if (!apiKey || !model) {
     return {
       passed: true,
-      score: 60,
+      score: 65,
       reason: "视觉模型未配置，跳过校验",
     };
   }
