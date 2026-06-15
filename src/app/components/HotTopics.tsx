@@ -107,6 +107,10 @@ function formatFailedSourceWarning(failedSources: unknown, baseMessage = "") {
   return `${prefix}部分来源抓取失败：${entries.join("；")}`;
 }
 
+function shouldShowRefreshWarning(message: string) {
+  return Boolean(message.trim()) && !message.includes("部分来源抓取失败");
+}
+
 function resolveDisplayDomain(topic: HotTopicItem): ActiveArticleDomain | null {
   const isExplicitActiveDomain = topic.domain && (articleDomains as readonly string[]).includes(topic.domain);
   const explicitDomain = isExplicitActiveDomain ? (topic.domain as ActiveArticleDomain) : null;
@@ -455,11 +459,17 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       setRestrictedCount(typeof payload.restrictedCount === "number" ? payload.restrictedCount : 0);
 
       const hasUsableItems = Array.isArray(payload.items) && payload.items.length > 0;
+      if (hasUsableItems && Array.isArray(payload.failedSources) && payload.failedSources.length) {
+        console.warn("部分热点来源抓取失败", payload.failedSources);
+      }
+
       const nextWarning = hasUsableItems
         ? ""
         : formatFailedSourceWarning(payload.failedSources, typeof payload.message === "string" ? payload.message : "");
       if (nextWarning) {
         setRefreshWarning(nextWarning);
+      } else {
+        setRefreshWarning("");
       }
 
       setNotice(
@@ -555,7 +565,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
             </div>
           </div>
         ) : null}
-        {refreshWarning ? (
+        {shouldShowRefreshWarning(refreshWarning) ? (
           <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
             {refreshWarning}
