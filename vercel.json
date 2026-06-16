@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/hot-topics/refresh",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
