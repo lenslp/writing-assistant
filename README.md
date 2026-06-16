@@ -74,27 +74,50 @@ Copy `.env.local.example` to `.env.local` and fill in:
 ```bash
 # Database
 DATABASE_URL=postgresql://...
+DIRECT_URL=postgresql://...
 
-# Supabase (optional, for auth)
+# Supabase Auth
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=xxx
+SUPABASE_SERVICE_ROLE_KEY=xxx
 
-# AI Provider (any OpenAI-compatible API)
+# Secret encryption for user-hosted AI keys and WeChat authorizer tokens
+AI_SECRET_ENCRYPTION_KEY=use-a-stable-random-secret
+
+# Platform AI Provider (used when a user has no hosted key)
 AI_API_KEY=your-api-key
 AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 AI_MODEL=qwen3.5-plus
+AI_IMAGE_API_KEY=your-image-api-key
+AI_IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+AI_IMAGE_MODEL=wan2.7-image-pro
+
+# WeChat Open Platform third-party authorization
+WECHAT_OPEN_COMPONENT_APP_ID=xxx
+WECHAT_OPEN_COMPONENT_APP_SECRET=xxx
+WECHAT_OPEN_AUTH_REDIRECT_URI=https://your-domain.com/api/wechat/authorize/callback
+WECHAT_OPEN_AUTH_STATE_SECRET=use-a-stable-random-secret
+WECHAT_OPEN_CALLBACK_TOKEN=use-a-random-callback-token
 
 # Hot Topics Sources (optional)
 HOTLIST_TWITTER_RSSBRIDGE_BASE_URLS=https://rss-bridge.org/bridge01/
 ZHIHU_COOKIE=your-cookie  # Optional, improves stability
 ```
 
+AI supports both platform keys with usage quota and encrypted user-hosted keys. Do not ask users for WeChat AppSecret in production; WeChat accounts should be connected through the WeChat Open Platform third-party authorization flow. Configure the WeChat authorization event callback URL as:
+
+```text
+https://your-domain.com/api/wechat/component-events?token=<WECHAT_OPEN_CALLBACK_TOKEN>
+```
+
 ### Database Setup
 
 ```bash
 npx prisma generate
-npx prisma db push
+npx prisma migrate deploy
 ```
+
+For local throwaway development, `npx prisma db push` is still acceptable. For shared or production databases, use the committed migrations.
 
 ### Run
 

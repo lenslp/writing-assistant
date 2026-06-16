@@ -8,6 +8,8 @@ import {
   clearHotTopicsSnapshotCache,
   refreshHotTopicsAndPersist,
 } from "../../../lib/hot-topic-refresh";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicFailedSources } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,7 @@ async function refreshHotTopics() {
     revalidateTag(ARTICLE_ANALYSIS_CACHE_TAG);
 
     if (!result.persisted) {
+      const publicFailedSources = toPublicFailedSources(result.failedSources, "抓取失败");
       const items = result.items.slice(0, 360).map((item) => ({
         ...item,
         time: buildHotTopicTimeLabel(item),
@@ -35,7 +38,7 @@ async function refreshHotTopics() {
         source: "live",
         persisted: false,
         restrictedCount: result.restrictedCount,
-        failedSources: result.failedSources,
+        failedSources: publicFailedSources,
         refreshed: true,
       });
 
@@ -43,29 +46,30 @@ async function refreshHotTopics() {
         {
           ok: false,
           persisted: false,
-          message: result.message,
+          message: "已拉取实时热点，但暂未写入数据库。",
           generatedTopicCount: result.generatedTopicCount,
           restrictedCount: result.restrictedCount,
           items,
-          failedSources: result.failedSources,
+          failedSources: publicFailedSources,
         },
         { status: 200 },
       );
     }
 
+    const publicFailedSources = toPublicFailedSources(result.failedSources, "抓取失败");
     return NextResponse.json({
       ok: true,
       persisted: true,
       insertedCount: result.insertedCount,
       generatedTopicCount: result.generatedTopicCount,
       restrictedCount: result.restrictedCount,
-      failedSources: result.failedSources,
+      failedSources: publicFailedSources,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    console.error("Failed to refresh hot topics:", error);
 
     return NextResponse.json(
-      { ok: false, persisted: false, message: `入库失败：${message}`, failedSources: [] },
+      { ok: false, persisted: false, message: "热点刷新失败，请稍后重试。", failedSources: [] },
       { status: 500 },
     );
   }
@@ -74,7 +78,7 @@ async function refreshHotTopics() {
 export async function GET(request: Request) {
   if (!isAuthorizedCronRequest(request)) {
     return NextResponse.json(
-      { ok: false, message: "Unauthorized cron request" },
+      { ok: false, message: "无权执行热点刷新任务。" },
       { status: 401 },
     );
   }
@@ -82,6 +86,9 @@ export async function GET(request: Request) {
   return refreshHotTopics();
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   return refreshHotTopics();
 }

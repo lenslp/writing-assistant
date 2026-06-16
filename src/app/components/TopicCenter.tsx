@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../providers/app-store";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
+import { getClientErrorMessage } from "../lib/client-error";
 import { articleDomains, domainConfigs, resolveArticleDomain, type ActiveArticleDomain } from "../lib/content-domains";
 import type { TopicSuggestion } from "../lib/app-data";
 import type { HotTopicItem } from "../lib/hot-topics";
@@ -192,7 +193,7 @@ export function TopicCenter() {
           groups: [],
           topics: [],
           source: "fallback",
-          message: error instanceof Error ? error.message : "AI 选题暂不可用。",
+          message: getClientErrorMessage(error, "AI 选题暂不可用。"),
         });
       } finally {
         window.clearTimeout(timeoutId);

@@ -10,6 +10,7 @@ import {
 import { domainConfigs, resolveArticleDomain } from "./content-domains";
 import { decodeEscapedStructuralText, normalizeStructuredBodyText } from "./body-structure";
 import { readAIProviderSecret, type AIProviderSecret } from "./app-config-db";
+import { assertPlatformAIQuota, recordAIUsage } from "./ai-usage";
 import type {
   AITransformAction,
   AIWriteGenerateRequest,
@@ -23,6 +24,7 @@ type ProviderConfig = {
   apiKey: string;
   baseUrl: string;
   provider: string;
+  source: "user" | "platform" | "default";
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -569,8 +571,8 @@ function toErrorCause(error: unknown) {
   return error instanceof Error ? error : undefined;
 }
 
-export async function getAIProviderConfig(): Promise<ProviderConfig> {
-  const storedConfig = await readAIProviderSecret().catch((error) => {
+export async function getAIProviderConfig(userId?: string): Promise<ProviderConfig> {
+  const storedConfig = await readAIProviderSecret(userId).catch((error) => {
     console.error("Failed to read AI provider config:", error);
     return null;
   });
@@ -582,7 +584,42 @@ export async function getAIProviderConfig(): Promise<ProviderConfig> {
     apiKey,
     baseUrl,
     provider: detectProvider(baseUrl),
+    source: storedConfig?.source ?? (apiKey ? "platform" : "default"),
   };
+}
+
+function estimateTextTokens(...parts: string[]) {
+  const length = parts.join("\n").trim().length;
+  return length > 0 ? Math.ceil(length / 2) : 0;
+}
+
+function extractProviderTokenUsage(payload: unknown) {
+  if (!payload || typeof payload !== "object") return 0;
+
+  const usage = "usage" in payload ? (payload as { usage?: unknown }).usage : null;
+  if (usage && typeof usage === "object") {
+    const totalTokens = "total_tokens" in usage ? (usage as { total_tokens?: unknown }).total_tokens : null;
+    if (typeof totalTokens === "number" && Number.isFinite(totalTokens)) return Math.max(0, Math.floor(totalTokens));
+
+    const promptTokens = "prompt_tokens" in usage ? (usage as { prompt_tokens?: unknown }).prompt_tokens : 0;
+    const completionTokens = "completion_tokens" in usage ? (usage as { completion_tokens?: unknown }).completion_tokens : 0;
+    const inputTokens = "input_tokens" in usage ? (usage as { input_tokens?: unknown }).input_tokens : 0;
+    const outputTokens = "output_tokens" in usage ? (usage as { output_tokens?: unknown }).output_tokens : 0;
+    const summed = [promptTokens, completionTokens, inputTokens, outputTokens]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      .reduce((total, value) => total + value, 0);
+    if (summed > 0) return Math.floor(summed);
+  }
+
+  const usageMetadata = "usageMetadata" in payload ? (payload as { usageMetadata?: unknown }).usageMetadata : null;
+  if (usageMetadata && typeof usageMetadata === "object") {
+    const totalTokenCount = "totalTokenCount" in usageMetadata ? (usageMetadata as { totalTokenCount?: unknown }).totalTokenCount : null;
+    if (typeof totalTokenCount === "number" && Number.isFinite(totalTokenCount)) {
+      return Math.max(0, Math.floor(totalTokenCount));
+    }
+  }
+
+  return 0;
 }
 
 function extractProviderResponseContent(payload: unknown) {
@@ -726,8 +763,8 @@ function getExplicitLongformModel(runtimeConfig: RuntimeModelConfig) {
   return runtimeConfig?.longformModel || getEnv("AI_MODEL_LONGFORM") || getEnv("OPENAI_MODEL_LONGFORM") || "";
 }
 
-async function getAIModelSelectionForTask(task: AIModelTask): Promise<ModelSelection> {
-  const runtimeConfig = await readAIProviderSecret().catch((error) => {
+async function getAIModelSelectionForTask(task: AIModelTask, userId?: string): Promise<ModelSelection> {
+  const runtimeConfig = await readAIProviderSecret(userId).catch((error) => {
     console.error("Failed to read AI provider model selection:", error);
     return null;
   });
@@ -1286,6 +1323,7 @@ async function adjustTitlesToLength<T extends AIWriteResult>(
       userPrompt: buildTitleAdjustmentUserPrompt(request, current),
       temperature: 0.45,
       task: "title",
+      userId: request.userId,
     });
     const parsed = extractJsonPayload(content);
     const nextCandidates = resolveSafeTitleCandidates(
@@ -2165,6 +2203,7 @@ async function adjustBodyToTargetWordCount(
       userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, currentBody, currentQualityIssue),
       temperature: 0.4,
       task: "transform",
+      userId: request.userId,
     });
 
     try {
@@ -2228,6 +2267,7 @@ async function draftBodyWithStrictWordCount(
       userPrompt: buildDraftingUserPrompt(request, plan, qualityIssue),
       temperature: attempt === 0 ? 0.72 : 0.62,
       task: request.scope,
+      userId: request.userId,
     });
 
     try {
@@ -2300,20 +2340,28 @@ async function callCompatibleModel({
   userPrompt,
   temperature,
   task,
+  userId,
 }: {
   systemPrompt: string;
   userPrompt: string;
   temperature: number;
   task: AIModelTask;
+  userId?: string;
 }) {
-  const config = await getAIProviderConfig();
-  const modelSelection = await getAIModelSelectionForTask(task);
+  const config = await getAIProviderConfig(userId);
+  const modelSelection = await getAIModelSelectionForTask(task, userId);
   const model = modelSelection.primary;
   const fallbackModel = modelSelection.fallback;
 
   if (!config.configured) {
     throw new Error("AI model is not configured");
   }
+
+  await assertPlatformAIQuota({
+    userId,
+    source: config.source,
+    tokenCount: estimateTextTokens(systemPrompt, userPrompt),
+  });
 
   let response: Response | null = null;
   let currentModel = model;
@@ -2396,6 +2444,7 @@ async function callCompatibleModel({
 
   const payload = (await response.json().catch(() => null)) as unknown;
   const content = extractMessageContent(payload);
+  const tokenUsage = extractProviderTokenUsage(payload);
 
   if (!response.ok) {
     const errorMessage = extractProviderErrorMessage(payload, `AI request failed with status ${response.status}`);
@@ -2405,6 +2454,17 @@ async function callCompatibleModel({
   if (!content) {
     throw new Error("AI response is empty");
   }
+
+  await recordAIUsage({
+    userId,
+    source: config.source,
+    provider: config.provider,
+    model: currentModel,
+    task,
+    tokens: tokenUsage,
+  }).catch((error) => {
+    console.error("Failed to record AI usage:", error);
+  });
 
   return {
     config,
@@ -2418,17 +2478,20 @@ export async function completeAIText({
   userPrompt,
   temperature = 0.2,
   task = "title",
+  userId,
 }: {
   systemPrompt: string;
   userPrompt: string;
   temperature?: number;
   task?: AITextCompletionTask;
+  userId?: string;
 }) {
   return callCompatibleModel({
     systemPrompt,
     userPrompt,
     temperature,
     task,
+    userId,
   });
 }
 
@@ -2596,6 +2659,7 @@ async function rewriteBodyAfterAIQualityCheck(request: AIWriteGenerateRequest, r
     userPrompt: buildWordCountAdjustmentUserPrompt(request, plan, result.body, qualityIssue),
     temperature: 0.46,
     task: "transform",
+    userId: request.userId,
   });
   const parsed = extractJsonPayload(content);
   const body = polishBodyText(normalizeBodyText(parsed.transformedText, content.trim() || result.body));
@@ -2662,6 +2726,7 @@ async function generatePlanningWithQualityRetry(request: AIWriteGenerateRequest)
       userPrompt: buildPlanningUserPrompt(request, qualityIssue),
       temperature: attempt === 0 ? 0.72 : 0.62,
       task: "outline",
+      userId: request.userId,
     });
 
     try {
@@ -2691,6 +2756,7 @@ async function generateFullArticleWithQualityRetry(request: AIWriteGenerateReque
       userPrompt: buildGenerateUserPrompt(request, qualityIssue),
       temperature: attempt === 0 ? 0.7 : 0.58,
       task: request.scope,
+      userId: request.userId,
     });
 
     try {
@@ -2726,6 +2792,7 @@ async function generatePartialArticleWithQualityRetry(request: AIWriteGenerateRe
       userPrompt: buildGenerateUserPrompt(request, qualityIssue),
       temperature: request.scope === "title" && !qualityIssue ? 0.82 : 0.64,
       task: request.scope,
+      userId: request.userId,
     });
 
     try {
@@ -2785,6 +2852,7 @@ export async function transformWechatText(request: AIWriteTransformRequest) {
     userPrompt: buildTransformUserPrompt(request),
     temperature: 0.7,
     task: "transform",
+    userId: request.userId,
   });
 
   const parsed = extractJsonPayload(content);

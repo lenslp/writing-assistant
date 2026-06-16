@@ -34,6 +34,7 @@ export type DraftWritingSnapshot = Pick<
 
 export type AIWriteGenerateRequest = {
   mode: "generate";
+  userId?: string;
   scope: AIWriteScope;
   topic: TopicSuggestion;
   settings: AppSettings;
@@ -46,6 +47,7 @@ export type AIWriteGenerateRequest = {
 
 export type AIWriteTransformRequest = {
   mode: "transform";
+  userId?: string;
   action: AITransformAction;
   topic: TopicSuggestion;
   settings: AppSettings;

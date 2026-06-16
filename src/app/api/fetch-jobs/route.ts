@@ -2,10 +2,25 @@ import { NextResponse } from "next/server";
 import { hasPersistenceBackend, shouldUseSupabaseAdmin } from "../../lib/persistence";
 import { prisma } from "../../lib/prisma";
 import { getSupabaseAdmin } from "../../lib/supabase-admin";
+import { requireAuthenticatedUser } from "../../lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
+function toPublicJobMessage(status: unknown, message: unknown) {
+  const normalizedStatus = typeof status === "string" ? status : "";
+  const normalizedMessage = typeof message === "string" ? message.trim() : "";
+
+  if (normalizedStatus === "success") return normalizedMessage || "任务已完成";
+  if (normalizedStatus === "running") return "任务处理中";
+  if (normalizedStatus === "failed") return "任务执行失败，请稍后重试。";
+
+  return normalizedMessage && normalizedMessage.length <= 80 ? normalizedMessage : "";
+}
+
 export async function GET(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   if (!hasPersistenceBackend()) {
     return NextResponse.json({ items: [], persisted: false });
   }
@@ -30,7 +45,7 @@ export async function GET(request: Request) {
           status: item.status,
           source: item.source,
           insertedCount: item.inserted_count,
-          message: item.message,
+          message: toPublicJobMessage(item.status, item.message),
           createdAt: item.created_at,
           finishedAt: item.finished_at,
         })),
@@ -49,7 +64,7 @@ export async function GET(request: Request) {
         status: item.status,
         source: item.source,
         insertedCount: item.insertedCount,
-        message: item.message,
+        message: toPublicJobMessage(item.status, item.message),
         createdAt: item.createdAt.toISOString(),
         finishedAt: item.finishedAt?.toISOString(),
       })),

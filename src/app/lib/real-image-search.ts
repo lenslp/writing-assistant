@@ -11,6 +11,7 @@ import { readAIProviderSecret } from "./app-config-db";
 import { readLatestHotTopicForTopic } from "./hot-topic-db";
 
 type RealImageSearchInput = {
+  userId?: string;
   query?: string;
   title?: string;
   summary?: string;
@@ -619,7 +620,7 @@ function buildVisionMatchPrompt(articleContext: string) {
 }
 
 async function verifyImageMatchesArticle(input: RealImageSearchInput, imageDataUrl: string) {
-  const storedConfig = await readAIProviderSecret().catch(() => null);
+  const storedConfig = await readAIProviderSecret(input.userId).catch(() => null);
   const apiKey = storedConfig?.apiKey || process.env.AI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
   const baseUrl = (
     storedConfig?.baseUrl ||

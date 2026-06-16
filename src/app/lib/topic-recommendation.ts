@@ -320,12 +320,13 @@ function sanitizeDomainRecommendationGroups(
 export async function recommendTopicWithAI(
   topics: TopicRecommendationCandidate[],
   preferredDomain?: ActiveArticleDomain | null,
+  userId?: string,
 ): Promise<TopicRecommendationResult> {
   if (!topics.length) {
     return buildFallbackTopicRecommendation(topics, preferredDomain);
   }
 
-  const config = await getAIProviderConfig();
+  const config = await getAIProviderConfig(userId);
   if (!config.configured) {
     return {
       ...buildFallbackTopicRecommendation(topics, preferredDomain),
@@ -339,6 +340,7 @@ export async function recommendTopicWithAI(
   try {
     const response = await completeAIText({
       task: "title",
+      userId,
       temperature: 0.15,
       systemPrompt: [
         "你是资深中文内容主编，负责从实时热点中选出今天最值得写的一条。",
@@ -374,19 +376,20 @@ export async function recommendTopicWithAI(
     console.error("Failed to recommend topic with AI:", error);
     return {
       ...buildFallbackTopicRecommendation(topics, preferredDomain),
-      message: error instanceof Error ? error.message : "AI 选题推荐失败，已使用规则推荐。",
+      message: "AI 选题推荐失败，已使用规则推荐。",
     };
   }
 }
 
 export async function recommendDailyTopicsByDomainWithAI(
   topics: TopicRecommendationCandidate[],
+  userId?: string,
 ): Promise<DomainTopicRecommendationGroup[]> {
   if (!topics.length) {
     return buildFallbackDomainRecommendations(topics);
   }
 
-  const config = await getAIProviderConfig();
+  const config = await getAIProviderConfig(userId);
   if (!config.configured) {
     return buildFallbackDomainRecommendations(topics).map((group) => ({
       ...group,
@@ -397,6 +400,7 @@ export async function recommendDailyTopicsByDomainWithAI(
   try {
     const response = await completeAIText({
       task: "title",
+      userId,
       temperature: 0.12,
       systemPrompt: [
         "你是资深中文内容主编，负责每天从实时热点中为各领域挑选最值得写的选题。",
@@ -425,7 +429,7 @@ export async function recommendDailyTopicsByDomainWithAI(
     console.error("Failed to recommend daily topics by domain with AI:", error);
     return buildFallbackDomainRecommendations(topics).map((group) => ({
       ...group,
-      message: error instanceof Error ? error.message : "AI 推荐选题失败，已使用规则推荐。",
+      message: "AI 推荐选题失败，已使用规则推荐。",
     }));
   }
 }
@@ -433,6 +437,7 @@ export async function recommendDailyTopicsByDomainWithAI(
 export async function recommendTopicsForDomainWithAI(
   topics: TopicRecommendationCandidate[],
   domain: ActiveArticleDomain,
+  userId?: string,
 ): Promise<DomainTopicRecommendationGroup> {
   const domainTopics = topics.filter((topic) => topic.domain === domain);
   const fallbackGroup = buildFallbackDomainRecommendations(topics).find((group) => group.domain === domain) ?? {
@@ -445,7 +450,7 @@ export async function recommendTopicsForDomainWithAI(
     return fallbackGroup;
   }
 
-  const config = await getAIProviderConfig();
+  const config = await getAIProviderConfig(userId);
   if (!config.configured) {
     return {
       ...fallbackGroup,
@@ -456,6 +461,7 @@ export async function recommendTopicsForDomainWithAI(
   try {
     const response = await completeAIText({
       task: "title",
+      userId,
       temperature: 0.12,
       systemPrompt: [
         "你是资深中文内容主编，负责从一个领域的实时热点中挑选最值得写的选题。",
@@ -488,7 +494,7 @@ export async function recommendTopicsForDomainWithAI(
     console.error("Failed to recommend topics for domain with AI:", error);
     return {
       ...fallbackGroup,
-      message: error instanceof Error ? error.message : "AI 推荐选题失败，已使用规则推荐。",
+      message: "AI 推荐选题失败，已使用规则推荐。",
     };
   }
 }

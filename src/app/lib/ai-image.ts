@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { readAIImageProviderSecret } from "./app-config-db";
+import { assertPlatformAIQuota, recordAIUsage } from "./ai-usage";
 
 type ImageProviderConfig = {
   configured: boolean;
@@ -7,6 +8,7 @@ type ImageProviderConfig = {
   baseUrl: string;
   model: string;
   provider: string;
+  source: "user" | "platform" | "default";
 };
 
 const DEFAULT_IMAGE_BASE_URL = "https://api.openai.com/v1";
@@ -117,8 +119,8 @@ async function waitForDashScopeTask(baseUrl: string, apiKey: string, taskId: str
   throw new Error("AI 图片生成超时，请稍后重试。");
 }
 
-export async function getAIImageConfig(): Promise<ImageProviderConfig> {
-  const storedConfig = await readAIImageProviderSecret().catch((error) => {
+export async function getAIImageConfig(userId?: string): Promise<ImageProviderConfig> {
+  const storedConfig = await readAIImageProviderSecret(userId).catch((error) => {
     console.error("Failed to read AI image provider config:", error);
     return null;
   });
@@ -139,6 +141,57 @@ export async function getAIImageConfig(): Promise<ImageProviderConfig> {
     baseUrl,
     model,
     provider: detectProvider(baseUrl),
+    source: storedConfig?.source ?? (apiKey ? "platform" : "default"),
+  };
+}
+
+export async function testAIImageProviderConnection(userId?: string) {
+  const config = await getAIImageConfig(userId);
+
+  if (!config.configured) {
+    throw new Error("AI 图片模型尚未配置，请先保存图片 API Key、Base URL 和模型名。");
+  }
+
+  if (isDashScopeQwenImageModel(config.model, config.baseUrl) || isDashScopeWanImageModel(config.model, config.baseUrl)) {
+    const dashscopeBaseUrl = resolveDashScopeImageBaseUrl(config.baseUrl);
+    const response = await fetch(`${dashscopeBaseUrl}/models/${encodeURIComponent(config.model)}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(extractDashScopeErrorMessage(payload));
+    }
+
+    return {
+      provider: config.provider,
+      model: config.model,
+    };
+  }
+
+  const response = await fetch(`${config.baseUrl}/models/${encodeURIComponent(config.model)}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && payload.error && typeof payload.error === "object" && "message" in payload.error && typeof payload.error.message === "string"
+      ? payload.error.message
+      : `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return {
+    provider: config.provider,
+    model: config.model,
   };
 }
 
@@ -176,12 +229,30 @@ async function normalizeGeneratedImageUrl(url: string) {
   return `data:${NORMALIZED_IMAGE_MIME};base64,${normalized.toString("base64")}`;
 }
 
-export async function generateArticleImage(prompt: string) {
-  const config = await getAIImageConfig();
+export async function generateArticleImage(prompt: string, userId?: string) {
+  const config = await getAIImageConfig(userId);
 
   if (!config.configured) {
     throw new Error("AI 图片模型未配置，请补充 AI_IMAGE_MODEL 及对应 API Key。");
   }
+
+  await assertPlatformAIQuota({
+    userId,
+    source: config.source,
+    imageCount: 1,
+  });
+
+  const recordImageUsage = () =>
+    recordAIUsage({
+      userId,
+      source: config.source,
+      provider: config.provider,
+      model: config.model,
+      task: "image",
+      imageCount: 1,
+    }).catch((error) => {
+      console.error("Failed to record AI image usage:", error);
+    });
 
   if (isDashScopeQwenImageModel(config.model, config.baseUrl)) {
     const dashscopeBaseUrl = resolveDashScopeImageBaseUrl(config.baseUrl);
@@ -225,6 +296,8 @@ export async function generateArticleImage(prompt: string) {
     if (!imageUrl) {
       throw new Error("AI 图片接口未返回可用图片。");
     }
+
+    await recordImageUsage();
 
     return {
       provider: config.provider,
@@ -287,6 +360,8 @@ export async function generateArticleImage(prompt: string) {
       throw new Error("AI 图片接口未返回可用图片。");
     }
 
+    await recordImageUsage();
+
     return {
       provider: config.provider,
       model: config.model,
@@ -324,6 +399,8 @@ export async function generateArticleImage(prompt: string) {
   if (!url && !b64) {
     throw new Error("AI 图片接口未返回可用图片。");
   }
+
+  await recordImageUsage();
 
   return {
     provider: config.provider,

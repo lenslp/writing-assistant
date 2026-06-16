@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateArticleImage, getAIImageConfig } from "../../../lib/ai-image";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +28,10 @@ function buildPrompt(payload: Payload) {
 }
 
 export async function POST(request: Request) {
-  const config = await getAIImageConfig();
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
+  const config = await getAIImageConfig(auth.user.id);
 
   if (!config.configured) {
     return NextResponse.json(
@@ -48,7 +53,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "缺少图片生成提示词。" }, { status: 400 });
     }
 
-    const result = await generateArticleImage(prompt);
+    const result = await generateArticleImage(prompt, auth.user.id);
 
     return NextResponse.json({
       configured: true,
@@ -63,7 +68,7 @@ export async function POST(request: Request) {
       {
         configured: true,
         generated: false,
-        message: error instanceof Error ? error.message : "AI 图片生成失败，请稍后重试。",
+        message: toPublicErrorMessage(error, "AI 图片生成失败，请稍后重试。"),
       },
     );
   }

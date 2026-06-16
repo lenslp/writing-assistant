@@ -6,6 +6,8 @@ import {
   upsertAIProviderConfig,
 } from "../../../lib/app-config-db";
 import type { AIProviderKind } from "../../../lib/app-config-db";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -25,23 +27,31 @@ type PostPayload = {
   profileId?: string;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
-    const config = await readAIProviderConfig();
+    const config = await readAIProviderConfig(auth.user.id);
     return NextResponse.json({ config, persisted: true });
   } catch (error) {
     console.error("Failed to read AI provider config:", error);
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "读取模型配置失败" },
-      { status: 500 },
-    );
+    const config = await readAIProviderConfig();
+    return NextResponse.json({
+      config,
+      persisted: false,
+      message: "无法读取个人模型配置，请先到设置中心配置 API Key。",
+    });
   }
 }
 
 export async function PATCH(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
     const payload = (await request.json()) as PatchPayload;
-    const config = await upsertAIProviderConfig({
+    const config = await upsertAIProviderConfig(auth.user.id, {
       id: payload.id?.trim() ?? "",
       name: payload.name?.trim() ?? "",
       providerType: payload.providerType,
@@ -57,13 +67,16 @@ export async function PATCH(request: Request) {
   } catch (error) {
     console.error("Failed to update AI provider config:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "保存模型配置失败" },
+      { message: toPublicErrorMessage(error, "保存模型配置失败") },
       { status: 500 },
     );
   }
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
     const payload = (await request.json()) as PostPayload;
     const profileId = payload.profileId?.trim() ?? "";
@@ -72,27 +85,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "缺少目标配置 ID" }, { status: 400 });
     }
 
-    const config = await setActiveAIProviderConfig(profileId);
+    const config = await setActiveAIProviderConfig(auth.user.id, profileId);
     return NextResponse.json({ config, persisted: true });
   } catch (error) {
     console.error("Failed to set active AI provider config:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "切换默认模型配置失败" },
+      { message: toPublicErrorMessage(error, "切换默认模型配置失败") },
       { status: 500 },
     );
   }
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
     const { searchParams } = new URL(request.url);
     const profileId = searchParams.get("profileId")?.trim() ?? undefined;
-    const config = await deleteAIProviderConfig(profileId);
+    const config = await deleteAIProviderConfig(auth.user.id, profileId);
     return NextResponse.json({ config, persisted: true });
   } catch (error) {
     console.error("Failed to delete AI provider config:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "删除模型配置失败" },
+      { message: toPublicErrorMessage(error, "删除模型配置失败") },
       { status: 500 },
     );
   }

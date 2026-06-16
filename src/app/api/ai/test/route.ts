@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAIProviderConfig } from "../../../lib/ai-writing";
 import { readAIProviderConfig } from "../../../lib/app-config-db";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -170,9 +172,12 @@ function classifyModelError(status: number, message: string) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   const payload = await request.json().catch(() => null) as TestPayload | null;
-  const savedConfig = await getAIProviderConfig();
-  const summary = await readAIProviderConfig();
+  const savedConfig = await getAIProviderConfig(auth.user.id);
+  const summary = await readAIProviderConfig(auth.user.id);
   const activeProfile = summary.activeProfile;
   const runtimeBaseUrl = normalizeAIProviderBaseUrl(payload?.baseUrl?.trim() || savedConfig.baseUrl);
   const runtimeApiKey = payload?.apiKey?.trim() || savedConfig.apiKey;
@@ -262,7 +267,6 @@ export async function POST(request: Request) {
           provider: config.provider,
           model,
           message: classifyModelError(response.status, rawMessage),
-          rawMessage,
         },
         { status: 400 },
       );
@@ -293,7 +297,7 @@ export async function POST(request: Request) {
         ok: false,
         provider: config.provider,
         model,
-        message: error instanceof Error ? `模型接口连接失败：${error.message}` : "模型接口连接失败。",
+        message: toPublicErrorMessage(error, "模型接口连接失败。"),
       },
       { status: 500 },
     );

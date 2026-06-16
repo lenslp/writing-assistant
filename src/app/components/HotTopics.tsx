@@ -7,6 +7,7 @@ import {
   ArrowUpDown, AlertCircle, LoaderCircle, X, ExternalLink, Clock
 } from "lucide-react";
 import { useAppStore } from "../providers/app-store";
+import { getClientErrorMessage } from "../lib/client-error";
 import { isAiRelevantHotTopic, type HotTopicItem } from "../lib/hot-topics";
 import { buildTopicSuggestionFromHotTopic } from "../lib/article-analysis";
 import {
@@ -518,7 +519,7 @@ export function HotTopics({ initialData }: { initialData?: HotTopicsInitialData 
       setNotice(`已按最新分类规则重算 ${payload.updatedCount ?? 0} 个选题`);
       window.setTimeout(() => setNotice(""), 2500);
     } catch (error) {
-      setRefreshWarning(error instanceof Error ? error.message : "重新归类失败");
+      setRefreshWarning(getClientErrorMessage(error, "重新归类失败"));
     } finally {
       setIsReclassifying(false);
     }

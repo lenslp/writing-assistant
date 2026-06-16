@@ -27,6 +27,8 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 let supabaseClient: ReturnType<typeof createSupabaseBrowserClient> | null = null;
+let authFetchPatched = false;
+let currentAccessToken = "";
 
 function getSupabaseClient() {
   if (!hasSupabaseBrowserEnv()) return null;
@@ -39,7 +41,43 @@ function normalizeAuthError(message: string) {
   if (/email not confirmed/i.test(message)) return "邮箱尚未完成验证，请先查看收件箱。";
   if (/user already registered|already been registered/i.test(message)) return "这个邮箱已经注册，请直接登录。";
   if (/password/i.test(message) && /six|6/i.test(message)) return "密码至少需要 6 位。";
-  return message || "认证失败，请稍后重试。";
+  return "认证失败，请稍后重试。";
+}
+
+function isSameOriginApiRequest(input: RequestInfo | URL) {
+  if (typeof window === "undefined") return false;
+
+  const url = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.href
+      : input.url;
+  const target = new URL(url, window.location.origin);
+
+  return target.origin === window.location.origin && target.pathname.startsWith("/api/");
+}
+
+function patchAuthenticatedFetch() {
+  if (authFetchPatched || typeof window === "undefined") return;
+
+  authFetchPatched = true;
+  const nativeFetch = window.fetch.bind(window);
+
+  window.fetch = (input, init = {}) => {
+    if (!currentAccessToken || !isSameOriginApiRequest(input)) {
+      return nativeFetch(input, init);
+    }
+
+    const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (!headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${currentAccessToken}`);
+    }
+
+    return nativeFetch(input, {
+      ...init,
+      headers,
+    });
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -59,11 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     client.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setSession(data.session);
+      currentAccessToken = data.session?.access_token ?? "";
       setLoading(false);
     });
 
     const { data: subscription } = client.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      currentAccessToken = nextSession?.access_token ?? "";
       setLoading(false);
     });
 
@@ -71,6 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    patchAuthenticatedFetch();
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {

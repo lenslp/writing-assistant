@@ -8,6 +8,8 @@ import {
 import { getRestrictedReason } from "../../../lib/content-policy";
 import { resolveHotTopicSourceContext } from "../../../lib/hot-topic-context";
 import type { AIWriteRequest } from "../../../lib/ai-writing-types";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 const SOURCE_CONTEXT_TIME_BUDGET_MS = 2500;
@@ -47,7 +49,10 @@ function isValidRequest(payload: unknown): payload is AIWriteRequest {
 }
 
 export async function POST(request: Request) {
-  const config = await getAIProviderConfig();
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
+  const config = await getAIProviderConfig(auth.user.id);
 
   if (!config.configured) {
     return NextResponse.json(
@@ -113,6 +118,7 @@ export async function POST(request: Request) {
 
       const result = await generateWechatArticle({
         ...payload,
+        userId: auth.user.id,
         sourceContext,
       });
 
@@ -138,7 +144,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await transformWechatText(payload);
+    const result = await transformWechatText({
+      ...payload,
+      userId: auth.user.id,
+    });
     return NextResponse.json({
       configured: true,
       provider: result.provider,
@@ -149,9 +158,7 @@ export async function POST(request: Request) {
     console.error("Failed to write article with AI:", error);
     const message = isQualityRetryError(error)
       ? "AI 正在自动调整稿件质量，请再试一次。"
-      : error instanceof Error
-        ? error.message
-        : "AI 写作失败，请稍后重试。";
+      : toPublicErrorMessage(error, "AI 写作失败，请稍后重试。");
     const isQualityRetry = isQualityRetryError(error);
 
     return NextResponse.json(

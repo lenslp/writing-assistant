@@ -6,6 +6,8 @@ import {
   Save,
   Plus,
   X,
+  LoaderCircle,
+  PlugZap,
   Star,
   Pencil,
   Trash2,
@@ -19,6 +21,7 @@ import {
 import { defaultSettings } from "../lib/app-data";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { articleDomains, domainConfigs, type ArticleDomain } from "../lib/content-domains";
+import { getClientErrorMessage } from "../lib/client-error";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
@@ -29,20 +32,11 @@ type WechatAccountView = {
   appId: string;
   appIdMasked: string;
   hasAppSecret: boolean;
+  source?: "third-party" | "legacy";
   defaultAuthor: string;
   contentSourceUrl: string;
   createdAt: string;
   updatedAt: string;
-};
-
-type WechatAccountForm = {
-  id: string;
-  name: string;
-  appId: string;
-  appSecret: string;
-  defaultAuthor: string;
-  contentSourceUrl: string;
-  setAsSelected: boolean;
 };
 
 type AIProviderKind = "openai" | "anthropic";
@@ -64,7 +58,7 @@ type AIProviderView = {
   activeProfileId: string | null;
   activeProfile: AIProviderProfileView | null;
   profiles: AIProviderProfileView[];
-  source: "local" | "environment" | "default";
+  source: "user" | "platform" | "default";
 };
 
 type AIProviderForm = {
@@ -93,7 +87,7 @@ type AIImageProviderView = {
   activeProfileId: string | null;
   activeProfile: AIImageProviderProfileView | null;
   profiles: AIImageProviderProfileView[];
-  source: "local" | "environment" | "default";
+  source: "user" | "platform" | "default";
 };
 
 type AIImageProviderForm = {
@@ -103,16 +97,6 @@ type AIImageProviderForm = {
   apiKey: string;
   model: string;
   setAsActive: boolean;
-};
-
-const emptyWechatAccountForm: WechatAccountForm = {
-  id: "",
-  name: "",
-  appId: "",
-  appSecret: "",
-  defaultAuthor: "",
-  contentSourceUrl: "",
-  setAsSelected: true,
 };
 
 const emptyAIProviderForm: AIProviderForm = {
@@ -215,8 +199,6 @@ export function Settings() {
   const [notice, setNotice] = useState("");
   const [wechatAccounts, setWechatAccounts] = useState<WechatAccountView[]>([]);
   const [selectedWechatAccountId, setSelectedWechatAccountId] = useState<string | null>(null);
-  const [wechatForm, setWechatForm] = useState<WechatAccountForm>(emptyWechatAccountForm);
-  const [isWechatDialogOpen, setIsWechatDialogOpen] = useState(false);
   const [wechatLoading, setWechatLoading] = useState(false);
   const [wechatLoaded, setWechatLoaded] = useState(false);
   const [aiProvider, setAIProvider] = useState<AIProviderView | null>(null);
@@ -229,6 +211,7 @@ export function Settings() {
   const [aiImageProvider, setAIImageProvider] = useState<AIImageProviderView | null>(null);
   const [aiImageProviderForm, setAIImageProviderForm] = useState<AIImageProviderForm>(emptyAIImageProviderForm);
   const [aiImageProviderLoading, setAIImageProviderLoading] = useState(false);
+  const [aiImageProviderTesting, setAIImageProviderTesting] = useState(false);
   const [isAIImageProviderDialogOpen, setIsAIImageProviderDialogOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState(settingsSections[0]?.id ?? "");
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -348,7 +331,7 @@ export function Settings() {
       setNotice("设置已保存");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存设置失败");
+      setNotice(getClientErrorMessage(error, "保存设置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setSettingsSaving(false);
@@ -365,7 +348,7 @@ export function Settings() {
       setNotice("已恢复默认设置");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "恢复默认设置失败");
+      setNotice(getClientErrorMessage(error, "恢复默认设置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setSettingsSaving(false);
@@ -388,7 +371,7 @@ export function Settings() {
 
       throw new Error(payload?.message ?? "加载公众号账号失败");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加载公众号账号失败");
+      setNotice(getClientErrorMessage(error, "加载公众号账号失败"));
       window.setTimeout(() => setNotice(""), 2500);
     } finally {
       setWechatLoading(false);
@@ -409,7 +392,7 @@ export function Settings() {
       const config = payload.config as AIProviderView;
       setAIProvider(config);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加载模型配置失败");
+      setNotice(getClientErrorMessage(error, "加载模型配置失败"));
       window.setTimeout(() => setNotice(""), 2500);
     } finally {
       setAIProviderLoading(false);
@@ -430,16 +413,12 @@ export function Settings() {
       const config = payload.config as AIImageProviderView;
       setAIImageProvider(config);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加载图片模型配置失败");
+      setNotice(getClientErrorMessage(error, "加载图片模型配置失败"));
       window.setTimeout(() => setNotice(""), 2500);
     } finally {
       setAIImageProviderLoading(false);
     }
   }
-
-  const handleWechatFormChange = <K extends keyof WechatAccountForm>(key: K, value: WechatAccountForm[K]) => {
-    setWechatForm((current) => ({ ...current, [key]: value }));
-  };
 
   const handleAIProviderFormChange = <K extends keyof AIProviderForm>(key: K, value: AIProviderForm[K]) => {
     setAIProviderForm((current) => ({ ...current, [key]: value }));
@@ -460,7 +439,7 @@ export function Settings() {
 
   const openEditAIImageProviderDialog = (profile: AIImageProviderProfileView) => {
     setAIImageProviderForm(
-      aiImageProvider?.source === "local"
+      aiImageProvider?.source === "user"
         ? buildAIImageProviderFormFromProfile(profile)
         : {
             ...buildAIImageProviderFormFromProfile(profile),
@@ -504,7 +483,7 @@ export function Settings() {
 
   const openEditAIProviderDialog = (profile: AIProviderProfileView) => {
     setAIProviderForm(
-      aiProvider?.source === "local"
+      aiProvider?.source === "user"
         ? buildAIProviderFormFromProfile(profile)
         : {
             ...buildAIProviderFormFromProfile(profile),
@@ -549,7 +528,7 @@ export function Settings() {
       setNotice(aiProviderForm.id ? "写作模型配置已更新" : "写作模型配置已添加");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存模型配置失败");
+      setNotice(getClientErrorMessage(error, "保存模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIProviderLoading(false);
@@ -593,9 +572,37 @@ export function Settings() {
     } catch (error) {
       setAIProviderTestFeedback({
         type: "error",
-        message: error instanceof Error ? error.message : "模型连接测试失败",
+        message: getClientErrorMessage(error, "模型连接测试失败"),
       });
-      setNotice(error instanceof Error ? error.message : "模型连接测试失败");
+      setNotice(getClientErrorMessage(error, "模型连接测试失败"));
+      window.setTimeout(() => setNotice(""), 4000);
+    } finally {
+      setAIProviderTesting(false);
+    }
+  };
+
+  const handleTestActiveAIProviderConfig = async () => {
+    setAIProviderTesting(true);
+    setAIProviderTestFeedback(null);
+
+    try {
+      const response = await fetch("/api/ai/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message ?? "模型连接测试失败");
+      }
+
+      setNotice(`${payload.provider ?? "模型"} · ${payload.model ?? ""} 测试通过`);
+      window.setTimeout(() => setNotice(""), 3000);
+    } catch (error) {
+      setNotice(getClientErrorMessage(error, "模型连接测试失败"));
       window.setTimeout(() => setNotice(""), 4000);
     } finally {
       setAIProviderTesting(false);
@@ -623,7 +630,7 @@ export function Settings() {
       setNotice("默认写作模型已切换");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "切换默认模型配置失败");
+      setNotice(getClientErrorMessage(error, "切换默认模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIProviderLoading(false);
@@ -648,10 +655,10 @@ export function Settings() {
         closeAIProviderDialog();
       }
       setAIProviderTestFeedback(null);
-      setNotice(profileId ? "模型配置已删除" : "已清空本地写作模型配置");
+      setNotice(profileId ? "模型配置已删除" : "已清空用户写作模型配置");
       window.setTimeout(() => setNotice(""), 2500);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除模型配置失败");
+      setNotice(getClientErrorMessage(error, "删除模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIProviderLoading(false);
@@ -681,7 +688,7 @@ export function Settings() {
       setNotice(aiImageProviderForm.id ? "图片模型配置已更新" : "图片模型配置已添加");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存图片模型配置失败");
+      setNotice(getClientErrorMessage(error, "保存图片模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIImageProviderLoading(false);
@@ -709,7 +716,7 @@ export function Settings() {
       setNotice("默认图片模型已切换");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "切换默认图片模型配置失败");
+      setNotice(getClientErrorMessage(error, "切换默认图片模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIImageProviderLoading(false);
@@ -733,75 +740,57 @@ export function Settings() {
       if (isAIImageProviderDialogOpen && aiImageProviderForm.id === profileId) {
         closeAIImageProviderDialog();
       }
-      setNotice(profileId ? "图片模型配置已删除" : "已清空本地图片模型配置");
+      setNotice(profileId ? "图片模型配置已删除" : "已清空用户图片模型配置");
       window.setTimeout(() => setNotice(""), 2500);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除图片模型配置失败");
+      setNotice(getClientErrorMessage(error, "删除图片模型配置失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setAIImageProviderLoading(false);
     }
   };
 
-  const handleEditWechatAccount = (account: WechatAccountView) => {
-    setWechatForm({
-      id: account.id,
-      name: account.name,
-      appId: account.appId,
-      appSecret: "",
-      defaultAuthor: account.defaultAuthor,
-      contentSourceUrl: account.contentSourceUrl,
-      setAsSelected: selectedWechatAccountId === account.id,
-    });
-    setIsWechatDialogOpen(true);
-  };
-
-  const resetWechatForm = () => {
-    setWechatForm({
-      ...emptyWechatAccountForm,
-      setAsSelected: wechatAccounts.length === 0,
-    });
-  };
-
-  const openNewWechatAccountDialog = () => {
-    resetWechatForm();
-    setIsWechatDialogOpen(true);
-  };
-
-  const closeWechatAccountDialog = () => {
-    setIsWechatDialogOpen(false);
-    resetWechatForm();
-  };
-
-  const handleSaveWechatAccount = async () => {
-    setWechatLoading(true);
+  const handleTestActiveAIImageProviderConfig = async () => {
+    setAIImageProviderTesting(true);
 
     try {
-      const response = await fetch("/api/wechat/accounts", {
-        method: "PATCH",
+      const response = await fetch("/api/ai/image-test", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          action: "upsert",
-          account: wechatForm,
-        }),
       });
       const payload = await response.json().catch(() => null);
 
-      if (!response.ok || !payload) {
-        throw new Error(payload?.message ?? "保存公众号账号失败");
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.message ?? "图片模型连接测试失败");
       }
 
-      setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
-      setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
-      resetWechatForm();
-      setIsWechatDialogOpen(false);
-      setNotice("公众号账号已保存");
-      window.setTimeout(() => setNotice(""), 2000);
+      setNotice(`${payload.provider ?? "图片模型"} · ${payload.model ?? ""} 测试通过`);
+      window.setTimeout(() => setNotice(""), 3000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "保存公众号账号失败");
-      window.setTimeout(() => setNotice(""), 2500);
+      setNotice(getClientErrorMessage(error, "图片模型连接测试失败"));
+      window.setTimeout(() => setNotice(""), 4000);
+    } finally {
+      setAIImageProviderTesting(false);
+    }
+  };
+
+  const openWechatAuthorize = async () => {
+    setWechatLoading(true);
+
+    try {
+      const response = await fetch("/api/wechat/authorize", { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || typeof payload?.authorizeUrl !== "string") {
+        throw new Error(payload?.message ?? "微信授权入口生成失败");
+      }
+
+      window.location.href = payload.authorizeUrl;
+    } catch (error) {
+      setNotice(getClientErrorMessage(error, "微信授权入口生成失败"));
+      window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setWechatLoading(false);
     }
@@ -826,14 +815,10 @@ export function Settings() {
 
       setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
       setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
-      if (wechatForm.id === id) {
-        setIsWechatDialogOpen(false);
-        resetWechatForm();
-      }
       setNotice("公众号账号已删除");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "删除公众号账号失败");
+      setNotice(getClientErrorMessage(error, "删除公众号账号失败"));
       window.setTimeout(() => setNotice(""), 2500);
     } finally {
       setWechatLoading(false);
@@ -862,11 +847,10 @@ export function Settings() {
 
       setWechatAccounts(Array.isArray(payload.accounts) ? payload.accounts as WechatAccountView[] : []);
       setSelectedWechatAccountId(typeof payload.selectedAccountId === "string" ? payload.selectedAccountId : null);
-      setWechatForm((current) => ({ ...current, setAsSelected: current.id ? current.id === id : true }));
       setNotice("默认公众号已更新");
       window.setTimeout(() => setNotice(""), 2000);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "切换默认公众号失败");
+      setNotice(getClientErrorMessage(error, "切换默认公众号失败"));
       window.setTimeout(() => setNotice(""), 2500);
     } finally {
       setWechatLoading(false);
@@ -896,7 +880,7 @@ export function Settings() {
       setNotice(`连接测试通过${payload.accountName ? ` · ${payload.accountName}` : ""}`);
       window.setTimeout(() => setNotice(""), 2500);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "公众号连接测试失败");
+      setNotice(getClientErrorMessage(error, "公众号连接测试失败"));
       window.setTimeout(() => setNotice(""), 3000);
     } finally {
       setWechatLoading(false);
@@ -1034,20 +1018,36 @@ export function Settings() {
                 支持保存多套模型入口，通过列表快速切换默认配置。API Key 只会保存在本地，不会上传或泄露。
               </div>
             </div>
-            <button
-              type="button"
-              onClick={openCreateAIProviderDialog}
-              className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
-              style={{ fontWeight: 600 }}
-            >
-              <Plus className="h-4 w-4" />
-              新增模型配置
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleTestActiveAIProviderConfig()}
+                disabled={aiProviderLoading || aiProviderTesting}
+                className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
+                style={{ fontWeight: 600 }}
+              >
+                {aiProviderTesting ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlugZap className="h-4 w-4" />
+                )}
+                {aiProviderTesting ? "测试中" : "测试连接"}
+              </button>
+              <button
+                type="button"
+                onClick={openCreateAIProviderDialog}
+                className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
+                style={{ fontWeight: 600 }}
+              >
+                <Plus className="h-4 w-4" />
+                新增模型配置
+              </button>
+            </div>
           </div>
 
           {(aiProvider?.profiles?.length ?? 0) === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
-              当前还没有本地写作模型配置。新增一套后，就可以在这里设置默认并快速切换。
+              当前还没有用户写作模型配置。新增一套后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
 
@@ -1076,9 +1076,9 @@ export function Settings() {
                             默认
                           </span>
                         ) : null}
-                        {aiProvider?.source !== "local" ? (
+                        {aiProvider?.source !== "user" ? (
                           <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] text-primary" style={{ fontWeight: 700 }}>
-                            {aiProvider?.source === "environment" ? "环境变量" : "默认值"}
+                            {aiProvider?.source === "platform" ? "平台 Key" : "默认值"}
                           </span>
                         ) : null}
                       </div>
@@ -1096,7 +1096,7 @@ export function Settings() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      {!profile.isActive && aiProvider?.source === "local" ? (
+                      {!profile.isActive && aiProvider?.source === "user" ? (
                         <button
                           type="button"
                           onClick={() => void handleActivateAIProviderConfig(profile.id)}
@@ -1113,9 +1113,9 @@ export function Settings() {
                         className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
                         style={{ fontWeight: 500 }}
                       >
-                        {aiProvider?.source === "local" ? "编辑" : "复制为本地"}
+                        {aiProvider?.source === "user" ? "编辑" : "保存为用户 Key"}
                       </button>
-                      {aiProvider?.source === "local" ? (
+                      {aiProvider?.source === "user" ? (
                         <button
                           type="button"
                           onClick={() => void handleDeleteAIProviderConfig(profile.id)}
@@ -1132,29 +1132,6 @@ export function Settings() {
               );
             })}
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
-          <button
-            type="button"
-            onClick={() => void loadAIProviderConfig()}
-            disabled={aiProviderLoading}
-            className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
-            style={{ fontWeight: 500 }}
-          >
-            重新读取
-          </button>
-          {aiProvider?.source === "local" ? (
-            <button
-              type="button"
-              onClick={() => void handleDeleteAIProviderConfig()}
-              disabled={aiProviderLoading}
-              className="rounded-xl border border-border/70 px-4 py-2.5 text-[13px] text-primary hover:bg-accent disabled:opacity-60"
-              style={{ fontWeight: 500 }}
-            >
-              清空写作模型配置
-            </button>
-          ) : null}
         </div>
 
         <Dialog open={isAIProviderDialogOpen} onOpenChange={(open) => {
@@ -1347,20 +1324,36 @@ export function Settings() {
                 用于 AI 配图生成。支持保存多套配置，并快速切换默认图片模型。
               </div>
             </div>
-            <button
-              type="button"
-              onClick={openCreateAIImageProviderDialog}
-              className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
-              style={{ fontWeight: 600 }}
-            >
-              <Plus className="h-4 w-4" />
-              新增图片模型
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleTestActiveAIImageProviderConfig()}
+                disabled={aiImageProviderLoading || aiImageProviderTesting}
+                className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
+                style={{ fontWeight: 600 }}
+              >
+                {aiImageProviderTesting ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlugZap className="h-4 w-4" />
+                )}
+                {aiImageProviderTesting ? "测试中" : "测试连接"}
+              </button>
+              <button
+                type="button"
+                onClick={openCreateAIImageProviderDialog}
+                className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
+                style={{ fontWeight: 600 }}
+              >
+                <Plus className="h-4 w-4" />
+                新增图片模型
+              </button>
+            </div>
           </div>
 
           {(aiImageProvider?.profiles?.length ?? 0) === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
-              当前还没有本地图片模型配置。新增一套后，就可以在这里设置默认并快速切换。
+              当前还没有用户图片模型配置。新增一套后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
 
@@ -1383,9 +1376,9 @@ export function Settings() {
                           默认
                         </span>
                       ) : null}
-                      {aiImageProvider?.source !== "local" ? (
+                      {aiImageProvider?.source !== "user" ? (
                         <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground" style={{ fontWeight: 700 }}>
-                          {aiImageProvider?.source === "environment" ? "环境变量" : "默认值"}
+                          {aiImageProvider?.source === "platform" ? "平台 Key" : "默认值"}
                         </span>
                       ) : null}
                     </div>
@@ -1394,7 +1387,7 @@ export function Settings() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {!profile.isActive && aiImageProvider?.source === "local" ? (
+                    {!profile.isActive && aiImageProvider?.source === "user" ? (
                       <button
                         type="button"
                         onClick={() => void handleActivateAIImageProviderConfig(profile.id)}
@@ -1411,9 +1404,9 @@ export function Settings() {
                       className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
                       style={{ fontWeight: 500 }}
                     >
-                      {aiImageProvider?.source === "local" ? "编辑" : "复制为本地"}
+                      {aiImageProvider?.source === "user" ? "编辑" : "保存为用户 Key"}
                     </button>
-                    {aiImageProvider?.source === "local" ? (
+                    {aiImageProvider?.source === "user" ? (
                       <button
                         type="button"
                         onClick={() => void handleDeleteAIImageProviderConfig(profile.id)}
@@ -1429,29 +1422,6 @@ export function Settings() {
               </div>
             ))}
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
-          <button
-            type="button"
-            onClick={() => void loadAIImageProviderConfig()}
-            disabled={aiImageProviderLoading}
-            className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background disabled:opacity-60"
-            style={{ fontWeight: 500 }}
-          >
-            重新读取
-          </button>
-          {aiImageProvider?.source === "local" ? (
-            <button
-              type="button"
-              onClick={() => void handleDeleteAIImageProviderConfig()}
-              disabled={aiImageProviderLoading}
-              className="rounded-xl border border-border/70 px-4 py-2.5 text-[13px] text-primary hover:bg-accent disabled:opacity-60"
-              style={{ fontWeight: 500 }}
-            >
-              清空图片模型配置
-            </button>
-          ) : null}
         </div>
 
         <Dialog open={isAIImageProviderDialogOpen} onOpenChange={(open) => {
@@ -1551,23 +1521,24 @@ export function Settings() {
               <div className="text-[12px] uppercase tracking-[0.16em] text-muted-foreground">Accounts</div>
               <div className="mt-1 text-[16px] text-foreground" style={{ fontWeight: 700 }}>公众号账号列表</div>
               <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                添加公众号账号后，可以在排版页选择并推送到对应草稿箱。
+                通过微信第三方平台授权公众号后，可以在排版页选择并推送到对应草稿箱。
               </div>
             </div>
-            <button
-              type="button"
-              onClick={openNewWechatAccountDialog}
-              className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
-              style={{ fontWeight: 600 }}
-            >
-              <Plus className="h-4 w-4" />
-              新增账号
-            </button>
+              <button
+                type="button"
+                onClick={() => void openWechatAuthorize()}
+                disabled={wechatLoading}
+                className="lens-btn-primary inline-flex items-center gap-2 px-4 py-2.5 text-[13px]"
+                style={{ fontWeight: 600 }}
+              >
+                <Plus className="h-4 w-4" />
+                微信授权
+              </button>
           </div>
 
           {!wechatAccounts.length && wechatLoaded ? (
             <div className="mt-5 rounded-2xl border border-dashed border-border bg-card/80 px-4 py-5 text-[13px] leading-6 text-muted-foreground">
-              当前还没有公众号账号。添加一套后，就可以在这里设置默认并快速切换。
+              当前还没有授权公众号。点击微信授权后，就可以在这里设置默认并快速切换。
             </div>
           ) : null}
 
@@ -1589,7 +1560,7 @@ export function Settings() {
                       </div>
                       <div className="mt-2 text-[13px] leading-6 text-muted-foreground">AppID：{account.appIdMasked}</div>
                       <div className="text-[12px] leading-5 text-muted-foreground">
-                        Author：{account.defaultAuthor || "未设置"} · Secret：{account.hasAppSecret ? "已配置" : "未配置"}
+                        Author：{account.defaultAuthor || "未设置"} · {account.source === "third-party" ? "第三方平台授权" : "平台默认账号"}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1604,14 +1575,6 @@ export function Settings() {
                           设为默认
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        onClick={() => handleEditWechatAccount(account)}
-                        className="rounded-xl border border-border px-3 py-2 text-[12px] text-muted-foreground hover:bg-background"
-                        style={{ fontWeight: 500 }}
-                      >
-                        编辑
-                      </button>
                       <button
                         type="button"
                         onClick={() => void handleDeleteWechatAccount(account.id)}
@@ -1629,67 +1592,6 @@ export function Settings() {
           </div>
         </div>
 
-        <Dialog
-          open={isWechatDialogOpen}
-          onOpenChange={(open) => {
-            if (open) {
-              setIsWechatDialogOpen(true);
-              return;
-            }
-            closeWechatAccountDialog();
-          }}
-        >
-          <DialogContent className="max-w-[560px] rounded-[24px] border border-border bg-card p-0 shadow-[0_24px_80px_rgba(31,41,86,0.16)]">
-            <DialogHeader className="border-b border-border/70 px-6 py-5">
-              <DialogTitle className="text-[20px] text-foreground" style={{ fontWeight: 700 }}>
-                {wechatForm.id ? "编辑公众号账号" : "新增公众号账号"}
-              </DialogTitle>
-              <DialogDescription className="mt-1 text-[13px] leading-6 text-muted-foreground">
-                AppSecret 仅保存在服务端，保存后可在排版页直接选择并推送到对应草稿箱。
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4 px-6 py-5">
-              <Field label="账号名称" value={wechatForm.name} onChange={(value) => handleWechatFormChange("name", value)} />
-              <Field label="AppID" value={wechatForm.appId} onChange={(value) => handleWechatFormChange("appId", value)} />
-              <Field
-                label={wechatForm.id ? "AppSecret（留空则保持不变）" : "AppSecret"}
-                value={wechatForm.appSecret}
-                onChange={(value) => handleWechatFormChange("appSecret", value)}
-                type="password"
-              />
-              <Field label="默认作者" value={wechatForm.defaultAuthor} onChange={(value) => handleWechatFormChange("defaultAuthor", value)} />
-              <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={wechatForm.setAsSelected}
-                  onChange={(event) => handleWechatFormChange("setAsSelected", event.target.checked)}
-                />
-                保存后设为默认公众号
-              </label>
-            </div>
-
-            <DialogFooter className="border-t border-border/70 px-6 py-4 sm:justify-between">
-              <button
-                type="button"
-                onClick={closeWechatAccountDialog}
-                className="rounded-xl border border-border px-4 py-2.5 text-[13px] text-muted-foreground hover:bg-background"
-                style={{ fontWeight: 500 }}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSaveWechatAccount()}
-                disabled={wechatLoading}
-                className="rounded-xl bg-primary px-4 py-2.5 text-[13px] text-white hover:bg-primary/90 disabled:bg-primary/40"
-                style={{ fontWeight: 600 }}
-              >
-                {wechatLoading ? "保存中" : wechatForm.id ? "保存账号" : "添加账号"}
-              </button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </Section>
 
         <div className="flex justify-end text-[12px] text-muted-foreground">

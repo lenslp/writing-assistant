@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient, hasSupabaseServiceRole } from "../../../lib/supabase";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +40,9 @@ async function ensureBucket() {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   if (!hasSupabaseServiceRole()) {
     return NextResponse.json({ message: "Supabase 服务端存储未配置，无法上传图片。" }, { status: 503 });
   }
@@ -79,7 +84,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to upload image:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "图片上传失败，请稍后重试。" },
+      { message: toPublicErrorMessage(error, "图片上传失败，请稍后重试。") },
       { status: 500 },
     );
   }

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { DraftFormatting } from "../../../lib/app-data";
 import { resolveArticleDomain } from "../../../lib/content-domains";
 import { getWechatConfig, pushArticleToWechatDraft } from "../../../lib/wechat-draft";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +22,15 @@ function isValidPayload(payload: unknown): payload is RequestPayload {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   const payload = (await request.json().catch(() => null)) as unknown;
   if (!isValidPayload(payload)) {
     return NextResponse.json({ message: "无效的公众号草稿请求。" }, { status: 400 });
   }
 
-  const config = await getWechatConfig(payload.accountId ?? null);
+  const config = await getWechatConfig(auth.user.id, payload.accountId ?? null);
 
   if (!config.configured) {
     return NextResponse.json(
@@ -47,6 +52,7 @@ export async function POST(request: Request) {
     }
 
     const result = await pushArticleToWechatDraft({
+      userId: auth.user.id,
       title,
       summary,
       body,
@@ -70,7 +76,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         configured: true,
-        message: error instanceof Error ? error.message : "推送公众号草稿箱失败，请稍后重试。",
+        message: toPublicErrorMessage(error, "推送公众号草稿箱失败，请稍后重试。"),
       },
       { status: 500 },
     );

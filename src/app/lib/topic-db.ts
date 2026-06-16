@@ -11,6 +11,7 @@ import { resolveDomainWithAIAssist } from "./ai-domain-classifier";
 
 type TopicRecord = {
   id: string;
+  userId?: string | null;
   title: string;
   domain?: string | null;
   heat: string;
@@ -104,12 +105,13 @@ export function mapTopicRecord(record: TopicRecord): TopicSuggestion {
   };
 }
 
-export async function readTopics() {
+export async function readTopics(userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("topics")
       .select("*")
+      .eq("user_id", userId)
       .order("updated_at", { ascending: false })
       .order("fit", { ascending: false });
 
@@ -117,6 +119,7 @@ export async function readTopics() {
 
     const mappedItems = (data ?? []).map((item) => mapTopicRecord({
       id: item.id,
+      userId: item.user_id,
       title: item.title,
       domain: item.domain,
       heat: item.heat,
@@ -142,6 +145,7 @@ export async function readTopics() {
   }
 
   const items = await prisma.topic.findMany({
+    where: { userId },
     orderBy: [{ updatedAt: "desc" }, { fit: "desc" }],
   });
 
@@ -159,7 +163,7 @@ export async function readTopics() {
   return Array.from(deduped.values());
 }
 
-export async function upsertTopicRecord(topic: TopicSuggestion) {
+export async function upsertTopicRecord(topic: TopicSuggestion, userId: string) {
   assertTopicAllowed(topic);
 
   if (shouldUseSupabaseAdmin()) {
@@ -167,6 +171,7 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
     const { data: existingItems, error: existingError } = await supabase
       .from("topics")
       .select("id")
+      .eq("user_id", userId)
       .eq("title", topic.title)
       .eq("source", topic.source)
       .order("updated_at", { ascending: false })
@@ -179,6 +184,7 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
       .from("topics")
       .upsert({
         id: topicId,
+        user_id: userId,
         title: topic.title,
         domain: topic.domain,
         heat: topic.heat,
@@ -211,6 +217,7 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
 
   const existingTopic = await prisma.topic.findFirst({
     where: {
+      userId,
       title: topic.title,
       source: topic.source,
     },
@@ -220,9 +227,10 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
   const topicId = existingTopic?.id ?? topic.id;
 
   const item = await prisma.topic.upsert({
-    where: { id: topicId },
+    where: { userId_id: { userId, id: topicId } },
     create: {
       id: topicId,
+      userId,
       title: topic.title,
       domain: topic.domain,
       heat: topic.heat,
@@ -249,13 +257,14 @@ export async function upsertTopicRecord(topic: TopicSuggestion) {
   return mapTopicRecord(item);
 }
 
-export async function deleteTopicById(topicId: string) {
+export async function deleteTopicById(topicId: string, userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { error } = await supabase
       .from("topics")
       .delete()
-      .eq("id", topicId);
+      .eq("id", topicId)
+      .eq("user_id", userId);
 
     if (error) throw error;
     return;
@@ -264,6 +273,7 @@ export async function deleteTopicById(topicId: string) {
   await prisma.topic.deleteMany({
     where: {
       id: topicId,
+      userId,
     },
   });
 }
@@ -375,8 +385,8 @@ async function persistHotTopicDomain(topic: TopicSuggestion) {
   })));
 }
 
-export async function reclassifyTopicRecords() {
-  const topics = await readTopics();
+export async function reclassifyTopicRecords(userId: string) {
+  const topics = await readTopics(userId);
   let updatedCount = 0;
 
   for (const topic of topics) {
@@ -388,7 +398,7 @@ export async function reclassifyTopicRecords() {
 
     if (!changed) continue;
 
-    await upsertTopicRecord(nextTopic);
+    await upsertTopicRecord(nextTopic, userId);
     await persistHotTopicDomain(nextTopic).catch((error) => {
       console.error("Failed to persist hot topic domain:", error);
     });

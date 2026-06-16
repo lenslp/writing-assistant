@@ -8,17 +8,22 @@ import {
 import { hasPersistenceBackend } from "../../../lib/persistence";
 import { reclassifyHotTopicRecords } from "../../../lib/hot-topic-db";
 import { reclassifyTopicRecords } from "../../../lib/topic-db";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   if (!hasPersistenceBackend()) {
-    return NextResponse.json({ message: "No persistence backend is configured" }, { status: 500 });
+    return NextResponse.json({ message: "数据服务暂不可用，请稍后重试。" }, { status: 503 });
   }
 
   try {
     const [topicResult, hotTopicResult] = await Promise.all([
-      reclassifyTopicRecords(),
+      reclassifyTopicRecords(auth.user.id),
       reclassifyHotTopicRecords(),
     ]);
 
@@ -36,7 +41,7 @@ export async function POST() {
   } catch (error) {
     console.error("Failed to reclassify hot topics:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "热点重新归类失败" },
+      { message: toPublicErrorMessage(error, "热点重新归类失败") },
       { status: 500 },
     );
   }

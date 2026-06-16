@@ -46,7 +46,8 @@ model FetchJob {
 }
 
 model Draft {
-  id               String    @id
+  id               String
+  userId           String    @default("legacy-single-user") @map("user_id")
   domain           String    @default("科技")
   title            String
   titleCandidates  String[]  @default([]) @map("title_candidates")
@@ -68,14 +69,17 @@ model Draft {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
+  @@id([userId, id])
   @@index([status, updatedAt(sort: Desc)])
   @@index([domain, updatedAt(sort: Desc)])
+  @@index([userId, updatedAt(sort: Desc)])
   @@index([topicId])
   @@map("drafts")
 }
 
 model Topic {
-  id        String   @id
+  id        String
+  userId    String   @default("legacy-single-user") @map("user_id")
   title     String
   domain    String   @default("科技")
   heat      String
@@ -88,17 +92,114 @@ model Topic {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@id([userId, id])
   @@index([type, updatedAt(sort: Desc)])
   @@index([domain, updatedAt(sort: Desc)])
+  @@index([userId, updatedAt(sort: Desc)])
   @@map("topics")
 }
 
 model AppConfig {
-  id              String   @id
+  id              String
+  userId          String   @id @default("legacy-single-user") @map("user_id")
   settings        Json
   selectedTopicId String?  @map("selected_topic_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("app_config")
+}
+
+model UserAIProvider {
+  id                       String   @id @default(uuid()) @db.Uuid
+  userId                   String   @map("user_id")
+  name                     String
+  providerType             String   @default("openai") @map("provider_type")
+  baseUrl                  String   @map("base_url")
+  encryptedApiKey          String   @map("encrypted_api_key")
+  apiKeyMasked             String   @map("api_key_masked")
+  model                    String
+  fastModel                String   @default("") @map("fast_model")
+  longformModel            String   @default("") @map("longform_model")
+  isActive                 Boolean  @default(false) @map("is_active")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, isActive])
+  @@map("user_ai_providers")
+}
+
+model UserAIImageProvider {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @map("user_id")
+  name            String
+  baseUrl         String   @map("base_url")
+  encryptedApiKey String   @map("encrypted_api_key")
+  apiKeyMasked    String   @map("api_key_masked")
+  model           String
+  isActive        Boolean  @default(false) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, isActive])
+  @@map("user_ai_image_providers")
+}
+
+model AIUsageQuota {
+  userId             String   @id @map("user_id")
+  monthlyTokenLimit  Int      @default(0) @map("monthly_token_limit")
+  monthlyImageLimit  Int      @default(0) @map("monthly_image_limit")
+  usedTokens         Int      @default(0) @map("used_tokens")
+  usedImages         Int      @default(0) @map("used_images")
+  period             String
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_usage_quotas")
+}
+
+model AIUsageLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id")
+  provider    String
+  model       String
+  task        String
+  source      String
+  tokens      Int      @default(0)
+  imageCount  Int      @default(0) @map("image_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("ai_usage_logs")
+}
+
+model WechatAuthorizedAccount {
+  id                              String    @id @default(uuid()) @db.Uuid
+  userId                          String    @map("user_id")
+  authorizerAppId                 String    @map("authorizer_app_id")
+  nickName                        String    @default("") @map("nick_name")
+  avatarUrl                       String    @default("") @map("avatar_url")
+  principalName                   String    @default("") @map("principal_name")
+  serviceTypeInfo                 Int?      @map("service_type_info")
+  verifyTypeInfo                  Int?      @map("verify_type_info")
+  encryptedAuthorizerAccessToken  String    @default("") @map("encrypted_authorizer_access_token")
+  encryptedAuthorizerRefreshToken String    @map("encrypted_authorizer_refresh_token")
+  tokenExpiresAt                  DateTime? @map("token_expires_at")
+  defaultAuthor                   String    @default("") @map("default_author")
+  contentSourceUrl                String    @default("") @map("content_source_url")
+  isSelected                      Boolean   @default(false) @map("is_selected")
+  createdAt                       DateTime  @default(now()) @map("created_at")
+  updatedAt                       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([userId, authorizerAppId])
+  @@index([userId, isSelected])
+  @@map("wechat_authorized_accounts")
+}
+
+model WechatComponentTicket {
+  componentAppId String   @id @map("component_app_id")
+  verifyTicket   String   @map("verify_ticket")
+  receivedAt     DateTime @default(now()) @map("received_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("wechat_component_tickets")
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getHotTopicsSnapshot } from "../../lib/hot-topic-refresh";
+import { toPublicFailedSources } from "../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
       source: payload.source,
       persisted: payload.persisted,
       restrictedCount: payload.restrictedCount,
-      failedSources: payload.failedSources,
+      failedSources: toPublicFailedSources(payload.failedSources, "抓取失败"),
       refreshed: payload.refreshed,
       stale: payload.stale,
       ttlMs: payload.ttlMs,

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { useAuth, type AuthMode } from "../providers/auth-provider";
+import { getClientErrorMessage } from "../lib/client-error";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -98,7 +99,7 @@ export function AuthPage() {
 
       router.replace("/dashboard");
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "登录失败，请稍后重试。");
+      setError(getClientErrorMessage(submitError, "登录失败，请稍后重试。"));
     } finally {
       setSubmitting(false);
     }

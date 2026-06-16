@@ -1,5 +1,3 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { hasDatabaseUrl } from "./prisma";
@@ -7,43 +5,18 @@ import { getSupabaseAdmin } from "./supabase-admin";
 import { shouldUseSupabaseAdmin } from "./persistence";
 import { defaultSettings, type AppSettings } from "./app-data";
 import { resolveArticleDomain } from "./content-domains";
+import { decryptSecret, encryptSecret } from "./secret-crypto";
 
-const APP_CONFIG_ID = "single-user";
-const WECHAT_INTEGRATION_KEY = "__wechatIntegration";
-const AI_IMAGE_PROVIDER_CONFIG_KEY = "__aiImageProviderConfig";
-const LOCAL_ENV_FILE = path.join(process.cwd(), ".env.local");
-const AI_PROVIDER_LOCAL_ENV_KEYS = [
-  "AI_PROVIDER_KIND",
-  "AI_BASE_URL",
-  "AI_API_KEY",
-  "AI_MODEL",
-  "AI_MODEL_FAST",
-  "AI_MODEL_LONGFORM",
-] as const;
-const AI_PROVIDER_COLLECTION_ENV_KEYS = [
-  "AI_PROVIDER_PROFILES",
-  "AI_PROVIDER_ACTIVE_PROFILE_ID",
-] as const;
-const AI_IMAGE_PROVIDER_LOCAL_ENV_KEYS = [
-  "AI_IMAGE_BASE_URL",
-  "AI_IMAGE_API_KEY",
-  "AI_IMAGE_MODEL",
-] as const;
-const AI_IMAGE_PROVIDER_COLLECTION_ENV_KEYS = [
-  "AI_IMAGE_PROVIDER_PROFILES",
-  "AI_IMAGE_PROVIDER_ACTIVE_PROFILE_ID",
-] as const;
 const DEFAULT_AI_PROVIDER_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_AI_PROVIDER_MODEL = "qwen3.5-plus";
-const LOCAL_AI_PROVIDER_FALLBACK_PROFILE_ID = "local-default";
 const ENV_AI_PROVIDER_PROFILE_ID = "environment-default";
 const DEFAULT_AI_IMAGE_PROVIDER_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_AI_IMAGE_PROVIDER_MODEL = "gpt-image-1";
-const LOCAL_AI_IMAGE_PROVIDER_FALLBACK_PROFILE_ID = "local-image-default";
 const ENV_AI_IMAGE_PROVIDER_PROFILE_ID = "environment-image-default";
 
 type AppConfigRecord = {
   id: string;
+  userId: string;
   settings: unknown;
   selectedTopicId: string | null;
   updatedAt: Date | string;
@@ -54,6 +27,9 @@ export type WechatOfficialAccountSecret = {
   name: string;
   appId: string;
   appSecret: string;
+  authorizerAccessToken?: string;
+  authorizerRefreshToken?: string;
+  tokenExpiresAt?: string | null;
   defaultAuthor: string;
   contentSourceUrl: string;
   createdAt: string;
@@ -66,15 +42,11 @@ export type WechatOfficialAccountSummary = {
   appId: string;
   appIdMasked: string;
   hasAppSecret: boolean;
+  source?: "third-party" | "legacy";
   defaultAuthor: string;
   contentSourceUrl: string;
   createdAt: string;
   updatedAt: string;
-};
-
-type WechatIntegration = {
-  accounts: WechatOfficialAccountSecret[];
-  selectedAccountId: string | null;
 };
 
 export type AIProviderKind = "openai" | "anthropic";
@@ -88,6 +60,10 @@ export type AIProviderSecret = {
   model: string;
   fastModel: string;
   longformModel: string;
+};
+
+export type AIProviderSecretWithSource = AIProviderSecret & {
+  source: AIProviderSummary["source"];
 };
 
 export type AIProviderProfileSummary = {
@@ -107,7 +83,7 @@ export type AIProviderSummary = {
   activeProfileId: string | null;
   activeProfile: AIProviderProfileSummary | null;
   profiles: AIProviderProfileSummary[];
-  source: "local" | "environment" | "default";
+  source: "user" | "platform" | "default";
 };
 
 type AIProviderCollectionSecret = {
@@ -121,6 +97,10 @@ export type AIImageProviderSecret = {
   baseUrl: string;
   apiKey: string;
   model: string;
+};
+
+export type AIImageProviderSecretWithSource = AIImageProviderSecret & {
+  source: AIImageProviderSummary["source"];
 };
 
 export type AIImageProviderProfileSummary = {
@@ -137,7 +117,7 @@ export type AIImageProviderSummary = {
   activeProfileId: string | null;
   activeProfile: AIImageProviderProfileSummary | null;
   profiles: AIImageProviderProfileSummary[];
-  source: "local" | "environment" | "default";
+  source: "user" | "platform" | "default";
 };
 
 type AIImageProviderCollectionSecret = {
@@ -220,94 +200,6 @@ function maskSecretValue(value: string) {
   return `${trimmed.slice(0, 4)}${"*".repeat(trimmed.length - 8)}${trimmed.slice(-4)}`;
 }
 
-function parseEnvValue(rawValue: string) {
-  const trimmed = rawValue.trim();
-  if (!trimmed) return "";
-
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
-  }
-
-  return trimmed;
-}
-
-function parseEnvFile(content: string) {
-  const result: Record<string, string> = {};
-
-  content.split(/\r?\n/).forEach((line) => {
-    const match = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (!match) return;
-
-    const [, key, rawValue] = match;
-    result[key] = parseEnvValue(rawValue);
-  });
-
-  return result;
-}
-
-function matchesEnvKey(line: string, key: string) {
-  return new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(line);
-}
-
-function serializeEnvValue(value: string) {
-  return JSON.stringify(value);
-}
-
-async function readLocalEnvMap() {
-  try {
-    const content = await fs.readFile(LOCAL_ENV_FILE, "utf8");
-    return parseEnvFile(content);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
-    }
-
-    throw error;
-  }
-}
-
-async function writeLocalEnvValues(updates: Record<string, string | null>) {
-  let content = "";
-
-  try {
-    content = await fs.readFile(LOCAL_ENV_FILE, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  let lines = content ? content.split(/\r?\n/) : [];
-
-  Object.entries(updates).forEach(([key, value]) => {
-    lines = lines.filter((line) => !matchesEnvKey(line, key));
-
-    if (value != null && value.trim()) {
-      lines.push(`${key}=${serializeEnvValue(value)}`);
-    }
-  });
-
-  while (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
-  await fs.writeFile(LOCAL_ENV_FILE, `${lines.join("\n")}\n`, "utf8");
-}
-
-function applyLocalEnvValues(updates: Record<string, string | null>) {
-  Object.entries(updates).forEach(([key, value]) => {
-    if (value == null || !value.trim()) {
-      delete process.env[key];
-      return;
-    }
-
-    process.env[key] = value;
-  });
-}
-
 function normalizeAIProviderSecretValue(input: {
   id?: string | null;
   name?: string | null;
@@ -345,81 +237,6 @@ function normalizeAIProviderSecretValue(input: {
     fastModel,
     longformModel,
   } satisfies AIProviderSecret;
-}
-
-function normalizeAIProviderCollectionSecret(value: unknown): AIProviderCollectionSecret | null {
-  if (!isPlainObject(value)) return null;
-
-  const rawProfiles = Array.isArray(value.profiles) ? value.profiles : [];
-  const profiles = rawProfiles
-    .map((item) =>
-      normalizeAIProviderSecretValue({
-        id: isPlainObject(item) && typeof item.id === "string" ? item.id : null,
-        name: isPlainObject(item) && typeof item.name === "string" ? item.name : null,
-        providerType: isPlainObject(item) && typeof item.providerType === "string" ? item.providerType : null,
-        baseUrl: isPlainObject(item) && typeof item.baseUrl === "string" ? item.baseUrl : null,
-        apiKey: isPlainObject(item) && typeof item.apiKey === "string" ? item.apiKey : null,
-        model: isPlainObject(item) && typeof item.model === "string" ? item.model : null,
-        fastModel: isPlainObject(item) && typeof item.fastModel === "string" ? item.fastModel : null,
-        longformModel: isPlainObject(item) && typeof item.longformModel === "string" ? item.longformModel : null,
-      }),
-    )
-    .filter((item): item is AIProviderSecret => Boolean(item));
-
-  if (profiles.length === 0) {
-    return null;
-  }
-
-  const activeProfileId =
-    typeof value.activeProfileId === "string" && profiles.some((item) => item.id === value.activeProfileId)
-      ? value.activeProfileId
-      : profiles[0]?.id ?? null;
-
-  return {
-    activeProfileId,
-    profiles,
-  };
-}
-
-async function readLocalAIProviderCollection() {
-  const envMap = await readLocalEnvMap();
-  const rawProfiles = envMap.AI_PROVIDER_PROFILES?.trim();
-
-  if (rawProfiles) {
-    try {
-      const parsed = JSON.parse(rawProfiles) as unknown;
-      const collection = normalizeAIProviderCollectionSecret({
-        profiles: parsed,
-        activeProfileId: envMap.AI_PROVIDER_ACTIVE_PROFILE_ID,
-      });
-
-      if (collection) {
-        return collection;
-      }
-    } catch (error) {
-      console.error("Failed to parse local AI provider profiles:", error);
-    }
-  }
-
-  const legacyProfile = normalizeAIProviderSecretValue({
-    id: LOCAL_AI_PROVIDER_FALLBACK_PROFILE_ID,
-    name: "默认本地配置",
-    providerType: envMap.AI_PROVIDER_KIND,
-    baseUrl: envMap.AI_BASE_URL,
-    apiKey: envMap.AI_API_KEY,
-    model: envMap.AI_MODEL,
-    fastModel: envMap.AI_MODEL_FAST,
-    longformModel: envMap.AI_MODEL_LONGFORM,
-  });
-
-  if (!legacyProfile) {
-    return null;
-  }
-
-  return {
-    activeProfileId: legacyProfile.id,
-    profiles: [legacyProfile],
-  } satisfies AIProviderCollectionSecret;
 }
 
 function readEnvironmentAIProviderSecret() {
@@ -488,29 +305,6 @@ function createAIProviderSummaryFromCollection(
   } satisfies AIProviderSummary;
 }
 
-function createAIProviderEnvUpdates(activeProfile: AIProviderSecret | null) {
-  return {
-    AI_PROVIDER_KIND: activeProfile?.providerType ?? null,
-    AI_BASE_URL: activeProfile?.baseUrl ?? null,
-    AI_API_KEY: activeProfile?.apiKey ?? null,
-    AI_MODEL: activeProfile?.model ?? null,
-    AI_MODEL_FAST: activeProfile?.fastModel ?? null,
-    AI_MODEL_LONGFORM: activeProfile?.longformModel ?? null,
-  } satisfies Record<(typeof AI_PROVIDER_LOCAL_ENV_KEYS)[number], string | null>;
-}
-
-async function writeLocalAIProviderCollection(collection: AIProviderCollectionSecret | null) {
-  const activeProfile = getActiveAIProviderSecret(collection);
-  const updates: Record<string, string | null> = {
-    AI_PROVIDER_PROFILES: collection ? JSON.stringify(collection.profiles) : null,
-    AI_PROVIDER_ACTIVE_PROFILE_ID: collection?.activeProfileId ?? null,
-    ...createAIProviderEnvUpdates(activeProfile),
-  };
-
-  await writeLocalEnvValues(updates);
-  applyLocalEnvValues(updates);
-}
-
 function normalizeAIImageProviderSecretValue(input: {
   id?: string | null;
   name?: string | null;
@@ -537,75 +331,6 @@ function normalizeAIImageProviderSecretValue(input: {
     apiKey,
     model,
   } satisfies AIImageProviderSecret;
-}
-
-function normalizeAIImageProviderCollectionSecret(value: unknown): AIImageProviderCollectionSecret | null {
-  if (!isPlainObject(value)) return null;
-
-  const rawProfiles = Array.isArray(value.profiles) ? value.profiles : [];
-  const profiles = rawProfiles
-    .map((item) =>
-      normalizeAIImageProviderSecretValue({
-        id: isPlainObject(item) && typeof item.id === "string" ? item.id : null,
-        name: isPlainObject(item) && typeof item.name === "string" ? item.name : null,
-        baseUrl: isPlainObject(item) && typeof item.baseUrl === "string" ? item.baseUrl : null,
-        apiKey: isPlainObject(item) && typeof item.apiKey === "string" ? item.apiKey : null,
-        model: isPlainObject(item) && typeof item.model === "string" ? item.model : null,
-      }),
-    )
-    .filter((item): item is AIImageProviderSecret => Boolean(item));
-
-  if (profiles.length === 0) {
-    return null;
-  }
-
-  const activeProfileId =
-    typeof value.activeProfileId === "string" && profiles.some((item) => item.id === value.activeProfileId)
-      ? value.activeProfileId
-      : profiles[0]?.id ?? null;
-
-  return {
-    activeProfileId,
-    profiles,
-  };
-}
-
-async function readLocalAIImageProviderCollection() {
-  const envMap = await readLocalEnvMap();
-  const rawProfiles = envMap.AI_IMAGE_PROVIDER_PROFILES?.trim();
-
-  if (rawProfiles) {
-    try {
-      const parsed = JSON.parse(rawProfiles) as unknown;
-      const collection = normalizeAIImageProviderCollectionSecret({
-        profiles: parsed,
-        activeProfileId: envMap.AI_IMAGE_PROVIDER_ACTIVE_PROFILE_ID,
-      });
-
-      if (collection) {
-        return collection;
-      }
-    } catch (error) {
-      console.error("Failed to parse local AI image provider profiles:", error);
-    }
-  }
-
-  const legacyProfile = normalizeAIImageProviderSecretValue({
-    id: LOCAL_AI_IMAGE_PROVIDER_FALLBACK_PROFILE_ID,
-    name: "默认本地图片配置",
-    baseUrl: envMap.AI_IMAGE_BASE_URL,
-    apiKey: envMap.AI_IMAGE_API_KEY,
-    model: envMap.AI_IMAGE_MODEL,
-  });
-
-  if (!legacyProfile) {
-    return null;
-  }
-
-  return {
-    activeProfileId: legacyProfile.id,
-    profiles: [legacyProfile],
-  } satisfies AIImageProviderCollectionSecret;
 }
 
 function readEnvironmentAIImageProviderSecret() {
@@ -671,26 +396,6 @@ function createAIImageProviderSummaryFromCollection(
   } satisfies AIImageProviderSummary;
 }
 
-function createAIImageProviderEnvUpdates(activeProfile: AIImageProviderSecret | null) {
-  return {
-    AI_IMAGE_BASE_URL: activeProfile?.baseUrl ?? null,
-    AI_IMAGE_API_KEY: activeProfile?.apiKey ?? null,
-    AI_IMAGE_MODEL: activeProfile?.model ?? null,
-  } satisfies Record<(typeof AI_IMAGE_PROVIDER_LOCAL_ENV_KEYS)[number], string | null>;
-}
-
-async function writeLocalAIImageProviderCollection(collection: AIImageProviderCollectionSecret | null) {
-  const activeProfile = getActiveAIImageProviderSecret(collection);
-  const updates: Record<string, string | null> = {
-    AI_IMAGE_PROVIDER_PROFILES: collection ? JSON.stringify(collection.profiles) : null,
-    AI_IMAGE_PROVIDER_ACTIVE_PROFILE_ID: collection?.activeProfileId ?? null,
-    ...createAIImageProviderEnvUpdates(activeProfile),
-  };
-
-  await writeLocalEnvValues(updates);
-  applyLocalEnvValues(updates);
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -700,77 +405,6 @@ function createMaskedAppId(appId: string) {
   return `${appId.slice(0, 3)}***${appId.slice(-3)}`;
 }
 
-function normalizeWechatAccount(value: unknown): WechatOfficialAccountSecret | null {
-  if (!isPlainObject(value)) return null;
-
-  const id = typeof value.id === "string" ? value.id.trim() : "";
-  const name = typeof value.name === "string" ? value.name.trim() : "";
-  const appId = typeof value.appId === "string" ? value.appId.trim() : "";
-  const appSecret = typeof value.appSecret === "string" ? value.appSecret.trim() : "";
-  const defaultAuthor = typeof value.defaultAuthor === "string" ? value.defaultAuthor.trim() : "";
-  const contentSourceUrl = typeof value.contentSourceUrl === "string" ? value.contentSourceUrl.trim() : "";
-  const createdAt = typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString();
-  const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
-
-  if (!id || !name || !appId) {
-    return null;
-  }
-
-  return {
-    id,
-    name,
-    appId,
-    appSecret,
-    defaultAuthor,
-    contentSourceUrl,
-    createdAt,
-    updatedAt,
-  };
-}
-
-function normalizeWechatIntegration(settings: unknown): WechatIntegration {
-  const root = isPlainObject(settings) ? settings : {};
-  const rawIntegration = isPlainObject(root[WECHAT_INTEGRATION_KEY]) ? root[WECHAT_INTEGRATION_KEY] : {};
-  const rawAccounts = Array.isArray(rawIntegration.accounts) ? rawIntegration.accounts : [];
-  const accounts = rawAccounts
-    .map(normalizeWechatAccount)
-    .filter((item): item is WechatOfficialAccountSecret => Boolean(item));
-  const selectedAccountId =
-    typeof rawIntegration.selectedAccountId === "string" && accounts.some((item) => item.id === rawIntegration.selectedAccountId)
-      ? rawIntegration.selectedAccountId
-      : accounts[0]?.id ?? null;
-
-  return {
-    accounts,
-    selectedAccountId,
-  };
-}
-
-function normalizeAIImageProviderConfig(settings: unknown): AIImageProviderSecret | null {
-  const root = isPlainObject(settings) ? settings : {};
-  const rawConfig = isPlainObject(root[AI_IMAGE_PROVIDER_CONFIG_KEY]) ? root[AI_IMAGE_PROVIDER_CONFIG_KEY] : null;
-
-  if (!rawConfig) {
-    return null;
-  }
-
-  const baseUrl = typeof rawConfig.baseUrl === "string" ? rawConfig.baseUrl.trim().replace(/\/+$/, "") : "";
-  const apiKey = typeof rawConfig.apiKey === "string" ? rawConfig.apiKey.trim() : "";
-  const model = typeof rawConfig.model === "string" ? rawConfig.model.trim() : "";
-
-  if (!baseUrl && !apiKey && !model) {
-    return null;
-  }
-
-  return {
-    id: typeof rawConfig.id === "string" ? rawConfig.id.trim() || LOCAL_AI_IMAGE_PROVIDER_FALLBACK_PROFILE_ID : LOCAL_AI_IMAGE_PROVIDER_FALLBACK_PROFILE_ID,
-    name: typeof rawConfig.name === "string" ? rawConfig.name.trim() || "默认图片模型配置" : "默认图片模型配置",
-    baseUrl,
-    apiKey,
-    model,
-  };
-}
-
 function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOfficialAccountSummary {
   return {
     id: account.id,
@@ -778,6 +412,7 @@ function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOff
     appId: account.appId,
     appIdMasked: createMaskedAppId(account.appId),
     hasAppSecret: Boolean(account.appSecret),
+    source: account.authorizerRefreshToken ? "third-party" : "legacy",
     defaultAuthor: account.defaultAuthor,
     contentSourceUrl: account.contentSourceUrl,
     createdAt: account.createdAt,
@@ -785,38 +420,59 @@ function toWechatAccountSummary(account: WechatOfficialAccountSecret): WechatOff
   };
 }
 
-function mergePublicSettingsWithSecrets(
-  publicSettings: AppSettings,
-  integration: WechatIntegration,
-  aiProviderConfig: unknown,
-  aiImageProviderConfig: AIImageProviderSecret | null,
-) {
+function mapWechatAuthorizedRecordToSecret(record: {
+  id: string;
+  authorizerAppId: string;
+  nickName: string;
+  encryptedAuthorizerAccessToken: string;
+  encryptedAuthorizerRefreshToken: string;
+  tokenExpiresAt: Date | null;
+  defaultAuthor: string;
+  contentSourceUrl: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): WechatOfficialAccountSecret {
   return {
-    ...publicSettings,
-    [WECHAT_INTEGRATION_KEY]: {
-      accounts: integration.accounts,
-      selectedAccountId: integration.selectedAccountId,
-    },
-    ...(aiImageProviderConfig
-      ? {
-          [AI_IMAGE_PROVIDER_CONFIG_KEY]: aiImageProviderConfig,
-        }
-      : {}),
+    id: record.id,
+    name: record.nickName || record.authorizerAppId,
+    appId: record.authorizerAppId,
+    appSecret: "",
+    authorizerAccessToken: record.encryptedAuthorizerAccessToken
+      ? decryptSecret(record.encryptedAuthorizerAccessToken)
+      : "",
+    authorizerRefreshToken: decryptSecret(record.encryptedAuthorizerRefreshToken),
+    tokenExpiresAt: record.tokenExpiresAt?.toISOString() ?? null,
+    defaultAuthor: record.defaultAuthor,
+    contentSourceUrl: record.contentSourceUrl,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
   };
 }
 
-async function readRawAppConfigRecord() {
+async function readWechatAuthorizedAccounts(userId: string) {
+  if (!hasDatabaseUrl()) return [];
+
+  const records = await prisma.wechatAuthorizedAccount.findMany({
+    where: { userId },
+    orderBy: [{ isSelected: "desc" }, { updatedAt: "desc" }],
+  });
+
+  return records.map(mapWechatAuthorizedRecordToSecret);
+}
+
+async function readRawAppConfigRecord(userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("app_config")
       .select("*")
-      .eq("id", APP_CONFIG_ID)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (error) throw error;
     return data ? {
       id: data.id,
+      userId: data.user_id ?? userId,
       settings: data.settings,
       selectedTopicId: data.selected_topic_id,
       updatedAt: data.updated_at,
@@ -824,11 +480,12 @@ async function readRawAppConfigRecord() {
   }
 
   const record = await prisma.appConfig.findUnique({
-    where: { id: APP_CONFIG_ID },
+    where: { userId },
   });
 
   return record ? {
     id: record.id,
+    userId: record.userId,
     settings: record.settings,
     selectedTopicId: record.selectedTopicId,
     updatedAt: record.updatedAt,
@@ -836,6 +493,7 @@ async function readRawAppConfigRecord() {
 }
 
 async function saveRawAppConfigRecord(input: {
+  userId: string;
   settings: unknown;
   selectedTopicId: string | null;
   updatedAt?: string;
@@ -847,17 +505,19 @@ async function saveRawAppConfigRecord(input: {
     const { data, error } = await supabase
       .from("app_config")
       .upsert({
-        id: APP_CONFIG_ID,
+        id: input.userId,
+        user_id: input.userId,
         settings: input.settings,
         selected_topic_id: input.selectedTopicId,
         updated_at: updatedAt,
-      }, { onConflict: "id" })
+      }, { onConflict: "user_id" })
       .select("*")
       .single();
 
     if (error) throw error;
     return {
       id: data.id,
+      userId: data.user_id ?? input.userId,
       settings: data.settings,
       selectedTopicId: data.selected_topic_id,
       updatedAt: data.updated_at,
@@ -865,9 +525,10 @@ async function saveRawAppConfigRecord(input: {
   }
 
   const saved = await prisma.appConfig.upsert({
-    where: { id: APP_CONFIG_ID },
+    where: { userId: input.userId },
     create: {
-      id: APP_CONFIG_ID,
+      id: input.userId,
+      userId: input.userId,
       settings: input.settings as Prisma.InputJsonValue,
       selectedTopicId: input.selectedTopicId,
     },
@@ -879,6 +540,7 @@ async function saveRawAppConfigRecord(input: {
 
   return {
     id: saved.id,
+    userId: saved.userId,
     settings: saved.settings,
     selectedTopicId: saved.selectedTopicId,
     updatedAt: saved.updatedAt,
@@ -915,28 +577,21 @@ export function mapAppConfigRecord(record: AppConfigRecord) {
   };
 }
 
-export async function readAppConfig() {
-  const record = await readRawAppConfigRecord();
+export async function readAppConfig(userId: string) {
+  const record = await readRawAppConfigRecord(userId);
   return record ? mapAppConfigRecord(record) : null;
 }
 
-export async function upsertAppConfig(input: { settings?: AppSettings; selectedTopicId?: string | null }) {
-  const currentRecord = await readRawAppConfigRecord();
+export async function upsertAppConfig(userId: string, input: { settings?: AppSettings; selectedTopicId?: string | null }) {
+  const currentRecord = await readRawAppConfigRecord(userId);
   const current = currentRecord ? mapAppConfigRecord(currentRecord) : null;
-  const existingWechatIntegration = normalizeWechatIntegration(currentRecord?.settings);
-  const existingAIImageProviderConfig = normalizeAIImageProviderConfig(currentRecord?.settings);
   const settings = normalizeAppSettings(input.settings ?? current?.settings ?? defaultSettings);
   const selectedTopicId = input.selectedTopicId === undefined ? current?.selectedTopicId ?? null : input.selectedTopicId;
   const updatedAt = new Date().toISOString();
-  const storedSettings = mergePublicSettingsWithSecrets(
-    settings,
-    existingWechatIntegration,
-    null,
-    existingAIImageProviderConfig,
-  );
 
   const saved = await saveRawAppConfigRecord({
-    settings: storedSettings,
+    userId,
+    settings,
     selectedTopicId,
     updatedAt,
   });
@@ -944,168 +599,207 @@ export async function upsertAppConfig(input: { settings?: AppSettings; selectedT
   return mapAppConfigRecord(saved);
 }
 
-export async function readWechatIntegration() {
-  const record = await readRawAppConfigRecord();
-  const integration = normalizeWechatIntegration(record?.settings);
+export async function readWechatIntegration(userId: string) {
+  const accounts = await readWechatAuthorizedAccounts(userId);
+  if (accounts.length > 0) {
+    return {
+      accounts: accounts.map(toWechatAccountSummary),
+      selectedAccountId: accounts[0]?.id ?? null,
+    };
+  }
 
   return {
-    accounts: integration.accounts.map(toWechatAccountSummary),
-    selectedAccountId: integration.selectedAccountId,
+    accounts: [],
+    selectedAccountId: null,
   };
 }
 
-export async function readWechatAccountSecret(accountId?: string | null) {
-  const record = await readRawAppConfigRecord();
-  const integration = normalizeWechatIntegration(record?.settings);
-  const selectedAccount =
-    (accountId ? integration.accounts.find((item) => item.id === accountId) : null) ??
-    (integration.selectedAccountId ? integration.accounts.find((item) => item.id === integration.selectedAccountId) : null) ??
-    integration.accounts[0] ??
-    null;
+export async function readWechatAccountSecret(userId: string, accountId?: string | null) {
+  const authorizedAccounts = await readWechatAuthorizedAccounts(userId);
+  if (authorizedAccounts.length > 0) {
+    const selectedAccount =
+      (accountId ? authorizedAccounts.find((item) => item.id === accountId) : null) ??
+      authorizedAccounts[0] ??
+      null;
+
+    return {
+      account: selectedAccount,
+      selectedAccountId: authorizedAccounts[0]?.id ?? null,
+      accounts: authorizedAccounts.map(toWechatAccountSummary),
+    };
+  }
 
   return {
-    account: selectedAccount,
-    selectedAccountId: integration.selectedAccountId,
-    accounts: integration.accounts.map(toWechatAccountSummary),
+    account: null,
+    selectedAccountId: null,
+    accounts: [],
   };
 }
 
-export async function upsertWechatOfficialAccount(input: {
-  id?: string;
-  name: string;
-  appId: string;
-  appSecret?: string;
-  defaultAuthor?: string;
-  contentSourceUrl?: string;
-  setAsSelected?: boolean;
+export async function upsertWechatAuthorizedAccount(userId: string, input: {
+  authorizerAppId: string;
+  nickName?: string;
+  avatarUrl?: string;
+  principalName?: string;
+  serviceTypeInfo?: number | null;
+  verifyTypeInfo?: number | null;
+  authorizerAccessToken: string;
+  authorizerRefreshToken: string;
+  expiresIn?: number;
 }) {
-  const record = await readRawAppConfigRecord();
-  const currentPublicSettings = normalizeAppSettings(record?.settings);
-  const integration = normalizeWechatIntegration(record?.settings);
-  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
-  const now = new Date().toISOString();
-  const targetId = input.id?.trim() || crypto.randomUUID();
-  const existing = integration.accounts.find((item) => item.id === targetId) ?? null;
-
-  if (
-    input.appId.trim() &&
-    integration.accounts.some((item) => item.id !== targetId && item.appId === input.appId.trim())
-  ) {
-    throw new Error("这个 AppID 已经存在，请直接编辑原账号。");
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法保存微信授权账号。");
   }
 
-  const nextAccount = normalizeWechatAccount({
-    id: targetId,
-    name: input.name,
-    appId: input.appId,
-    appSecret: input.appSecret?.trim() ? input.appSecret : existing?.appSecret ?? "",
-    defaultAuthor: input.defaultAuthor ?? existing?.defaultAuthor ?? "",
-    contentSourceUrl: input.contentSourceUrl ?? existing?.contentSourceUrl ?? "",
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  });
-
-  if (!nextAccount) {
-    throw new Error("公众号账号信息不完整，请至少填写账号名称和 AppID。");
+  const authorizerAppId = input.authorizerAppId.trim();
+  const authorizerRefreshToken = input.authorizerRefreshToken.trim();
+  if (!authorizerAppId || !authorizerRefreshToken) {
+    throw new Error("微信授权信息不完整。");
   }
 
-  if (!nextAccount.appSecret) {
-    throw new Error("请填写 AppSecret。");
+  const tokenExpiresAt = input.expiresIn
+    ? new Date(Date.now() + Math.max(0, input.expiresIn - 120) * 1000)
+    : null;
+  const existingCount = await prisma.wechatAuthorizedAccount.count({ where: { userId } });
+  const shouldSelect = existingCount === 0;
+
+  if (shouldSelect) {
+    await prisma.wechatAuthorizedAccount.updateMany({
+      where: { userId },
+      data: { isSelected: false },
+    });
   }
 
-  const accounts = [
-    ...integration.accounts.filter((item) => item.id !== targetId),
-    nextAccount,
-  ].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-  const selectedAccountId =
-    input.setAsSelected || !integration.selectedAccountId || !accounts.some((item) => item.id === integration.selectedAccountId)
-      ? targetId
-      : integration.selectedAccountId;
-
-  const storedSettings = mergePublicSettingsWithSecrets(
-    currentPublicSettings,
-    {
-      accounts,
-      selectedAccountId,
+  await prisma.wechatAuthorizedAccount.upsert({
+    where: {
+      userId_authorizerAppId: {
+        userId,
+        authorizerAppId,
+      },
     },
-    null,
-    aiImageProviderConfig,
-  );
-  await saveRawAppConfigRecord({
-    settings: storedSettings,
-    selectedTopicId: record?.selectedTopicId ?? null,
-    updatedAt: now,
+    create: {
+      userId,
+      authorizerAppId,
+      nickName: input.nickName?.trim() || authorizerAppId,
+      avatarUrl: input.avatarUrl?.trim() ?? "",
+      principalName: input.principalName?.trim() ?? "",
+      serviceTypeInfo: input.serviceTypeInfo ?? null,
+      verifyTypeInfo: input.verifyTypeInfo ?? null,
+      encryptedAuthorizerAccessToken: input.authorizerAccessToken.trim()
+        ? encryptSecret(input.authorizerAccessToken.trim())
+        : "",
+      encryptedAuthorizerRefreshToken: encryptSecret(authorizerRefreshToken),
+      tokenExpiresAt,
+      isSelected: shouldSelect,
+    },
+    update: {
+      nickName: input.nickName?.trim() || authorizerAppId,
+      avatarUrl: input.avatarUrl?.trim() ?? "",
+      principalName: input.principalName?.trim() ?? "",
+      serviceTypeInfo: input.serviceTypeInfo ?? null,
+      verifyTypeInfo: input.verifyTypeInfo ?? null,
+      encryptedAuthorizerAccessToken: input.authorizerAccessToken.trim()
+        ? encryptSecret(input.authorizerAccessToken.trim())
+        : "",
+      encryptedAuthorizerRefreshToken: encryptSecret(authorizerRefreshToken),
+      tokenExpiresAt,
+      ...(shouldSelect ? { isSelected: true } : {}),
+    },
   });
 
-  return {
-    accounts: accounts.map(toWechatAccountSummary),
-    selectedAccountId,
-  };
+  return readWechatIntegration(userId);
 }
 
-export async function deleteWechatOfficialAccount(accountId: string) {
-  const record = await readRawAppConfigRecord();
-  const currentPublicSettings = normalizeAppSettings(record?.settings);
-  const integration = normalizeWechatIntegration(record?.settings);
-  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
-  const accounts = integration.accounts.filter((item) => item.id !== accountId);
-  const selectedAccountId =
-    integration.selectedAccountId === accountId
-      ? accounts[0]?.id ?? null
-      : integration.selectedAccountId;
-  const storedSettings = mergePublicSettingsWithSecrets(
-    currentPublicSettings,
-    {
-      accounts,
-      selectedAccountId,
-    },
-    null,
-    aiImageProviderConfig,
-  );
-  const now = new Date().toISOString();
+export async function updateWechatAuthorizedAccountToken(userId: string, accountId: string, input: {
+  authorizerAccessToken: string;
+  authorizerRefreshToken?: string;
+  expiresIn?: number;
+}) {
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法刷新微信授权账号。");
+  }
 
-  await saveRawAppConfigRecord({
-    settings: storedSettings,
-    selectedTopicId: record?.selectedTopicId ?? null,
-    updatedAt: now,
+  const existing = await prisma.wechatAuthorizedAccount.findFirst({
+    where: { id: accountId, userId },
   });
 
-  return {
-    accounts: accounts.map(toWechatAccountSummary),
-    selectedAccountId,
-  };
+  if (!existing) {
+    throw new Error("微信授权账号不存在。");
+  }
+
+  await prisma.wechatAuthorizedAccount.update({
+    where: { id: existing.id },
+    data: {
+      encryptedAuthorizerAccessToken: encryptSecret(input.authorizerAccessToken.trim()),
+      ...(input.authorizerRefreshToken?.trim()
+        ? { encryptedAuthorizerRefreshToken: encryptSecret(input.authorizerRefreshToken.trim()) }
+        : {}),
+      tokenExpiresAt: input.expiresIn
+        ? new Date(Date.now() + Math.max(0, input.expiresIn - 120) * 1000)
+        : null,
+    },
+  });
 }
 
-export async function selectWechatOfficialAccount(accountId: string | null) {
-  const record = await readRawAppConfigRecord();
-  const currentPublicSettings = normalizeAppSettings(record?.settings);
-  const integration = normalizeWechatIntegration(record?.settings);
-  const aiImageProviderConfig = normalizeAIImageProviderConfig(record?.settings);
-  const selectedAccountId =
-    accountId && integration.accounts.some((item) => item.id === accountId)
-      ? accountId
-      : integration.accounts[0]?.id ?? null;
-  const storedSettings = mergePublicSettingsWithSecrets(
-    currentPublicSettings,
-    {
-      accounts: integration.accounts,
-      selectedAccountId,
-    },
-    null,
-    aiImageProviderConfig,
-  );
-  const now = new Date().toISOString();
+export async function deleteWechatOfficialAccount(userId: string, accountId: string) {
+  if (hasDatabaseUrl()) {
+    const authorized = await prisma.wechatAuthorizedAccount.findFirst({
+      where: { id: accountId, userId },
+    });
 
-  await saveRawAppConfigRecord({
-    settings: storedSettings,
-    selectedTopicId: record?.selectedTopicId ?? null,
-    updatedAt: now,
-  });
+    if (authorized) {
+      await prisma.wechatAuthorizedAccount.delete({
+        where: { id: authorized.id },
+      });
 
-  return {
-    accounts: integration.accounts.map(toWechatAccountSummary),
-    selectedAccountId,
-  };
+      if (authorized.isSelected) {
+        const fallback = await prisma.wechatAuthorizedAccount.findFirst({
+          where: { userId },
+          orderBy: [{ updatedAt: "desc" }],
+        });
+        if (fallback) {
+          await prisma.wechatAuthorizedAccount.update({
+            where: { id: fallback.id },
+            data: { isSelected: true },
+          });
+        }
+      }
+
+      return readWechatIntegration(userId);
+    }
+  }
+
+  return readWechatIntegration(userId);
+}
+
+export async function selectWechatOfficialAccount(userId: string, accountId: string | null) {
+  if (hasDatabaseUrl()) {
+    const authorizedAccounts = await prisma.wechatAuthorizedAccount.findMany({
+      where: { userId },
+      orderBy: [{ isSelected: "desc" }, { updatedAt: "desc" }],
+    });
+
+    if (authorizedAccounts.length > 0) {
+      const selectedAccount =
+        (accountId ? authorizedAccounts.find((item) => item.id === accountId) : null) ??
+        authorizedAccounts[0];
+
+      await prisma.$transaction([
+        prisma.wechatAuthorizedAccount.updateMany({
+          where: { userId },
+          data: { isSelected: false },
+        }),
+        prisma.wechatAuthorizedAccount.update({
+          where: { id: selectedAccount.id },
+          data: { isSelected: true },
+        }),
+      ]);
+
+      return readWechatIntegration(userId);
+    }
+  }
+
+  return readWechatIntegration(userId);
 }
 
 function getEnv(name: string) {
@@ -1116,31 +810,80 @@ function hasAppConfigBackend() {
   return hasDatabaseUrl();
 }
 
-export async function readAIProviderConfig() {
-  const localCollection = await readLocalAIProviderCollection();
-  if (localCollection) {
-    return createAIProviderSummaryFromCollection(localCollection, "local");
+function mapUserAIProviderRecord(record: {
+  id: string;
+  name: string;
+  providerType: string;
+  baseUrl: string;
+  encryptedApiKey: string;
+  apiKeyMasked: string;
+  model: string;
+  fastModel: string;
+  longformModel: string;
+  isActive: boolean;
+}): AIProviderSecret {
+  return {
+    id: record.id,
+    name: record.name,
+    providerType: normalizeAIProviderKind(record.providerType, record.baseUrl),
+    baseUrl: record.baseUrl,
+    apiKey: decryptSecret(record.encryptedApiKey),
+    model: record.model,
+    fastModel: record.fastModel,
+    longformModel: record.longformModel,
+  };
+}
+
+async function readUserAIProviderCollection(userId: string): Promise<AIProviderCollectionSecret | null> {
+  if (!hasDatabaseUrl()) return null;
+
+  const records = await prisma.userAIProvider.findMany({
+    where: { userId },
+    orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+  });
+
+  if (!records.length) return null;
+  const activeRecord = records.find((item) => item.isActive) ?? records[0];
+
+  return {
+    activeProfileId: activeRecord?.id ?? null,
+    profiles: records.map(mapUserAIProviderRecord),
+  };
+}
+
+function readPlatformAIProviderCollection() {
+  const envProfile = readEnvironmentAIProviderSecret();
+  if (!envProfile) return null;
+
+  return {
+    activeProfileId: envProfile.id,
+    profiles: [envProfile],
+  } satisfies AIProviderCollectionSecret;
+}
+
+export async function readAIProviderConfig(userId?: string) {
+  const userCollection = userId ? await readUserAIProviderCollection(userId) : null;
+  if (userCollection) {
+    return createAIProviderSummaryFromCollection(userCollection, "user");
   }
 
-  const envProfile = readEnvironmentAIProviderSecret();
-  if (envProfile) {
-    return createAIProviderSummaryFromCollection({
-      activeProfileId: envProfile.id,
-      profiles: [envProfile],
-    }, "environment");
+  const platformCollection = readPlatformAIProviderCollection();
+  if (platformCollection) {
+    return createAIProviderSummaryFromCollection(platformCollection, "platform");
   }
 
   return createAIProviderSummaryFromCollection(null, "default");
 }
 
-export async function readAIProviderSecret() {
-  const localCollection = await readLocalAIProviderCollection();
-  const localConfig = getActiveAIProviderSecret(localCollection);
-  if (localConfig) return localConfig;
-  return readEnvironmentAIProviderSecret();
+export async function readAIProviderSecret(userId?: string): Promise<AIProviderSecretWithSource | null> {
+  const userCollection = userId ? await readUserAIProviderCollection(userId) : null;
+  const userConfig = getActiveAIProviderSecret(userCollection);
+  if (userConfig) return { ...userConfig, source: "user" };
+  const platformConfig = readEnvironmentAIProviderSecret();
+  return platformConfig ? { ...platformConfig, source: "platform" } : null;
 }
 
-export async function upsertAIProviderConfig(input: {
+export async function upsertAIProviderConfig(userId: string, input: {
   id?: string;
   name?: string;
   providerType?: AIProviderKind;
@@ -1151,15 +894,23 @@ export async function upsertAIProviderConfig(input: {
   longformModel?: string;
   setAsActive?: boolean;
 }) {
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法保存用户模型密钥。");
+  }
+
   const baseUrl = normalizeAIProviderBaseUrl(input.baseUrl);
   const model = input.model.trim();
   const fastModel = input.fastModel?.trim() ?? "";
   const longformModel = input.longformModel?.trim() ?? "";
-  const collection = await readLocalAIProviderCollection();
-  const existingProfile = input.id?.trim()
-    ? collection?.profiles.find((item) => item.id === input.id?.trim()) ?? null
+  const profileId = input.id?.trim() ?? "";
+  const existingProfile = profileId
+    ? await prisma.userAIProvider.findFirst({ where: { id: profileId, userId } })
     : null;
-  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingProfile?.apiKey ?? "";
+  const apiKey = input.apiKey?.trim()
+    ? input.apiKey.trim()
+    : existingProfile
+      ? decryptSecret(existingProfile.encryptedApiKey)
+      : "";
   const providerType = normalizeAIProviderKind(input.providerType, baseUrl);
 
   if (!baseUrl) {
@@ -1174,157 +925,183 @@ export async function upsertAIProviderConfig(input: {
     throw new Error("请填写 API Key。");
   }
 
-  const nextProfile: AIProviderSecret = {
-    id: input.id?.trim() || crypto.randomUUID(),
-    name: buildAIProviderProfileName({
+  const nextId = existingProfile?.id ?? crypto.randomUUID();
+  const name = buildAIProviderProfileName({
       name: input.name,
       providerType,
       model,
       baseUrl,
-    }),
-    providerType,
-    baseUrl,
-    apiKey,
-    model,
-    fastModel,
-    longformModel,
-  };
-  const currentProfiles = collection?.profiles ?? [];
-  const nextProfiles = currentProfiles.some((item) => item.id === nextProfile.id)
-    ? currentProfiles.map((item) => (item.id === nextProfile.id ? nextProfile : item))
-    : [nextProfile, ...currentProfiles];
-  const nextActiveProfileId = input.setAsActive === false
-    ? (collection?.activeProfileId && nextProfiles.some((item) => item.id === collection.activeProfileId)
-      ? collection.activeProfileId
-      : nextProfiles[0]?.id ?? nextProfile.id)
-    : nextProfile.id;
-  const nextCollection: AIProviderCollectionSecret = {
-    activeProfileId: nextActiveProfileId,
-    profiles: nextProfiles,
-  };
+  });
+  const shouldActivate = input.setAsActive !== false || !(await prisma.userAIProvider.count({ where: { userId } }));
 
-  await writeLocalAIProviderCollection(nextCollection);
-  return readAIProviderConfig();
+  if (shouldActivate) {
+    await prisma.userAIProvider.updateMany({
+      where: { userId },
+      data: { isActive: false },
+    });
+  }
+
+  await prisma.userAIProvider.upsert({
+    where: { id: nextId },
+    create: {
+      id: nextId,
+      userId,
+      name,
+      providerType,
+      baseUrl,
+      encryptedApiKey: encryptSecret(apiKey),
+      apiKeyMasked: maskSecretValue(apiKey),
+      model,
+      fastModel,
+      longformModel,
+      isActive: shouldActivate,
+    },
+    update: {
+      name,
+      providerType,
+      baseUrl,
+      encryptedApiKey: encryptSecret(apiKey),
+      apiKeyMasked: maskSecretValue(apiKey),
+      model,
+      fastModel,
+      longformModel,
+      ...(shouldActivate ? { isActive: true } : {}),
+    },
+  });
+
+  return readAIProviderConfig(userId);
 }
 
-export async function setActiveAIProviderConfig(profileId: string) {
-  const collection = await readLocalAIProviderCollection();
-  if (!collection || collection.profiles.length === 0) {
+export async function setActiveAIProviderConfig(userId: string, profileId: string) {
+  const existing = await prisma.userAIProvider.findFirst({
+    where: { id: profileId, userId },
+  });
+
+  if (!existing) {
     throw new Error("当前没有可切换的模型配置。");
   }
 
-  if (!collection.profiles.some((item) => item.id === profileId)) {
-    throw new Error("目标模型配置不存在。");
-  }
+  await prisma.$transaction([
+    prisma.userAIProvider.updateMany({
+      where: { userId },
+      data: { isActive: false },
+    }),
+    prisma.userAIProvider.update({
+      where: { id: profileId },
+      data: { isActive: true },
+    }),
+  ]);
 
-  await writeLocalAIProviderCollection({
-    activeProfileId: profileId,
-    profiles: collection.profiles,
-  });
-
-  return readAIProviderConfig();
+  return readAIProviderConfig(userId);
 }
 
-export async function deleteAIProviderConfig(profileId?: string) {
+export async function deleteAIProviderConfig(userId: string, profileId?: string) {
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法删除用户模型密钥。");
+  }
+
   if (!profileId) {
-    const updates = Object.fromEntries(
-      [...AI_PROVIDER_COLLECTION_ENV_KEYS, ...AI_PROVIDER_LOCAL_ENV_KEYS].map((key) => [key, null]),
-    ) as Record<string, null>;
-    await writeLocalEnvValues(updates);
-    applyLocalEnvValues(updates);
-    return readAIProviderConfig();
+    await prisma.userAIProvider.deleteMany({
+      where: { userId },
+    });
+    return readAIProviderConfig(userId);
   }
 
-  const collection = await readLocalAIProviderCollection();
-  if (!collection || collection.profiles.length === 0) {
-    throw new Error("当前没有可删除的模型配置。");
-  }
+  const existing = await prisma.userAIProvider.findFirst({
+    where: { id: profileId, userId },
+  });
 
-  const nextProfiles = collection.profiles.filter((item) => item.id !== profileId);
-  if (nextProfiles.length === collection.profiles.length) {
+  if (!existing) {
     throw new Error("目标模型配置不存在。");
   }
 
-  if (nextProfiles.length === 0) {
-    const updates = Object.fromEntries(
-      [...AI_PROVIDER_COLLECTION_ENV_KEYS, ...AI_PROVIDER_LOCAL_ENV_KEYS].map((key) => [key, null]),
-    ) as Record<string, null>;
-    await writeLocalEnvValues(updates);
-    applyLocalEnvValues(updates);
-    return readAIProviderConfig();
-  }
-
-  const nextActiveProfileId =
-    collection.activeProfileId === profileId
-      ? nextProfiles[0]?.id ?? null
-      : collection.activeProfileId;
-
-  await writeLocalAIProviderCollection({
-    activeProfileId: nextActiveProfileId,
-    profiles: nextProfiles,
+  await prisma.userAIProvider.delete({
+    where: { id: existing.id },
   });
 
-  return readAIProviderConfig();
+  if (existing.isActive) {
+    const fallback = await prisma.userAIProvider.findFirst({
+      where: { userId },
+      orderBy: [{ updatedAt: "desc" }],
+    });
+    if (fallback) {
+      await prisma.userAIProvider.update({
+        where: { id: fallback.id },
+        data: { isActive: true },
+      });
+    }
+  }
+
+  return readAIProviderConfig(userId);
 }
 
-export async function readAIImageProviderConfig() {
-  const localCollection = await readLocalAIImageProviderCollection();
-  if (localCollection) {
-    return createAIImageProviderSummaryFromCollection(localCollection, "local");
-  }
+function mapUserAIImageProviderRecord(record: {
+  id: string;
+  name: string;
+  baseUrl: string;
+  encryptedApiKey: string;
+  model: string;
+  isActive: boolean;
+}): AIImageProviderSecret {
+  return {
+    id: record.id,
+    name: record.name,
+    baseUrl: record.baseUrl,
+    apiKey: decryptSecret(record.encryptedApiKey),
+    model: record.model,
+  };
+}
 
+async function readUserAIImageProviderCollection(userId: string): Promise<AIImageProviderCollectionSecret | null> {
+  if (!hasDatabaseUrl()) return null;
+
+  const records = await prisma.userAIImageProvider.findMany({
+    where: { userId },
+    orderBy: [{ isActive: "desc" }, { updatedAt: "desc" }],
+  });
+
+  if (!records.length) return null;
+  const activeRecord = records.find((item) => item.isActive) ?? records[0];
+
+  return {
+    activeProfileId: activeRecord?.id ?? null,
+    profiles: records.map(mapUserAIImageProviderRecord),
+  };
+}
+
+function readPlatformAIImageProviderCollection() {
   const envProfile = readEnvironmentAIImageProviderSecret();
-  if (envProfile) {
-    return createAIImageProviderSummaryFromCollection({
-      activeProfileId: envProfile.id,
-      profiles: [envProfile],
-    }, "environment");
+  if (!envProfile) return null;
+
+  return {
+    activeProfileId: envProfile.id,
+    profiles: [envProfile],
+  } satisfies AIImageProviderCollectionSecret;
+}
+
+export async function readAIImageProviderConfig(userId?: string) {
+  const userCollection = userId ? await readUserAIImageProviderCollection(userId) : null;
+  if (userCollection) {
+    return createAIImageProviderSummaryFromCollection(userCollection, "user");
   }
 
-  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
-  const storedConfig = normalizeAIImageProviderConfig(record?.settings);
-  if (storedConfig) {
-    const legacyProfile = normalizeAIImageProviderSecretValue({
-      id: storedConfig.id,
-      name: storedConfig.name,
-      baseUrl: storedConfig.baseUrl,
-      apiKey: storedConfig.apiKey,
-      model: storedConfig.model,
-    });
-    return createAIImageProviderSummaryFromCollection(
-      legacyProfile
-        ? {
-            activeProfileId: legacyProfile.id,
-            profiles: [legacyProfile],
-          }
-        : null,
-      "environment",
-    );
+  const platformCollection = readPlatformAIImageProviderCollection();
+  if (platformCollection) {
+    return createAIImageProviderSummaryFromCollection(platformCollection, "platform");
   }
 
   return createAIImageProviderSummaryFromCollection(null, "default");
 }
 
-export async function readAIImageProviderSecret() {
-  const localCollection = await readLocalAIImageProviderCollection();
-  const localConfig = getActiveAIImageProviderSecret(localCollection);
-  if (localConfig) return localConfig;
-
-  const envConfig = readEnvironmentAIImageProviderSecret();
-  if (envConfig) return envConfig;
-
-  const record = hasAppConfigBackend() ? await readRawAppConfigRecord() : null;
-  const storedConfig = normalizeAIImageProviderConfig(record?.settings);
-  return normalizeAIImageProviderSecretValue({
-    id: storedConfig?.id,
-    name: storedConfig?.name,
-    baseUrl: storedConfig?.baseUrl,
-    apiKey: storedConfig?.apiKey,
-    model: storedConfig?.model,
-  });
+export async function readAIImageProviderSecret(userId?: string): Promise<AIImageProviderSecretWithSource | null> {
+  const userCollection = userId ? await readUserAIImageProviderCollection(userId) : null;
+  const userConfig = getActiveAIImageProviderSecret(userCollection);
+  if (userConfig) return { ...userConfig, source: "user" };
+  const platformConfig = readEnvironmentAIImageProviderSecret();
+  return platformConfig ? { ...platformConfig, source: "platform" } : null;
 }
 
-export async function upsertAIImageProviderConfig(input: {
+export async function upsertAIImageProviderConfig(userId: string, input: {
   id?: string;
   name?: string;
   baseUrl: string;
@@ -1332,13 +1109,21 @@ export async function upsertAIImageProviderConfig(input: {
   model: string;
   setAsActive?: boolean;
 }) {
-  const collection = await readLocalAIImageProviderCollection();
-  const existingProfile = input.id?.trim()
-    ? collection?.profiles.find((item) => item.id === input.id?.trim()) ?? null
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法保存用户图片模型密钥。");
+  }
+
+  const profileId = input.id?.trim() ?? "";
+  const existingProfile = profileId
+    ? await prisma.userAIImageProvider.findFirst({ where: { id: profileId, userId } })
     : null;
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, "");
   const model = input.model.trim();
-  const apiKey = input.apiKey?.trim() ? input.apiKey.trim() : existingProfile?.apiKey ?? "";
+  const apiKey = input.apiKey?.trim()
+    ? input.apiKey.trim()
+    : existingProfile
+      ? decryptSecret(existingProfile.encryptedApiKey)
+      : "";
 
   if (!baseUrl) {
     throw new Error("请填写图片模型接口地址。");
@@ -1352,91 +1137,104 @@ export async function upsertAIImageProviderConfig(input: {
     throw new Error("请填写图片模型 API Key。");
   }
 
-  const nextProfile: AIImageProviderSecret = {
-    id: input.id?.trim() || crypto.randomUUID(),
-    name: buildAIImageProviderProfileName({
+  const nextId = existingProfile?.id ?? crypto.randomUUID();
+  const name = buildAIImageProviderProfileName({
       name: input.name,
       model,
       baseUrl,
-    }),
-    baseUrl,
-    apiKey,
-    model,
-  };
-  const currentProfiles = collection?.profiles ?? [];
-  const nextProfiles = currentProfiles.some((item) => item.id === nextProfile.id)
-    ? currentProfiles.map((item) => (item.id === nextProfile.id ? nextProfile : item))
-    : [nextProfile, ...currentProfiles];
-  const nextActiveProfileId = input.setAsActive === false
-    ? (collection?.activeProfileId && nextProfiles.some((item) => item.id === collection.activeProfileId)
-      ? collection.activeProfileId
-      : nextProfiles[0]?.id ?? nextProfile.id)
-    : nextProfile.id;
+  });
+  const shouldActivate = input.setAsActive !== false || !(await prisma.userAIImageProvider.count({ where: { userId } }));
 
-  await writeLocalAIImageProviderCollection({
-    activeProfileId: nextActiveProfileId,
-    profiles: nextProfiles,
+  if (shouldActivate) {
+    await prisma.userAIImageProvider.updateMany({
+      where: { userId },
+      data: { isActive: false },
+    });
+  }
+
+  await prisma.userAIImageProvider.upsert({
+    where: { id: nextId },
+    create: {
+      id: nextId,
+      userId,
+      name,
+      baseUrl,
+      encryptedApiKey: encryptSecret(apiKey),
+      apiKeyMasked: maskSecretValue(apiKey),
+      model,
+      isActive: shouldActivate,
+    },
+    update: {
+      name,
+      baseUrl,
+      encryptedApiKey: encryptSecret(apiKey),
+      apiKeyMasked: maskSecretValue(apiKey),
+      model,
+      ...(shouldActivate ? { isActive: true } : {}),
+    },
   });
 
-  return readAIImageProviderConfig();
+  return readAIImageProviderConfig(userId);
 }
 
-export async function setActiveAIImageProviderConfig(profileId: string) {
-  const collection = await readLocalAIImageProviderCollection();
-  if (!collection || collection.profiles.length === 0) {
+export async function setActiveAIImageProviderConfig(userId: string, profileId: string) {
+  const existing = await prisma.userAIImageProvider.findFirst({
+    where: { id: profileId, userId },
+  });
+
+  if (!existing) {
     throw new Error("当前没有可切换的图片模型配置。");
   }
 
-  if (!collection.profiles.some((item) => item.id === profileId)) {
-    throw new Error("目标图片模型配置不存在。");
-  }
+  await prisma.$transaction([
+    prisma.userAIImageProvider.updateMany({
+      where: { userId },
+      data: { isActive: false },
+    }),
+    prisma.userAIImageProvider.update({
+      where: { id: profileId },
+      data: { isActive: true },
+    }),
+  ]);
 
-  await writeLocalAIImageProviderCollection({
-    activeProfileId: profileId,
-    profiles: collection.profiles,
-  });
-
-  return readAIImageProviderConfig();
+  return readAIImageProviderConfig(userId);
 }
 
-export async function deleteAIImageProviderConfig(profileId?: string) {
+export async function deleteAIImageProviderConfig(userId: string, profileId?: string) {
+  if (!hasDatabaseUrl()) {
+    throw new Error("数据库未配置，无法删除用户图片模型密钥。");
+  }
+
   if (!profileId) {
-    const updates = Object.fromEntries(
-      [...AI_IMAGE_PROVIDER_COLLECTION_ENV_KEYS, ...AI_IMAGE_PROVIDER_LOCAL_ENV_KEYS].map((key) => [key, null]),
-    ) as Record<string, null>;
-    await writeLocalEnvValues(updates);
-    applyLocalEnvValues(updates);
-    return readAIImageProviderConfig();
+    await prisma.userAIImageProvider.deleteMany({
+      where: { userId },
+    });
+    return readAIImageProviderConfig(userId);
   }
 
-  const collection = await readLocalAIImageProviderCollection();
-  if (!collection || collection.profiles.length === 0) {
-    throw new Error("当前没有可删除的图片模型配置。");
-  }
-
-  const nextProfiles = collection.profiles.filter((item) => item.id !== profileId);
-  if (nextProfiles.length === collection.profiles.length) {
+  const existing = await prisma.userAIImageProvider.findFirst({
+    where: { id: profileId, userId },
+  });
+  if (!existing) {
     throw new Error("目标图片模型配置不存在。");
   }
 
-  if (nextProfiles.length === 0) {
-    const updates = Object.fromEntries(
-      [...AI_IMAGE_PROVIDER_COLLECTION_ENV_KEYS, ...AI_IMAGE_PROVIDER_LOCAL_ENV_KEYS].map((key) => [key, null]),
-    ) as Record<string, null>;
-    await writeLocalEnvValues(updates);
-    applyLocalEnvValues(updates);
-    return readAIImageProviderConfig();
-  }
-
-  const nextActiveProfileId =
-    collection.activeProfileId === profileId
-      ? nextProfiles[0]?.id ?? null
-      : collection.activeProfileId;
-
-  await writeLocalAIImageProviderCollection({
-    activeProfileId: nextActiveProfileId,
-    profiles: nextProfiles,
+  await prisma.userAIImageProvider.delete({
+    where: { id: existing.id },
   });
 
-  return readAIImageProviderConfig();
+  if (existing.isActive) {
+    const fallback = await prisma.userAIImageProvider.findFirst({
+      where: { userId },
+      orderBy: [{ updatedAt: "desc" }],
+    });
+    if (fallback) {
+      await prisma.userAIImageProvider.update({
+        where: { id: fallback.id },
+        data: { isActive: true },
+      });
+    }
+  }
+
+  return readAIImageProviderConfig(userId);
 }

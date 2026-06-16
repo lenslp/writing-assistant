@@ -10,6 +10,8 @@ import type { TopicRecommendationCandidate } from "../../lib/workbench-topics";
 import { articleDomains, type ActiveArticleDomain } from "../../lib/content-domains";
 import type { TopicSuggestion } from "../../lib/app-data";
 import type { HotTopicItem } from "../../lib/hot-topics";
+import { requireAuthenticatedUser } from "../../lib/api-auth";
+import { toPublicErrorMessage } from "../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 const TOPIC_RECOMMENDATION_TIMEOUT_MS = 60000;
@@ -66,6 +68,9 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
     const payload = (await request.json().catch(() => null)) as {
       items?: HotTopicItem[];
@@ -87,12 +92,12 @@ export async function POST(request: Request) {
     }
     const groups = await withTimeout(
       preferredDomain
-        ? Promise.all([recommendTopicsForDomainWithAI(candidates, preferredDomain)])
-        : recommendDailyTopicsByDomainWithAI(candidates),
+        ? Promise.all([recommendTopicsForDomainWithAI(candidates, preferredDomain, auth.user.id)])
+        : recommendDailyTopicsByDomainWithAI(candidates, auth.user.id),
       TOPIC_RECOMMENDATION_TIMEOUT_MS,
       "AI 选题筛选超时，已使用规则排序。",
     ).catch((error) => {
-      const message = error instanceof Error ? error.message : "AI 选题筛选暂不可用，已使用规则排序。";
+      const message = toPublicErrorMessage(error, "AI 选题筛选暂不可用，已使用规则排序。");
       const fallbackGroups = buildFallbackDomainRecommendations(candidates).map((group) => ({
         ...group,
         message,
@@ -142,7 +147,7 @@ export async function POST(request: Request) {
           angle: "",
           risks: [],
           source: "fallback",
-          message: error instanceof Error ? error.message : "request failed",
+          message: toPublicErrorMessage(error, "AI 选题推荐暂时不可用。"),
         },
         groups: [],
       },

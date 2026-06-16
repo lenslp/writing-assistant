@@ -1,12 +1,17 @@
 import { createDefaultFormatting, getTemplateColors, type DraftFormatting } from "./app-data";
-import { readWechatAccountSecret } from "./app-config-db";
+import { readWechatAccountSecret, updateWechatAuthorizedAccountToken } from "./app-config-db";
 import { domainConfigs, type ArticleDomain } from "./content-domains";
 import { buildWechatArticleHtml, extractContentBlocks } from "./format-render";
+import { refreshWechatAuthorizerToken } from "./wechat-open-platform";
 
 type WechatConfig = {
   configured: boolean;
   appId: string;
   appSecret: string;
+  authorizerAccessToken?: string;
+  authorizerRefreshToken?: string;
+  tokenExpiresAt?: string | null;
+  userId?: string;
   defaultAuthor: string;
   contentSourceUrl: string;
   accountId: string | null;
@@ -37,6 +42,7 @@ type WechatApiError = {
 };
 
 type WechatDraftInput = {
+  userId: string;
   title: string;
   summary: string;
   body: string;
@@ -94,13 +100,29 @@ function getWechatConfigFromEnv(): WechatConfig {
   };
 }
 
-export async function getWechatConfig(accountId?: string | null) {
-  const stored = await readWechatAccountSecret(accountId);
+export async function getWechatConfig(userId: string, accountId?: string | null) {
+  const stored = await readWechatAccountSecret(userId, accountId);
   if (stored.account?.appId && stored.account?.appSecret) {
     return {
       configured: true,
       appId: stored.account.appId,
       appSecret: stored.account.appSecret,
+      defaultAuthor: stored.account.defaultAuthor,
+      contentSourceUrl: stored.account.contentSourceUrl,
+      accountId: stored.account.id,
+      accountName: stored.account.name,
+    };
+  }
+
+  if (stored.account?.appId && stored.account?.authorizerRefreshToken) {
+    return {
+      configured: true,
+      appId: stored.account.appId,
+      appSecret: "",
+      authorizerAccessToken: stored.account.authorizerAccessToken,
+      authorizerRefreshToken: stored.account.authorizerRefreshToken,
+      tokenExpiresAt: stored.account.tokenExpiresAt,
+      userId,
       defaultAuthor: stored.account.defaultAuthor,
       contentSourceUrl: stored.account.contentSourceUrl,
       accountId: stored.account.id,
@@ -116,8 +138,8 @@ export async function getWechatConfig(accountId?: string | null) {
   };
 }
 
-export async function verifyWechatAccountConnection(accountId?: string | null) {
-  const config = await getWechatConfig(accountId);
+export async function verifyWechatAccountConnection(userId: string, accountId?: string | null) {
+  const config = await getWechatConfig(userId, accountId);
   if (!config.configured) {
     throw new Error("微信公众号配置未完成，请先在设置页配置公众号账号，或补充环境变量 WECHAT_OFFICIAL_APP_ID / WECHAT_OFFICIAL_APP_SECRET。");
   }
@@ -403,7 +425,7 @@ function formatWechatApiErrorMessage(error: WechatApiError) {
     return `微信接口拒绝访问：当前服务器出口 IP ${ipLabel} 不在公众号后台白名单中。请到微信公众平台 -> 开发接口管理，将该 IP 加入白名单后重试。`;
   }
 
-  return rawMessage;
+  return "微信接口调用失败，请检查公众号授权状态后重试。";
 }
 
 function validateWechatDraftTitle(title: string) {
@@ -504,6 +526,23 @@ async function fetchWechatJson<T>(url: string, init?: RequestInit) {
 }
 
 async function getAccessToken(config: WechatConfig) {
+  if (config.authorizerAccessToken && config.tokenExpiresAt && new Date(config.tokenExpiresAt).getTime() > Date.now() + 60_000) {
+    return config.authorizerAccessToken;
+  }
+
+  if (config.authorizerRefreshToken && config.accountId && config.userId) {
+    const refreshed = await refreshAuthorizerAccessToken(config);
+    await updateWechatAuthorizedAccountToken(config.userId, config.accountId, {
+      authorizerAccessToken: refreshed.authorizerAccessToken,
+      authorizerRefreshToken: refreshed.authorizerRefreshToken || config.authorizerRefreshToken,
+      expiresIn: refreshed.expiresIn,
+    });
+    config.authorizerAccessToken = refreshed.authorizerAccessToken;
+    config.authorizerRefreshToken = refreshed.authorizerRefreshToken || config.authorizerRefreshToken;
+    config.tokenExpiresAt = new Date(Date.now() + Math.max(0, refreshed.expiresIn - 120) * 1000).toISOString();
+    return refreshed.authorizerAccessToken;
+  }
+
   const cacheKey = config.appId;
   const cache = global.__wechatAccessTokenCache__?.[cacheKey];
   if (cache && cache.expiresAt > Date.now() + 60_000) {
@@ -526,6 +565,17 @@ async function getAccessToken(config: WechatConfig) {
   };
 
   return payload.access_token;
+}
+
+async function refreshAuthorizerAccessToken(config: WechatConfig) {
+  if (!config.authorizerRefreshToken) {
+    throw new Error("微信授权刷新 token 不存在。");
+  }
+
+  return refreshWechatAuthorizerToken({
+    authorizerAppId: config.appId,
+    authorizerRefreshToken: config.authorizerRefreshToken,
+  });
 }
 
 async function uploadImageAsWechatArticleImage(accessToken: string, imageUrl: string) {
@@ -792,7 +842,7 @@ function renderWechatArticleHtml(title: string, summary: string, blocks: DraftBl
 }
 
 export async function pushArticleToWechatDraft(input: WechatDraftInput) {
-  const config = await getWechatConfig(input.accountId);
+  const config = await getWechatConfig(input.userId, input.accountId);
   if (!config.configured) {
     throw new Error("微信公众号配置未完成，请先在页面中配置公众号账号，或补充环境变量 WECHAT_OFFICIAL_APP_ID / WECHAT_OFFICIAL_APP_SECRET。");
   }
@@ -871,7 +921,7 @@ export async function pushArticleToWechatDraft(input: WechatDraftInput) {
 
 export async function precheckWechatDraft(input: WechatDraftInput) {
   const items: WechatDraftPrecheckItem[] = [];
-  const config = await getWechatConfig(input.accountId);
+  const config = await getWechatConfig(input.userId, input.accountId);
 
   items.push({
     key: "account",
@@ -929,7 +979,7 @@ export async function precheckWechatDraft(input: WechatDraftInput) {
         key: "credential",
         label: "微信凭证",
         ok: false,
-        message: error instanceof Error ? error.message : "微信凭证校验失败。",
+        message: "微信凭证校验失败，请检查公众号授权状态。",
       });
     }
   }

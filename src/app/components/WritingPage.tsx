@@ -36,6 +36,7 @@ import type {
   DraftWritingSnapshot,
 } from "../lib/ai-writing-types";
 import { domainConfigs, resolveArticleDomain } from "../lib/content-domains";
+import { getClientErrorMessage } from "../lib/client-error";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
@@ -70,6 +71,20 @@ const transformLabels: Partial<Record<AITransformAction, string>> = {
 };
 
 const QUALITY_RETRY_MESSAGE = "AI 正在自动调整稿件质量，请再试一次。";
+const AI_WRITER_CONFIG_REQUIRED_MESSAGE = "AI 写作模型尚未配置，请先到设置中心配置 API Key。";
+
+type AIProviderStatusResponse = {
+  config?: {
+    activeProfile?: {
+      hasApiKey?: boolean;
+    } | null;
+  } | null;
+  message?: string;
+};
+
+function isAIWriterConfigError(message: string) {
+  return message.includes("配置 API") || message.includes("模型尚未配置") || message.includes("API Key");
+}
 
 function collapseChineseQuoteLayers(text: string) {
   let normalized = text;
@@ -506,6 +521,25 @@ export function WritingPage() {
     return generatedDraft;
   }
 
+  async function ensureAIWriterConfigured() {
+    try {
+      const response = await fetch("/api/ai/provider", { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as AIProviderStatusResponse | null;
+      const hasApiKey = Boolean(payload?.config?.activeProfile?.hasApiKey);
+
+      if (response.ok && hasApiKey) {
+        return true;
+      }
+
+      setGenerationError(payload?.message || AI_WRITER_CONFIG_REQUIRED_MESSAGE);
+      return false;
+    } catch (error) {
+      console.error("Failed to check AI writer provider config:", error);
+      setGenerationError("暂时无法读取 AI 写作模型配置，请先到设置中心确认 API Key。");
+      return false;
+    }
+  }
+
   function syncAiResult(targetDraft: Draft, result: AIWriteResult) {
     const nextBody = composeBodyWithTitle(result.title, result.body);
     const nextTitle = inferTitleFromBody(nextBody, result.title || targetDraft.title || "未命名文章");
@@ -896,6 +930,10 @@ export function WritingPage() {
   async function handleGenerate(scope: AIWriteScope) {
     if (!topicForWriting || isWritingBusy) return;
 
+    setGenerationError("");
+    const hasAIConfig = await ensureAIWriterConfigured();
+    if (!hasAIConfig) return;
+
     const targetDraft = ensureDraft(scope);
     if (!targetDraft) return;
     const label = generationLabels[scope];
@@ -994,7 +1032,7 @@ export function WritingPage() {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
-      setGenerationError(error instanceof Error ? error.message : "AI 写作失败，请稍后重试");
+      setGenerationError(getClientErrorMessage(error, "AI 写作失败，请稍后重试"));
     } finally {
       if (requestAbortControllerRef.current) {
         resetGenerationState();
@@ -1004,6 +1042,10 @@ export function WritingPage() {
 
   async function handleTransform(mode: AITransformAction) {
     if (!topicForWriting || !body.trim() || isWritingBusy) return;
+
+    setGenerationError("");
+    const hasAIConfig = await ensureAIWriterConfigured();
+    if (!hasAIConfig) return;
 
     const targetDraft = ensureDraft("body");
     if (!targetDraft) return;
@@ -1073,7 +1115,7 @@ export function WritingPage() {
       if (error instanceof DOMException && error.name === "AbortError") {
         return;
       }
-      setGenerationError(error instanceof Error ? error.message : "AI 改写失败，请稍后重试");
+      setGenerationError(getClientErrorMessage(error, "AI 改写失败，请稍后重试"));
     } finally {
       clearWritingTask(targetDraft.id, writingTask.id);
       resetGenerationState();
@@ -1387,7 +1429,7 @@ export function WritingPage() {
       );
       window.setTimeout(() => setSaveNotice(""), 3000);
     } catch (error) {
-      setGenerationError(error instanceof Error ? error.message : "推送公众号草稿箱失败");
+      setGenerationError(getClientErrorMessage(error, "推送公众号草稿箱失败"));
       setSaveNotice("");
     } finally {
       setIsWechatPushing(false);
@@ -1756,8 +1798,18 @@ export function WritingPage() {
       </div>
 
       {generationError ? (
-        <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-[12px] text-red-600">
-          {generationError}
+        <div className="flex items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-4 py-2 text-[12px] text-red-600">
+          <span>{generationError}</span>
+          {isAIWriterConfigError(generationError) ? (
+            <button
+              type="button"
+              onClick={() => router.push("/settings#ai-writer")}
+              className="shrink-0 rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] text-red-600 hover:bg-red-50"
+              style={{ fontWeight: 750 }}
+            >
+              去配置
+            </button>
+          ) : null}
         </div>
       ) : null}
 

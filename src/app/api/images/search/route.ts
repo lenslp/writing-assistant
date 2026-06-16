@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { searchRealArticleImages } from "../../../lib/real-image-search";
+import { requireAuthenticatedUser } from "../../../lib/api-auth";
+import { toPublicErrorMessage } from "../../../lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +15,13 @@ type Payload = {
 };
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (auth.response) return auth.response;
+
   try {
     const payload = (await request.json().catch(() => ({}))) as Payload;
     const results = await searchRealArticleImages({
+      userId: auth.user.id,
       query: payload.query,
       title: payload.title,
       summary: payload.summary,
@@ -44,7 +50,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Failed to search real images:", error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "联网搜图失败，请稍后再试。" },
+      { message: toPublicErrorMessage(error, "联网搜图失败，请稍后再试。") },
       { status: 500 },
     );
   }

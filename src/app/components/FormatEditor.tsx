@@ -36,6 +36,7 @@ import {
   getWechatDomainPreviewStyle,
 } from "../lib/format-render";
 import { writeRichClipboard } from "../lib/rich-clipboard";
+import { getClientErrorMessage } from "../lib/client-error";
 import { getUserDisplayName } from "../lib/user-display";
 import { useAppStore } from "../providers/app-store";
 import { useAuth } from "../providers/auth-provider";
@@ -512,7 +513,7 @@ export function FormatEditor() {
         results,
       };
     } catch (error) {
-      throw new Error(error instanceof Error ? error.message : "联网搜图失败");
+      throw new Error(getClientErrorMessage(error, "联网搜图失败"));
     } finally {
       setImageLoading(null);
     }
@@ -601,7 +602,7 @@ export function FormatEditor() {
       setNotice("已找到候选图片，点选即可插入");
       window.setTimeout(() => setNotice(""), 2200);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "联网搜图失败");
+      setNotice(getClientErrorMessage(error, "联网搜图失败"));
       window.setTimeout(() => setNotice(""), 2600);
     }
   };
@@ -632,7 +633,7 @@ export function FormatEditor() {
       insertImageToBody(payload.url as string, caption);
       setIsImagePanelOpen(false);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "AI 图片生成失败");
+      setNotice(getClientErrorMessage(error, "AI 图片生成失败"));
       window.setTimeout(() => setNotice(""), 2600);
     } finally {
       setImageLoading(null);
@@ -865,7 +866,7 @@ export function FormatEditor() {
         toast.error(firstIssue?.message ?? "推送前检查未通过");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "推送前检查失败");
+      toast.error(getClientErrorMessage(error, "推送前检查失败"));
     } finally {
       setWechatDraftChecking(false);
     }
@@ -919,7 +920,7 @@ export function FormatEditor() {
         `已推送到公众号草稿箱${payload?.accountName ? ` · ${payload.accountName}` : ""}${payload?.digestTruncated ? " · 摘要已自动截断" : ""}${payload?.mediaId ? ` · media_id: ${payload.mediaId}` : ""}`,
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "推送公众号草稿箱失败");
+      toast.error(getClientErrorMessage(error, "推送公众号草稿箱失败"));
     } finally {
       setWechatDraftLoading(false);
     }

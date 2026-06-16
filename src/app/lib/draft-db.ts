@@ -16,6 +16,7 @@ import { resolveArticleDomain } from "./content-domains";
 
 type DraftRecord = {
   id: string;
+  userId?: string | null;
   domain?: string | null;
   title: string;
   titleCandidates: string[];
@@ -115,17 +116,19 @@ export function mapDraftRecord(record: DraftRecord): Draft {
   };
 }
 
-export async function readDrafts() {
+export async function readDrafts(userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
       .select("*")
+      .eq("user_id", userId)
       .order("updated_at", { ascending: false });
 
     if (error) throw error;
     return (data ?? []).map((item) => mapDraftRecord({
       id: item.id,
+      userId: item.user_id,
       domain: item.domain,
       title: item.title,
       titleCandidates: item.title_candidates ?? [],
@@ -150,19 +153,21 @@ export async function readDrafts() {
   }
 
   const drafts = await prisma.draft.findMany({
+    where: { userId },
     orderBy: [{ updatedAt: "desc" }],
   });
 
   return drafts.map(mapDraftRecord);
 }
 
-export async function readDraftById(draftId: string) {
+export async function readDraftById(draftId: string, userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from("drafts")
       .select("*")
       .eq("id", draftId)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (error) throw error;
@@ -170,6 +175,7 @@ export async function readDraftById(draftId: string) {
 
     return mapDraftRecord({
       id: data.id,
+      userId: data.user_id,
       domain: data.domain,
       title: data.title,
       titleCandidates: data.title_candidates ?? [],
@@ -193,20 +199,21 @@ export async function readDraftById(draftId: string) {
     });
   }
 
-  const draft = await prisma.draft.findUnique({
-    where: { id: draftId },
+  const draft = await prisma.draft.findFirst({
+    where: { id: draftId, userId },
   });
 
   return draft ? mapDraftRecord(draft) : null;
 }
 
-export async function upsertDraft(draft: Draft) {
+export async function upsertDraft(draft: Draft, userId: string) {
   const normalized = normalizeDraftInput(draft);
 
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const payload = {
       id: normalized.id,
+      user_id: userId,
       domain: normalized.domain,
       title: normalized.title,
       title_candidates: normalized.titleCandidates,
@@ -260,9 +267,10 @@ export async function upsertDraft(draft: Draft) {
   }
 
   const saved = await prisma.draft.upsert({
-    where: { id: normalized.id },
+    where: { userId_id: { userId, id: normalized.id } },
     create: {
       id: normalized.id,
+      userId,
       domain: normalized.domain,
       title: normalized.title,
       titleCandidates: normalized.titleCandidates,
@@ -284,6 +292,7 @@ export async function upsertDraft(draft: Draft) {
       updatedAt: new Date(normalized.updatedAt),
     },
     update: {
+      userId,
       title: normalized.title,
       domain: normalized.domain,
       titleCandidates: normalized.titleCandidates,
@@ -309,8 +318,8 @@ export async function upsertDraft(draft: Draft) {
   return mapDraftRecord(saved);
 }
 
-export async function patchDraft(draftId: string, patch: Partial<Draft>) {
-  const existing = await readDraftById(draftId);
+export async function patchDraft(draftId: string, patch: Partial<Draft>, userId: string) {
+  const existing = await readDraftById(draftId, userId);
   if (!existing) return null;
 
   const merged = normalizeDraftInput({
@@ -347,12 +356,14 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
         updated_at: merged.updatedAt,
       })
       .eq("id", draftId)
+      .eq("user_id", userId)
       .select("*")
       .single();
 
     if (error) throw error;
     return mapDraftRecord({
       id: data.id,
+      userId: data.user_id,
       domain: data.domain,
       title: data.title,
       titleCandidates: data.title_candidates ?? [],
@@ -377,7 +388,7 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
   }
 
   const saved = await prisma.draft.update({
-    where: { id: draftId },
+    where: { userId_id: { userId, id: draftId } },
     data: {
       title: merged.title,
       domain: merged.domain,
@@ -404,7 +415,7 @@ export async function patchDraft(draftId: string, patch: Partial<Draft>) {
   return mapDraftRecord(saved);
 }
 
-export async function updateDraftStatusById(draftId: string, status: DraftStatus) {
+export async function updateDraftStatusById(draftId: string, status: DraftStatus, userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
@@ -414,12 +425,14 @@ export async function updateDraftStatusById(draftId: string, status: DraftStatus
         updated_at: new Date().toISOString(),
       })
       .eq("id", draftId)
+      .eq("user_id", userId)
       .select("*")
       .single();
 
     if (error) throw error;
     return mapDraftRecord({
       id: data.id,
+      userId: data.user_id,
       domain: data.domain,
       title: data.title,
       titleCandidates: data.title_candidates ?? [],
@@ -444,7 +457,7 @@ export async function updateDraftStatusById(draftId: string, status: DraftStatus
   }
 
   const saved = await prisma.draft.update({
-    where: { id: draftId },
+    where: { userId_id: { userId, id: draftId } },
     data: {
       status,
       updatedAt: new Date(),
@@ -454,19 +467,20 @@ export async function updateDraftStatusById(draftId: string, status: DraftStatus
   return mapDraftRecord(saved);
 }
 
-export async function deleteDraftById(draftId: string) {
+export async function deleteDraftById(draftId: string, userId: string) {
   if (shouldUseSupabaseAdmin()) {
     const supabase = getSupabaseAdmin();
     const { error } = await supabase
       .from("drafts")
       .delete()
-      .eq("id", draftId);
+      .eq("id", draftId)
+      .eq("user_id", userId);
 
     if (error) throw error;
     return;
   }
 
-  await prisma.draft.delete({
-    where: { id: draftId },
+  await prisma.draft.deleteMany({
+    where: { id: draftId, userId },
   });
 }
