@@ -383,6 +383,11 @@ export function WritingPage() {
     setBody(composeBodyWithTitle(selectedTitle, nextEditorBody));
   };
 
+  const clearPendingAutosave = () => {
+    if (!autosaveTimerRef.current) return;
+    window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+  };
 
   useEffect(() => {
     if (topicId) {
@@ -660,6 +665,7 @@ export function WritingPage() {
     }
 
     setPendingAction("真实配图搜索中");
+    clearPendingAutosave();
 
     try {
       const searchResponse = await fetch("/api/images/search", {
@@ -680,10 +686,13 @@ export function WritingPage() {
       const searchResults = Array.isArray(searchPayload?.results)
         ? (searchPayload.results as Array<{ url?: string; confidence?: string; score?: number }>)
         : [];
+      const fallbackSearchUrl = typeof searchPayload?.url === "string" ? searchPayload.url.trim() : "";
       const realImages = searchResults
         .filter((item) => item.confidence === "high" || (item.confidence === "medium" && (item.score ?? 0) >= 64))
         .map((item) => item.url)
+        .concat(fallbackSearchUrl ? [fallbackSearchUrl] : [])
         .filter((url): url is string => Boolean(url?.trim()))
+        .filter((url, index, list) => list.indexOf(url) === index)
         .slice(0, remainingImageCount)
         .map((url, index) => ({
           url,
@@ -705,6 +714,7 @@ export function WritingPage() {
 
         setSelectedTitle(nextTitle);
         setBody(nextBody);
+        clearPendingAutosave();
         updateDraft(targetDraft.id, {
           domain: selectedDomain,
           title: nextTitle,
@@ -762,6 +772,7 @@ export function WritingPage() {
 
       setSelectedTitle(nextTitle);
       setBody(nextBody);
+      clearPendingAutosave();
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
         title: nextTitle,
@@ -820,6 +831,7 @@ export function WritingPage() {
 
       setSelectedTitle(nextTitle);
       setBody(nextBody);
+      clearPendingAutosave();
       updateDraft(targetDraft.id, {
         domain: selectedDomain,
         title: nextTitle,
@@ -859,6 +871,7 @@ export function WritingPage() {
     setGenerationError("");
     setSelectedTitle(nextTitle);
     setBody(bodyWithoutImages);
+    clearPendingAutosave();
     updateDraft(currentDraft.id, {
       domain: selectedDomain,
       title: nextTitle,

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useImperativeHandle } from "react";
+import { Node } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -47,6 +48,54 @@ type TiptapNode = {
   content?: TiptapNode[];
 };
 
+const IMAGE_MARKDOWN_PATTERN = /^!\[(.*)]\((.*)\)$/;
+
+const ArticleImageNode = Node.create({
+  name: "articleImage",
+  group: "block",
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      src: {
+        default: "",
+      },
+      alt: {
+        default: "",
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "figure[data-article-image]",
+        getAttrs: (element) => {
+          if (!(element instanceof HTMLElement)) return false;
+          const image = element.querySelector("img");
+          return {
+            src: image?.getAttribute("src") || "",
+            alt: image?.getAttribute("alt") || element.getAttribute("data-alt") || "",
+          };
+        },
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const src = typeof HTMLAttributes.src === "string" ? HTMLAttributes.src : "";
+    const alt = typeof HTMLAttributes.alt === "string" ? HTMLAttributes.alt : "";
+    return [
+      "figure",
+      { "data-article-image": "true", "data-alt": alt, class: "article-rich-editor__image" },
+      ["img", { src, alt }],
+      ["figcaption", {}, alt || "文章配图"],
+    ];
+  },
+});
+
 function collapseChineseQuoteLayers(text: string) {
   let normalized = text;
   let previous = "";
@@ -79,6 +128,18 @@ function renderPlainSectionAsEditorHtml(section: string) {
   const lines = section.split("\n");
   const trimmed = section.trim();
   const codeMatch = trimmed.match(/^```(\w+)?\s*\n([\s\S]*?)\n```$/);
+  const imageMatch = trimmed.match(IMAGE_MARKDOWN_PATTERN);
+
+  if (imageMatch) {
+    const alt = imageMatch[1].trim() || "文章配图";
+    const src = imageMatch[2].trim();
+    return [
+      `<figure data-article-image="true" data-alt="${escapeHtml(alt)}">`,
+      `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" />`,
+      `<figcaption>${escapeHtml(alt)}</figcaption>`,
+      "</figure>",
+    ].join("");
+  }
 
   if (codeMatch) {
     return `<pre><code>${escapeHtml(codeMatch[2])}</code></pre>`;
@@ -180,6 +241,12 @@ function extractListItemText(node: TiptapNode) {
 }
 
 function extractBlockTextFromEditorNode(node: TiptapNode): string {
+  if (node.type === "articleImage") {
+    const src = typeof node.attrs?.src === "string" ? node.attrs.src.trim() : "";
+    const alt = typeof node.attrs?.alt === "string" ? node.attrs.alt.trim() : "文章配图";
+    return src ? `![${alt || "文章配图"}](${src})` : "";
+  }
+
   if (node.type === "heading") {
     return `## ${extractInlineTextFromEditorNode(node).trim()}`;
   }
@@ -229,6 +296,7 @@ export const RichTextEditor = React.forwardRef<
       StarterKit.configure({
         heading: { levels: [2] },
       }),
+      ArticleImageNode,
       Placeholder.configure({
         placeholder,
         emptyEditorClass: "is-editor-empty",
@@ -301,6 +369,26 @@ export const RichTextEditor = React.forwardRef<
           border: none;
           border-top: 2px solid var(--editor-divider-color, currentColor);
           margin: 1.5em 0;
+        }
+        .article-rich-editor :global(.article-rich-editor__image) {
+          margin: 1.5em 0;
+          overflow: hidden;
+        }
+        .article-rich-editor :global(.article-rich-editor__image img) {
+          display: block;
+          width: 100%;
+          height: auto;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          border-radius: 14px;
+          background: #fff;
+          object-fit: cover;
+        }
+        .article-rich-editor :global(.article-rich-editor__image figcaption) {
+          padding-top: 0.75em;
+          text-align: center;
+          font-size: 12px;
+          line-height: 1.6;
+          color: #64748b;
         }
       `}</style>
       <EditorContent editor={editor} />

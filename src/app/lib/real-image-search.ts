@@ -21,7 +21,7 @@ type RealImageSearchInput = {
   source?: string;
 };
 
-type ImageSearchSource = "source-page" | "source-screenshot" | "github" | "bing";
+type ImageSearchSource = "source-page" | "source-screenshot" | "github" | "bing" | "auto-site";
 type ImageSearchConfidence = "high" | "medium" | "low";
 
 export type RealImageSearchResult = {
@@ -158,6 +158,28 @@ const AUTO_BRANDS = [
   ["奥迪", "audi"],
   ["现代", "hyundai"],
   ["起亚", "kia"],
+] as const;
+
+const AUTO_VERTICAL_SITES = [
+  { host: "dongchedi.com", label: "懂车帝" },
+  { host: "autohome.com.cn", label: "汽车之家" },
+] as const;
+
+const AUTO_MODEL_WORDS = [
+  "大唐",
+  "唐",
+  "秦",
+  "汉",
+  "宋",
+  "元",
+  "海豹",
+  "海狮",
+  "海豚",
+  "腾势",
+  "方程豹",
+  "仰望",
+  "Model Y",
+  "Model 3",
 ] as const;
 
 const GENERIC_STOPWORDS = new Set([
@@ -449,6 +471,49 @@ function shouldAvoidPortraitForSearch(input: RealImageSearchInput) {
 function findAutoBrand(text: string) {
   const normalized = normalizeText(text);
   return AUTO_BRANDS.find((aliases) => aliases.some((alias) => normalized.includes(normalizeText(alias)))) ?? null;
+}
+
+function findAutoBrandLabel(text: string) {
+  const normalized = normalizeText(text);
+  const brand = AUTO_BRANDS.find((aliases) => aliases.some((alias) => normalized.includes(normalizeText(alias))));
+  return brand?.[0] ?? "";
+}
+
+function findAutoModel(text: string, brandLabel = "") {
+  const normalized = text.replace(/\s+/g, " ");
+
+  for (const model of [...AUTO_MODEL_WORDS].sort((left, right) => right.length - left.length)) {
+    if (normalized.includes(model)) {
+      return model;
+    }
+  }
+
+  if (brandLabel) {
+    const afterBrand = normalized.split(brandLabel).slice(1).join(brandLabel);
+    const directModel = afterBrand
+      .replace(/^[\s的全新款-]+/, "")
+      .match(/[\u4e00-\u9fa5A-Za-z0-9+.-]{1,10}/)?.[0]
+      ?.replace(/^(全新|新款|旗舰|王朝网|正式|上市|预售|指导价|顶配)/, "")
+      .trim();
+
+    if (directModel && directModel.length >= 1 && !CORE_TOPIC_STOPWORDS.has(directModel)) {
+      return directModel;
+    }
+  }
+
+  return "";
+}
+
+function buildAutoSubjectTerms(input: RealImageSearchInput) {
+  const text = `${input.title || ""} ${input.summary || ""} ${input.query || ""} ${input.body?.slice(0, 300) || ""}`;
+  const brand = findAutoBrandLabel(text);
+  const model = findAutoModel(text, brand);
+
+  return {
+    brand,
+    model,
+    subject: [brand, model].filter(Boolean).join(" ").trim(),
+  };
 }
 
 function hasDifferentAutoBrand(text: string, expectedBrand: readonly string[]) {
@@ -851,6 +916,11 @@ function isRelevantEnoughEntry(entry: BingImageEntry, input: RealImageSearchInpu
         return false;
       }
     }
+
+    const { model } = buildAutoSubjectTerms(input);
+    if (model && !normalizedEntry.includes(normalizeText(model))) {
+      return false;
+    }
   }
 
   if (domain === "科技" || domain === "AI") {
@@ -1089,7 +1159,7 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
   })();
 
   const domain = resolveArticleDomain(input.domain) as ArticleDomain;
-  if (domain === "汽车" && /(autohome|bitauto|che168|pcauto|sohuauto|cheshi)/i.test(pageHost)) score += 8;
+  if (domain === "汽车" && /(dongchedi|autohome|bitauto|che168|pcauto|sohuauto|cheshi)/i.test(pageHost)) score += 16;
   if (domain === "旅游" && /(qunar|ctrip|mafengwo|feizhu|ly\.com|tuniu|lvmama|zuche|yundashequ|mafengwo|tripadvisor|booking|agoda|airbnb|xiaohongshu|dianping)/i.test(pageHost)) score += 8;
   if (domain === "社会" && /(news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 6;
   if ((domain === "科技" || domain === "AI") && /(36kr|ifanr|leiphone|qbitai|jiqizhixin|huxiu|news|people|cctv|163|sina|qq|thepaper)/i.test(pageHost)) score += 8;
@@ -1118,6 +1188,21 @@ function scoreEntry(entry: BingImageEntry, input: RealImageSearchInput) {
     if (genericDeskPenalty && !roboticsBoost) score -= 14;
   }
 
+  if (domain === "汽车") {
+    const { brand, model } = buildAutoSubjectTerms(input);
+    const hasBrand = brand && haystack.includes(normalizeText(brand));
+    const hasModel = model && haystack.includes(normalizeText(model));
+    const hasAutoMedia = /(dongchedi|autohome|bitauto|che168|pcauto|sohuauto|cheshi|懂车帝|汽车之家|易车|太平洋汽车)/.test(haystack);
+    const hasRealPhotoCue = /(实拍|到店|图解|官图|图片|车型|新能源|ev|dm-i|dm|suv|试驾|评测|上市)/i.test(haystack);
+
+    if (hasBrand) score += 16;
+    if (hasModel) score += 18;
+    if (hasAutoMedia) score += 12;
+    if (hasRealPhotoCue) score += 8;
+    if (brand && !hasBrand) score -= 24;
+    if (model && !hasModel && !hasAutoMedia) score -= 10;
+  }
+
   return score;
 }
 
@@ -1142,12 +1227,20 @@ function hasConfidentRelevance(entry: BingImageEntry, input: RealImageSearchInpu
 
   if (hasArticleContext(input)) {
     const { anchors, matchedCount } = countCoreTopicAnchorMatches(entryText, input);
-    if (anchors.length >= 2 && matchedCount < 1) {
-      return false;
-    }
+    if (domain !== "汽车") {
+      if (anchors.length >= 2 && matchedCount < 1) {
+        return false;
+      }
 
-    if (anchors.length >= 4 && matchedCount < 2) {
-      return false;
+      if (anchors.length >= 4 && matchedCount < 2) {
+        return false;
+      }
+    } else if (anchors.length >= 2 && matchedCount < 1) {
+      const { brand, model } = buildAutoSubjectTerms(input);
+      const normalizedEntry = normalizeText(entryText);
+      if (!(brand && normalizedEntry.includes(normalizeText(brand))) && !(model && normalizedEntry.includes(normalizeText(model)))) {
+        return false;
+      }
     }
   }
 
@@ -1189,6 +1282,25 @@ function getRelaxedScoreThreshold(input: RealImageSearchInput) {
 function buildFallbackSearchQueries(input: RealImageSearchInput, primaryQuery: string) {
   const queries = [primaryQuery.trim()];
   const title = input.title?.trim() || "";
+  const domain = resolveArticleDomain(input.domain) as ArticleDomain;
+
+  if (domain === "汽车") {
+    const { subject } = buildAutoSubjectTerms(input);
+    const autoSubject = subject || title;
+
+    [
+      `${autoSubject} 实拍图`,
+      `${autoSubject} 图片`,
+      `${autoSubject} 正式上市 官图`,
+    ]
+      .map((query) => query.trim())
+      .filter(Boolean)
+      .forEach((query) => {
+        if (!queries.includes(query)) {
+          queries.push(query);
+        }
+      });
+  }
 
   if (title && !queries.includes(title)) {
     queries.push(title);
@@ -1488,6 +1600,169 @@ async function searchSourcePageScreenshot(input: RealImageSearchInput): Promise<
   ];
 }
 
+function extractBingWebResultPages(html: string, expectedHost: string) {
+  const $ = cheerio.load(html);
+  const pages: Array<{ url: string; title: string }> = [];
+  const seen = new Set<string>();
+
+  $("li.b_algo h2 a, .b_algo h2 a").each((_, element) => {
+    const href = decodeHtmlUrl($(element).attr("href") || "");
+    const title = decodeHtmlText($(element).text() || "");
+    if (!href || seen.has(href)) return;
+
+    try {
+      const parsed = new URL(href);
+      if (!parsed.hostname.includes(expectedHost)) return;
+      seen.add(href);
+      pages.push({ url: href, title });
+    } catch {
+      return;
+    }
+  });
+
+  return pages;
+}
+
+function decodeScriptImageUrl(value: string) {
+  return decodeHtmlUrl(value)
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/^\/\//, "https://")
+    .trim();
+}
+
+function isLikelyAutoVerticalImage(url: string, title = "") {
+  const text = `${url} ${title}`;
+  if (!/(autoimg\.cn|dcarimg\.com|byteimg\.com|toutiaoimg\.com)/i.test(url)) {
+    return false;
+  }
+
+  if (/logo|icon|favicon|avatar|qrcode|qr-code|sprite|app_logo|site-logo|二维码|头像/i.test(text)) {
+    return false;
+  }
+
+  return true;
+}
+
+async function extractAutoVerticalPageImages(input: {
+  pageUrl: string;
+  pageTitle: string;
+  siteLabel: string;
+  query: string;
+  input: RealImageSearchInput;
+}) {
+  const html = await fetchSearchHtml(input.pageUrl);
+  const $ = cheerio.load(html);
+  const candidates: Array<{ url: string; title: string; score: number }> = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (rawUrl: string, title = "") => {
+    const url = toAbsoluteUrl(input.pageUrl, decodeScriptImageUrl(rawUrl));
+    if (!isUsableSourcePageImage(url) || seen.has(url)) return;
+    if (!isLikelyAutoVerticalImage(url, title || input.pageTitle)) return;
+    seen.add(url);
+    candidates.push({
+      url,
+      title: title || input.pageTitle || `${input.siteLabel}汽车图片`,
+      score: scoreSourcePageImage(url, title || input.pageTitle),
+    });
+  };
+
+  [
+    $('meta[property="og:image"]').attr("content"),
+    $('meta[property="og:image:url"]').attr("content"),
+    $('meta[name="twitter:image"]').attr("content"),
+    $('meta[name="twitter:image:src"]').attr("content"),
+  ].forEach((url) => pushCandidate(url || "", "auto vertical meta image"));
+
+  $("article img, main img, img").each((_, element) => {
+    const src =
+      $(element).attr("src") ||
+      $(element).attr("data-src") ||
+      $(element).attr("data-original") ||
+      $(element).attr("data-img") ||
+      "";
+    const alt = $(element).attr("alt") || $(element).attr("title") || input.pageTitle;
+    pushCandidate(src, alt);
+  });
+
+  for (const match of html.matchAll(/(?:https?:)?\/\/[^"'\\\s<>]+(?:autoimg\.cn|dcarimg\.com|byteimg\.com)[^"'\\\s<>]*/g)) {
+    pushCandidate(match[0], input.pageTitle);
+  }
+
+  return candidates
+    .map((candidate) => {
+      const entryScore = scoreEntry(
+        {
+          url: candidate.url,
+          thumbnailUrl: "",
+          pageUrl: input.pageUrl,
+          title: `${input.pageTitle} ${candidate.title}`,
+          desc: input.query,
+        },
+        input.input,
+      );
+      const score = Math.max(68, Math.min(88, entryScore + Math.max(0, candidate.score) + 52));
+
+      return {
+        url: candidate.url,
+        source: "auto-site" as const,
+        query: `${input.siteLabel} ${input.query}`,
+        score,
+        confidence: getConfidence(score),
+        reason: `${input.siteLabel}页面图片候选`,
+        title: candidate.title,
+        pageUrl: input.pageUrl,
+      } satisfies RealImageSearchResult;
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 8);
+}
+
+async function searchAutoVerticalSiteImages(input: RealImageSearchInput, query: string): Promise<RealImageSearchResult[]> {
+  const domain = resolveArticleDomain(input.domain) as ArticleDomain;
+  if (domain !== "汽车") {
+    return [];
+  }
+
+  const { subject } = buildAutoSubjectTerms(input);
+  const autoQuery = subject || query;
+  if (!autoQuery) {
+    return [];
+  }
+
+  const entries: RealImageSearchResult[] = [];
+  const seenUrls = new Set<string>();
+  const seenPages = new Set<string>();
+
+  for (const site of AUTO_VERTICAL_SITES) {
+    const target = `https://cn.bing.com/search?q=${encodeURIComponent(`site:${site.host} ${autoQuery} 图片`)}`;
+    const html = await fetchSearchHtml(target).catch(() => "");
+    if (!html) continue;
+
+    for (const page of extractBingWebResultPages(html, site.host).slice(0, 4)) {
+      if (seenPages.has(page.url)) continue;
+      seenPages.add(page.url);
+
+      const pageCandidates = await extractAutoVerticalPageImages({
+        pageUrl: page.url,
+        pageTitle: page.title,
+        siteLabel: site.label,
+        input,
+        query: autoQuery,
+      }).catch(() => []);
+
+      for (const candidate of pageCandidates) {
+        if (seenUrls.has(candidate.url)) continue;
+        seenUrls.add(candidate.url);
+        entries.push(candidate);
+      }
+    }
+  }
+
+  return entries.sort((left, right) => right.score - left.score).slice(0, MAX_CANDIDATES_TO_CHECK);
+}
+
 export async function searchRealArticleImages(input: RealImageSearchInput): Promise<RealImageSearchResult[]> {
   const targetCount = Math.max(1, Math.min(input.count ?? MAX_SEARCH_RESULTS, MAX_SEARCH_RESULTS));
   const sourcePageImages = await searchSourcePageImages(input).catch(() => []);
@@ -1503,6 +1778,7 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
   if (!query) {
     return validateAndEmbedResults(providerResults, input, targetCount);
   }
+  const autoSiteImages = await searchAutoVerticalSiteImages(input, query).catch(() => []);
   const searchQueries = buildFallbackSearchQueries(input, query);
   const baseCandidates: BingImageEntry[] = [];
   const seenUrls = new Set<string>();
@@ -1567,5 +1843,5 @@ export async function searchRealArticleImages(input: RealImageSearchInput): Prom
     });
   }
 
-  return validateAndEmbedResults([...providerResults, ...results], input, targetCount);
+  return validateAndEmbedResults([...providerResults, ...autoSiteImages, ...results], input, targetCount);
 }
