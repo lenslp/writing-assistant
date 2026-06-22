@@ -1,6 +1,6 @@
 "use client";
 
-import React, { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronDown, Quote, Sparkles,
@@ -273,6 +273,7 @@ export function WritingPage() {
   const [publishChannel, setPublishChannel] = useState<"公众号" | "知乎" | "微博" | "头条" | "小红书">("公众号");
   const editorScrollRef = useRef<HTMLDivElement>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement>(null);
   const scrollSyncSourceRef = useRef<"editor" | "preview" | null>(null);
   const scrollSyncTimerRef = useRef<number | null>(null);
 
@@ -371,6 +372,26 @@ export function WritingPage() {
       scrollSyncSourceRef.current = null;
     }, 120);
   };
+
+  const resizeTitleInput = useCallback(() => {
+    const titleInput = titleInputRef.current;
+    if (!titleInput) return;
+
+    titleInput.style.height = "auto";
+    titleInput.style.height = `${titleInput.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTitleInput();
+  }, [
+    domainPreviewStyle.titleStyle.fontFamily,
+    domainPreviewStyle.titleStyle.fontSize,
+    domainPreviewStyle.titleStyle.fontWeight,
+    domainPreviewStyle.titleStyle.letterSpacing,
+    domainPreviewStyle.titleStyle.lineHeight,
+    resizeTitleInput,
+    selectedTitle,
+  ]);
 
   const handleTitleChange = (nextTitle: string) => {
     const nextNormalizedTitle = normalizeArticleTitleLine(nextTitle);
@@ -2065,8 +2086,10 @@ export function WritingPage() {
                 <div className="mx-auto flex min-h-full w-full max-w-[680px] flex-col">
                   <div className="mb-5 border-b pb-5" style={{ borderColor: "#f1f1f1" }}>
                     <textarea
+                      ref={titleInputRef}
                       value={selectedTitle}
                       onChange={(event) => handleTitleChange(event.target.value)}
+                      onInput={resizeTitleInput}
                       disabled={isWritingBusy}
                       rows={1}
                       placeholder="输入文章标题"
